@@ -69,7 +69,8 @@ try {
   const x = 200 + offset;
   const y = 200;
   const width = 240;
-  await page.locator('[data-testid="toolbar-rectangle"]').click();
+  // The tool's radio input sits under its icon, so click the label that holds both, as a person does.
+  await page.locator('label', { has: page.locator('[data-testid="toolbar-rectangle"]') }).click();
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x + width, y + 140, { steps: 12 });
