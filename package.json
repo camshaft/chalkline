@@ -14,7 +14,8 @@
     "lint": "eslint .",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "build": "npm run build --workspaces --if-present"
+    "build": "npm run build --workspaces --if-present",
+    "lan": "npm run build --workspace @chalkline/web && npm run build --workspace @chalkline/lan && node packages/lan/dist/chalkline-lan.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.14.0",

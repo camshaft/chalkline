@@ -6,7 +6,9 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./join": "./src/join.ts",
+    "./relay": "./src/relay.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -14,6 +16,7 @@
   },
   "dependencies": {
     "@trystero-p2p/nostr": "0.26.0",
+    "@trystero-p2p/ws-relay": "0.26.0",
     "y-protocols": "^1.0.6",
     "yjs": "^13.6.33"
   }

@@ -1,0 +1,23 @@
+{
+  "name": "@chalkline/lan",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The local-network mode: one command that serves the page and a WebSocket relay from one machine",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node dist/chalkline-lan.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@chalkline/sync": "*",
+    "@trystero-p2p/ws-relay": "0.26.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "werift": "^0.26.0",
+    "yjs": "^13.6.33"
+  }
+}

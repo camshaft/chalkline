@@ -35,3 +35,6 @@ jobs:
       # Converts the script's labelled box in Node, without joining a room.
       - name: Convert draw-box's box
         run: node packages/web/dist-node/draw-box.mjs --print
+      # Runs the local-network mode's bundle, which prints its usage and serves nothing.
+      - name: Print the local-network mode's usage
+        run: node packages/lan/dist/chalkline-lan.mjs --help
