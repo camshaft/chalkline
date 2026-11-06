@@ -66,7 +66,8 @@ try {
   console.log(`${name}: opened ${link.origin}${link.pathname} and joined room ${room} as ${selfId}`);
 
   // Draw a rectangle with the mouse, as a person would.
-  const x = 200 + offset;
+  // Left of x = 320 the selected tool's properties panel covers the canvas, so draw to its right.
+  const x = 360 + offset;
   const y = 200;
   const width = 240;
   // The tool's radio input sits under its icon, so click the label that holds both, as a person does.
@@ -188,6 +189,17 @@ try {
 } catch (error) {
   process.exitCode = 1;
   console.error(`${name}: the probe failed: ${error instanceof Error ? error.stack : error}`);
+  const board = await page
+    .evaluate(() => ({
+      tool: window.chalkline?.api.getAppState().activeTool.type,
+      elements: window.chalkline?.api
+        .getSceneElements()
+        .map(({ id, type, x, y, width, height }) => ({ id, type, x, y, width, height })),
+      probe: window.chalkline?.doc.getMap('probe').toJSON(),
+      peers: window.chalkline?.peers(),
+    }))
+    .catch((readError) => `unread: ${readError}`);
+  console.error(`${name}: the board when the probe failed: ${JSON.stringify(board)}`);
   await page.screenshot({ path: screenshot }).catch(() => {});
 } finally {
   await browser.close();
