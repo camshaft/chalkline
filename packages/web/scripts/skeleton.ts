@@ -55,6 +55,13 @@ async function installDom(): Promise<void> {
   // draw-box measures text with the metrics provider above, so fonts that load nothing are enough.
   globalThis.FontFace = InertFontFace as unknown as typeof FontFace;
   Object.defineProperty(document, 'fonts', { value: new InertFontFaceSet(), configurable: true });
+  // Libraries written for browsers, such as Trystero, call addEventListener on the global scope once
+  // they see a window. global-jsdom puts the window there but not its event methods, so they go there too.
+  Object.assign(globalThis, {
+    addEventListener: window.addEventListener.bind(window),
+    removeEventListener: window.removeEventListener.bind(window),
+    dispatchEvent: window.dispatchEvent.bind(window),
+  });
 }
 
 /** A 2D context that holds the properties set on it and whose methods do nothing. */
