@@ -71,7 +71,7 @@ jobs:
         with:
           node-version: 22
       - name: Install
-        run: npm install
+        run: npm ci
       - name: Install ${{ matrix.name }}
         working-directory: packages/web
         # Without --with-deps: the runner image holds the libraries each browser runs on, and the
@@ -114,7 +114,7 @@ jobs:
         with:
           node-version: 22
       - name: Install
-        run: npm install
+        run: npm ci
       - name: Build draw-box
         run: npm run build:node --workspace @chalkline/web
       - name: This runner's public address

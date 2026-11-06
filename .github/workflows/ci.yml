@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  # The Lock file workflow runs CI on each commit it pushes to a branch.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,10 +19,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # The repository doesn't hold a lock file yet, so `npm install` resolves
-      # the ranges in package.json. Switch to `npm ci` once a lock file is committed.
+      # `npm ci` installs the versions package-lock.json pins, and fails where a
+      # package.json no longer matches it: run the Lock file workflow on the branch
+      # to write package-lock.json again.
       - name: Install
-        run: npm install
+        run: npm ci
       - name: Lint
         run: npm run lint
       - name: Type-check

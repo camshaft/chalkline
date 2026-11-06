@@ -1,0 +1,86 @@
+name: Lock file
+
+# Writes package-lock.json on a branch, for a change that adds, removes or updates a
+# dependency where no one runs npm on their own machine. It merges main into the
+# branch, runs `npm install --package-lock-only`, which keeps each version the lock
+# file pins that the package.json files still allow, commits the result to the
+# branch, and runs CI and the Probe workflow on the branch's new head. Run it from
+# main with the branch as its input:
+#
+#   gh workflow run lock.yml --ref main -f branch=<the branch>
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: The branch to write package-lock.json on, such as a pull request's branch. It can't be main.
+        type: string
+        required: true
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: lock-${{ inputs.branch }}
+  cancel-in-progress: false
+
+jobs:
+  lock:
+    name: Write package-lock.json
+    runs-on: ubuntu-latest
+    env:
+      BRANCH: ${{ inputs.branch }}
+    steps:
+      - name: Refuse main
+        if: env.BRANCH == 'main'
+        run: |
+          echo "::error::package-lock.json changes on main only through a pull request."
+          exit 1
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BRANCH }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Merge main into the branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git merge --no-edit origin/main; then
+            # A conflict in package-lock.json alone is resolved by writing the file
+            # again from main's copy and the merged package.json files.
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            if [ "$conflicts" != "package-lock.json" ]; then
+              echo "::error::Merging main into $BRANCH conflicts in: $conflicts"
+              exit 1
+            fi
+            git checkout --theirs package-lock.json
+          fi
+      - name: Write package-lock.json
+        run: npm install --package-lock-only
+      - name: Commit and push
+        id: push
+        run: |
+          git add package-lock.json
+          if git rev-parse -q --verify MERGE_HEAD > /dev/null; then
+            git commit --no-edit
+          elif ! git diff --cached --quiet; then
+            git commit -m "Update package-lock.json"
+          fi
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$BRANCH")" ]; then
+            echo "package-lock.json is current, and $BRANCH holds main."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+          else
+            git push origin "HEAD:$BRANCH"
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          fi
+      # A push made with this workflow's token doesn't start a workflow run, so this
+      # step runs CI and the Probe workflow on the branch's new head.
+      - name: Run CI and the probe on the new head
+        if: steps.push.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run ci.yml --ref "$BRANCH"
+          gh workflow run probe.yml --ref "$BRANCH"
