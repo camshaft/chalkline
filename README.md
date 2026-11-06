@@ -5,6 +5,8 @@ Open https://camshaft.github.io/chalkline/ to start a board. The page makes a ne
 
 Browsers find each other through public Nostr relays with [Trystero](https://github.com/dmotz/trystero), which carry only the connection details, encrypted with the room's password, and then connect directly over WebRTC. The board's shapes are [Excalidraw](https://github.com/excalidraw/excalidraw) elements in a [Yjs](https://github.com/yjs/yjs) document, and each participant holds a full copy of it.
 
+Each participant's cursor, name and selection travel beside the document as Yjs awareness state, which the board doesn't store: every other page draws your cursor with your name by it, and outlines the shapes you selected. Type the name the others see in the field at the top of the page; the browser keeps it for your next visit, and until you type one, it picks a name such as "Guest 4f2a".
+
 ## Add a box from a script
 
 `draw-box` joins a board from Node, with Trystero over [werift](https://github.com/shinyoshiaki/werift-webrtc), and adds one labelled rectangle made from Excalidraw's skeleton format:
@@ -25,4 +27,4 @@ CI runs `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` on e
 
 Installs use `npm ci`, which installs the versions package-lock.json pins. A change that adds, removes or updates a dependency changes package-lock.json too: run `npm install` on your machine, or run the Lock file workflow on the change's branch with `gh workflow run lock.yml --ref main -f branch=<the branch>`, which writes package-lock.json there and runs CI and the Probe workflow on the new head.
 
-The Probe workflow is the live test across networks: Chromium and Firefox, each on its own GitHub-hosted runner with its own public address, open one board, and `draw-box` joins it from a third runner. Each browser draws a rectangle with the mouse and waits until it shows the other browser's rectangle and the script's box. It runs on each pull request against the branch's build, and after each deploy against the live page. Each browser's job summary lists the connection type it used to each peer, and its screenshot is kept as an artifact.
+The Probe workflow is the live test across networks: Chromium and Firefox, each on its own GitHub-hosted runner with its own public address, open one board, and `draw-box` joins it from a third runner. Each browser types its name, draws a rectangle with the mouse, and waits until it shows the other browser's rectangle, the script's box, and the other browser's cursor with its name. It runs on each pull request against the branch's build, and after each deploy against the live page. Each browser's job summary lists the connection type it used to each peer, and its screenshot is kept as an artifact.

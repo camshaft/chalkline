@@ -2,9 +2,10 @@ name: Probe
 
 # The live test across networks: Chromium and Firefox, each on its own
 # GitHub-hosted runner with its own public address, open one board, and the
-# draw-box script joins it from a third runner. Each browser draws a rectangle
-# with the mouse and waits until it shows the other browser's rectangle and the
-# script's labelled box; the script waits until both browsers mark it seen.
+# draw-box script joins it from a third runner. Each browser types its name,
+# draws a rectangle with the mouse, and waits until it shows the other browser's
+# rectangle, the script's labelled box, and the other browser's cursor with its
+# name; the script waits until both browsers mark it seen.
 on:
   pull_request:
   workflow_dispatch:
@@ -92,6 +93,7 @@ jobs:
           ROOM: ${{ needs.room.outputs.room }}
           KEY: ${{ needs.room.outputs.key }}
           PARTICIPANTS: chromium,firefox,script
+          BROWSERS: chromium,firefox
           LABEL: Drawn by draw-box in run ${{ github.run_id }}
           PAGE_URL: ${{ inputs.page_url }}
         run: node probe/browser.mjs

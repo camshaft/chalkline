@@ -1,13 +1,14 @@
 import '@excalidraw/excalidraw/index.css';
-import { connectDoc, trysteroTransport } from '@chalkline/sync';
+import { Awareness, connectAwareness, connectDoc, trysteroTransport } from '@chalkline/sync';
 import { CaptureUpdateAction, Excalidraw } from '@excalidraw/excalidraw';
 import type { OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
-import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
+import type { Collaborator, ExcalidrawImperativeAPI, SocketId } from '@excalidraw/excalidraw/types';
 import { joinRoom, selfId } from '@trystero-p2p/nostr';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as Y from 'yjs';
 import { bindElements } from './binding';
+import { bindPresence, keepName, participantName, setName, type Button, type Pointer } from './presence';
 import { connectionReport, type ConnectionReport } from './report';
 import { APP_ID, newRoomSecrets, parseRoomFragment, roomFragment, type RoomSecrets } from './room';
 
@@ -16,6 +17,8 @@ export interface ChalklineHandle {
   room: string;
   selfId: string;
   doc: Y.Doc;
+  /** Each participant's name, pointer and selection, which the page shares outside `doc`. */
+  awareness: Awareness;
   api: ExcalidrawImperativeAPI;
   peers(): string[];
   onPeerLeave(handler: (peerId: string) => void): () => void;
@@ -37,6 +40,21 @@ function pageElement(id: string): HTMLElement {
   return found;
 }
 
+function pageInput(id: string): HTMLInputElement {
+  const found = pageElement(id);
+  if (!(found instanceof HTMLInputElement)) throw new Error(`the page's #${id} isn't an input`);
+  return found;
+}
+
+/** The browser's local storage, or nothing where the browser refuses the page its storage. */
+function browserStorage(): Storage | undefined {
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The room the link names, or a new room, whose link then replaces the page's address. */
 function roomFromLink(): RoomSecrets {
   const secrets = parseRoomFragment(window.location.hash);
@@ -46,18 +64,43 @@ function roomFromLink(): RoomSecrets {
   return fresh;
 }
 
+/**
+ * Shows this participant's name in the name field, and shares each name typed
+ * there. A field left empty keeps the last name, and shows it again once the
+ * person leaves the field.
+ */
+function bindNameField(field: HTMLInputElement, awareness: Awareness, storage: Storage | undefined): void {
+  let name = participantName(storage);
+  setName(awareness, name);
+  field.value = name;
+  field.addEventListener('input', () => {
+    const typed = field.value.trim();
+    if (typed === '') return;
+    name = typed;
+    keepName(storage, name);
+    setName(awareness, name);
+  });
+  field.addEventListener('change', () => {
+    if (field.value.trim() === '') field.value = name;
+  });
+}
+
 async function start(): Promise<ChalklineHandle> {
   const status = pageElement('status');
   const secrets = roomFromLink();
   const doc = new Y.Doc();
+  const awareness = new Awareness(doc);
+  bindNameField(pageInput('name'), awareness, browserStorage());
   const room = joinRoom({ appId: APP_ID, password: secrets.key }, secrets.room, {
     onJoinError: ({ error }) => {
       status.textContent = `A peer couldn't connect: ${error}`;
     },
   });
   const transport = trysteroTransport(room);
-  // Connect the document before anything awaits, so that a peer's first messages find their handler.
-  connectDoc(doc, transport, { onSendError: (error) => console.warn('chalkline: a send failed', error) });
+  // Connect the document and the awareness before anything awaits, so that a peer's first messages find their handlers.
+  const onSendError = (error: unknown) => console.warn('chalkline: a send failed', error);
+  connectDoc(doc, transport, { onSendError });
+  connectAwareness(awareness, transport, { onSendError });
 
   const showPeers = () => {
     const count = transport.peers().length;
@@ -70,19 +113,45 @@ async function start(): Promise<ChalklineHandle> {
   transport.onPeerLeave(showPeers);
   showPeers();
 
+  const pointerHandlers = new Set<(pointer: Pointer, button: Button) => void>();
   const api = await new Promise<ExcalidrawImperativeAPI>((resolve) => {
-    createRoot(pageElement('app')).render(createElement(Excalidraw, { excalidrawAPI: resolve }));
+    createRoot(pageElement('app')).render(
+      createElement(Excalidraw, {
+        excalidrawAPI: resolve,
+        onPointerUpdate: ({ pointer, button }) => {
+          for (const handler of pointerHandlers) handler(pointer, button);
+        },
+      }),
+    );
   });
   bindElements(doc.getMap<OrderedExcalidrawElement>('elements'), {
     elements: () => api.getSceneElementsIncludingDeleted(),
     replace: (elements) => api.updateScene({ elements, captureUpdate: CaptureUpdateAction.NEVER }),
     onChange: (handler) => api.onChange(() => handler()),
   });
+  bindPresence(awareness, {
+    // Excalidraw draws each collaborator's cursor, name and selection, and lists them in its user list.
+    show: (collaborators) =>
+      api.updateScene({
+        collaborators: new Map(
+          [...collaborators].map(([id, collaborator]): [SocketId, Collaborator] => [id as SocketId, collaborator]),
+        ),
+      }),
+    selection: () => api.getAppState().selectedElementIds,
+    onChange: (handler) => api.onChange(() => handler()),
+    onPointer: (handler) => {
+      pointerHandlers.add(handler);
+      return () => {
+        pointerHandlers.delete(handler);
+      };
+    },
+  });
 
   const handle: ChalklineHandle = {
     room: secrets.room,
     selfId,
     doc,
+    awareness,
     api,
     peers: () => transport.peers(),
     onPeerLeave: (handler) => transport.onPeerLeave(handler),

@@ -1,15 +1,18 @@
-// The live probe's browser: opens the board, draws a rectangle with the mouse,
-// and waits until the board shows each participant's shape and the script's
-// labelled box. It then marks seen-<name>, stays until the script marks
+// The live probe's browser: opens the board, types its name in the name field,
+// draws a rectangle with the mouse, and waits until the board shows each
+// participant's shape, the script's labelled box, and each other browser's
+// cursor with its name. It then marks seen-<name>, stays until the script marks
 // done-script, and marks bye-<name> as it leaves. The Probe workflow runs one
 // copy on each of two runners, and draw-box on a third.
 //
 // Settings, from the environment:
-//   PROBE_NAME     this browser's name in the room's probe map, such as chromium
+//   PROBE_NAME     this browser's name in the room's probe map and by its cursor, such as chromium
 //   BROWSER        chromium or firefox (default: PROBE_NAME)
 //   OFFSET         how far right of the first browser's rectangle to draw, in pixels
 //   ROOM, KEY      the room's name and password
 //   PARTICIPANTS   every name whose shape to wait for, such as chromium,firefox,script
+//   BROWSERS       every browser's name, whose cursor the other browsers wait for, such as chromium,firefox
+//                  (default: none)
 //   LABEL          the label of the script's box
 //   PAGE_URL       the page to open; left empty, this script serves the local build
 //   WAIT_SECONDS   how long each wait lasts before the probe fails (default: 480)
@@ -33,6 +36,10 @@ const participants = setting('PARTICIPANTS')
   .split(',')
   .map((participant) => participant.trim())
   .filter((participant) => participant.length > 0);
+const others = setting('BROWSERS', '')
+  .split(',')
+  .map((other) => other.trim())
+  .filter((other) => other.length > 0 && other !== name);
 const label = setting('LABEL');
 const waitMs = Number(setting('WAIT_SECONDS', '480')) * 1000;
 const screenshot = `probe-${name}.png`;
@@ -65,6 +72,9 @@ try {
     return handle.selfId;
   }, name);
   console.log(`${name}: opened ${link.origin}${link.pathname} and joined room ${room} as ${selfId}`);
+
+  // Type this browser's name in the name field, as a person does, so that the other browsers show it by its cursor.
+  await page.locator('#name').fill(name);
 
   // Draw a rectangle with the mouse, as a person would.
   // Left of x = 320 the selected tool's properties panel covers the canvas, so draw to its right.
@@ -131,6 +141,46 @@ try {
   );
   console.log(`${name}: the board shows every shape: ${JSON.stringify(seen)}`);
 
+  // Wait, on the scene's change events, until the board shows each other browser's cursor with its name.
+  const cursors = await page.evaluate(
+    ({ others, waitMs }) =>
+      new Promise((resolve, reject) => {
+        const { api } = window.chalkline;
+        const state = () => {
+          const shown = [...api.getAppState().collaborators.values()];
+          const cursors = Object.fromEntries(
+            others.map((other) => [
+              other,
+              shown.find((collaborator) => collaborator.username === other && collaborator.pointer !== undefined)?.pointer ??
+                null,
+            ]),
+          );
+          const missing = others.filter((other) => cursors[other] === null);
+          return { cursors, missing, shown: shown.map(({ username, pointer }) => ({ username, pointer })) };
+        };
+        let finished = false;
+        let stopScene = () => {};
+        let timer;
+        const finish = (error, value) => {
+          if (finished) return;
+          finished = true;
+          stopScene();
+          clearTimeout(timer);
+          if (error) reject(error);
+          else resolve(value);
+        };
+        const check = () => {
+          const now = state();
+          if (now.missing.length === 0) finish(null, now.cursors);
+        };
+        stopScene = api.onChange(check);
+        timer = setTimeout(() => finish(new Error(`timed out waiting for every cursor: ${JSON.stringify(state())}`)), waitMs);
+        check();
+      }),
+    { others, waitMs },
+  );
+  console.log(`${name}: the board shows each other browser's cursor: ${JSON.stringify(cursors)}`);
+
   // Mark this browser's view as seen, and stay until the script has every browser's mark: a
   // browser that left at once could take its mark with it before any peer received it.
   await page.evaluate((who) => window.chalkline.doc.getMap('probe').set(`seen-${who}`, new Date().toISOString()), name);
@@ -175,7 +225,7 @@ try {
     const summary = [
       `### ${name}`,
       '',
-      `Opened ${link.origin}${link.pathname}, drew rectangle \`${drawnId}\`, and saw each participant's shape (${participants.join(', ')}) and the box labelled "${label}".`,
+      `Opened ${link.origin}${link.pathname} as "${name}", drew rectangle \`${drawnId}\`, and saw each participant's shape (${participants.join(', ')}), the box labelled "${label}", and each other browser's cursor with its name (${others.join(', ') || 'none'}).`,
       '',
       '| Peer | Connection | This browser\'s candidate | The peer\'s candidate |',
       '| --- | --- | --- | --- |',
@@ -199,6 +249,11 @@ try {
         .map(({ id, type, x, y, width, height }) => ({ id, type, x, y, width, height })),
       probe: window.chalkline?.doc.getMap('probe').toJSON(),
       peers: window.chalkline?.peers(),
+      name: document.getElementById('name')?.value,
+      cursors: [...(window.chalkline?.api.getAppState().collaborators.values() ?? [])].map(({ username, pointer }) => ({
+        username,
+        pointer,
+      })),
     }))
     .catch((readError) => `unread: ${readError}`);
   console.error(`${name}: the board when the probe failed: ${JSON.stringify(board)}`);
