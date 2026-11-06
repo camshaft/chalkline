@@ -51,7 +51,7 @@ describe('connectDoc', () => {
     expect(shapes(b).toJSON()).toEqual({ left: 'from a', right: 'from b' });
   });
 
-  it('sends a peer whose link broke, as it comes back, the change that hadn't arrived', () => {
+  it("sends a peer whose link broke, as it comes back, the change that hadn't arrived", () => {
     const network = new MemoryNetwork();
     const synced: string[] = [];
     const a = join(network, 'a');

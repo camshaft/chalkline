@@ -52,7 +52,7 @@ describe('MemoryNetwork', () => {
     expect(run(7)).toEqual(first);
   });
 
-  it('breaks the link of a lost message: both peers see a leave, what hadn't arrived is lost, and the link comes back', () => {
+  it("breaks the link of a lost message: both peers see a leave, what hadn't arrived is lost, and the link comes back", () => {
     const network = new MemoryNetwork({ seed: 1 });
     const { seen, peers } = watched(network, ['a', 'b']);
     network.flush();
@@ -93,7 +93,7 @@ describe('MemoryNetwork', () => {
     expect(seen.slice(2)).toEqual(['a saw b leave', 'b saw a leave', 'a saw b join', 'b saw a join']);
   });
 
-  it('takes a peer that leaves off the network, with its messages that hadn't arrived', () => {
+  it("takes a peer that leaves off the network, with its messages that hadn't arrived", () => {
     const network = new MemoryNetwork();
     const { seen, peers } = watched(network, ['a', 'b', 'c']);
     network.flush();
