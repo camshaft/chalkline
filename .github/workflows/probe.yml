@@ -74,10 +74,11 @@ jobs:
         run: npm install
       - name: Install ${{ matrix.name }}
         working-directory: packages/web
-        # The system packages come from the runner's apt mirror, which once took more than eight
-        # minutes for Firefox's fonts: end the step then, so that a rerun can start sooner.
+        # Without --with-deps: the runner image holds the libraries each browser runs on, and the
+        # packages --with-deps added were fonts and video codecs, which the runner's apt mirror
+        # sometimes took more than eight minutes to serve.
         timeout-minutes: 8
-        run: npx playwright install --with-deps ${{ matrix.name }}
+        run: npx playwright install ${{ matrix.name }}
       - name: Build the page
         if: ${{ !inputs.page_url }}
         run: npm run build --workspace @chalkline/web
