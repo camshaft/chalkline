@@ -1,6 +1,7 @@
 name: Pages
 
-# Publishes the web page's build to GitHub Pages from the main branch.
+# Publishes the web page's build to GitHub Pages from the main branch, then runs
+# the live probe against the published page.
 on:
   push:
     branches: [main]
@@ -39,7 +40,15 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
+
+  probe:
+    needs: deploy
+    uses: ./.github/workflows/probe.yml
+    with:
+      page_url: ${{ needs.deploy.outputs.page_url }}

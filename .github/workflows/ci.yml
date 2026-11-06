@@ -29,3 +29,6 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+      # Converts the script's labelled box in Node, without joining a room.
+      - name: Convert draw-box's box
+        run: node packages/web/dist-node/draw-box.mjs --print

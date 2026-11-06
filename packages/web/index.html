@@ -4,11 +4,31 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Chalkline</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font-family: system-ui, sans-serif;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      #status {
+        padding: 0.4rem 0.75rem;
+        font-size: 0.9rem;
+        border-bottom: 1px solid #ddd;
+      }
+      #app {
+        flex: 1;
+        min-height: 0;
+      }
+    </style>
   </head>
   <body>
-    <main>
-      <h1>Chalkline</h1>
-      <p>A distributed whiteboarding and brainstorming tool that doesn't require a server.</p>
-    </main>
+    <div id="status">Joining the room...</div>
+    <div id="app"></div>
+    <script type="module" src="./src/main.ts"></script>
   </body>
 </html>
