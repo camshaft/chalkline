@@ -51,6 +51,10 @@ async function installDom(): Promise<void> {
   HTMLCanvasElement.prototype.getContext = function getContext(this: HTMLCanvasElement) {
     return inertContext(this);
   } as unknown as HTMLCanvasElement['getContext'];
+  // jsdom has no font loading API either. Excalidraw registers its fonts as it measures text, and
+  // draw-box measures text with the metrics provider above, so fonts that load nothing are enough.
+  globalThis.FontFace = InertFontFace as unknown as typeof FontFace;
+  Object.defineProperty(document, 'fonts', { value: new InertFontFaceSet(), configurable: true });
 }
 
 /** A 2D context that holds the properties set on it and whose methods do nothing. */
@@ -70,6 +74,54 @@ function inertContext(canvas: HTMLCanvasElement): unknown {
       return true;
     },
   });
+}
+
+/** A FontFace that keeps its descriptors and counts as loaded without fetching anything. */
+class InertFontFace {
+  readonly status = 'loaded';
+  readonly loaded: Promise<InertFontFace>;
+  readonly display: string;
+  readonly style: string;
+  readonly weight: string;
+  readonly unicodeRange: string;
+
+  constructor(
+    readonly family: string,
+    readonly source: unknown,
+    descriptors: Record<string, string | undefined> = {},
+  ) {
+    this.display = descriptors.display ?? 'auto';
+    this.style = descriptors.style ?? 'normal';
+    this.weight = descriptors.weight ?? 'normal';
+    this.unicodeRange = descriptors.unicodeRange ?? 'U+0-10FFFF';
+    this.loaded = Promise.resolve(this);
+  }
+
+  load(): Promise<InertFontFace> {
+    return this.loaded;
+  }
+}
+
+/** A FontFaceSet whose fonts all count as loaded. */
+class InertFontFaceSet extends Set<InertFontFace> {
+  readonly status = 'loaded';
+  readonly ready: Promise<InertFontFaceSet> = Promise.resolve(this);
+
+  check(): boolean {
+    return true;
+  }
+
+  load(): Promise<InertFontFace[]> {
+    return Promise.resolve([...this]);
+  }
+
+  addEventListener(): void {
+    // The set's fonts never change state, so no listener is ever called.
+  }
+
+  removeEventListener(): void {
+    // Nothing to remove: addEventListener doesn't keep a listener.
+  }
 }
 
 function fontSize(font: string): number {
