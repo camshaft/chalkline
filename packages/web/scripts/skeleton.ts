@@ -10,6 +10,9 @@ import type {
  */
 const CHARACTER_WIDTH = 0.6;
 
+/** Node's EventTarget, read before jsdom is installed. */
+const NodeEventTarget = globalThis.EventTarget;
+
 export interface LabelledBox {
   /** Every element of the box, in the order to add them: the rectangle, then its label. */
   elements: readonly ExcalidrawElement[];
@@ -56,11 +59,14 @@ async function installDom(): Promise<void> {
   globalThis.FontFace = InertFontFace as unknown as typeof FontFace;
   Object.defineProperty(document, 'fonts', { value: new InertFontFaceSet(), configurable: true });
   // Libraries written for browsers, such as Trystero, call addEventListener on the global scope once
-  // they see a window. global-jsdom puts the window there but not its event methods, so they go there too.
+  // they see a window, which global-jsdom puts there without its event methods. Those methods come
+  // from Node's EventTarget, since jsdom's refuses the Node AbortSignal that Trystero passes as the
+  // `signal` option. Nothing in Node sends the window events they listen for, such as "online".
+  const globalEvents = new NodeEventTarget();
   Object.assign(globalThis, {
-    addEventListener: window.addEventListener.bind(window),
-    removeEventListener: window.removeEventListener.bind(window),
-    dispatchEvent: window.dispatchEvent.bind(window),
+    addEventListener: globalEvents.addEventListener.bind(globalEvents),
+    removeEventListener: globalEvents.removeEventListener.bind(globalEvents),
+    dispatchEvent: globalEvents.dispatchEvent.bind(globalEvents),
   });
 }
 
