@@ -1,4 +1,5 @@
 import '@excalidraw/excalidraw/index.css';
+import { connectDoc, trysteroTransport } from '@chalkline/sync';
 import { CaptureUpdateAction, Excalidraw } from '@excalidraw/excalidraw';
 import type { OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
@@ -9,8 +10,6 @@ import * as Y from 'yjs';
 import { bindElements } from './binding';
 import { connectionReport, type ConnectionReport } from './report';
 import { APP_ID, newRoomSecrets, parseRoomFragment, roomFragment, type RoomSecrets } from './room';
-import { connectDoc } from './sync';
-import { trysteroTransport } from './trystero';
 
 /** What the page shows on `window.chalkline`, for the live probe and for debugging. */
 export interface ChalklineHandle {

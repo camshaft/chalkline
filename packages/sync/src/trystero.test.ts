@@ -1,7 +1,7 @@
 import type { Room } from '@trystero-p2p/nostr';
 import { describe, expect, it, vi } from 'vitest';
 import type { Channel } from './sync';
-import { toBytes, trysteroTransport } from './trystero';
+import { ACTIONS, toBytes, trysteroTransport } from './trystero';
 
 interface FakeAction {
   send: ReturnType<typeof vi.fn>;
@@ -31,10 +31,16 @@ describe('trysteroTransport', () => {
 
     await transport.send('state', bytes, 'p1');
     await transport.send('update', bytes);
+    await transport.send('awareness', bytes, 'p2');
 
     expect(actions.get('y-state')?.send).toHaveBeenCalledWith(bytes, { target: 'p1' });
     expect(actions.get('y-update')?.send).toHaveBeenCalledWith(bytes, undefined);
+    expect(actions.get('y-awareness')?.send).toHaveBeenCalledWith(bytes, { target: 'p2' });
     expect(actions.get('y-diff')?.send).not.toHaveBeenCalled();
+  });
+
+  it('names each action in at most the 12 bytes Trystero takes', () => {
+    for (const name of Object.values(ACTIONS)) expect(new TextEncoder().encode(name).length).toBeLessThanOrEqual(12);
   });
 
   it('passes each binary message on with its channel and sender, and drops any other', () => {
@@ -43,9 +49,13 @@ describe('trysteroTransport', () => {
     transport.onMessage((channel, data, from) => got.push([channel, [...data], from]));
 
     actions.get('y-diff')?.onMessage?.(new Uint8Array([4, 5]).buffer, { peerId: 'p2' });
+    actions.get('y-awareness')?.onMessage?.(new Uint8Array([6]), { peerId: 'p1' });
     actions.get('y-update')?.onMessage?.('not binary', { peerId: 'p2' });
 
-    expect(got).toEqual([['diff', [4, 5], 'p2']]);
+    expect(got).toEqual([
+      ['diff', [4, 5], 'p2'],
+      ['awareness', [6], 'p1'],
+    ]);
   });
 
   it('passes joins and leaves to every handler, until a leave handler stops', () => {

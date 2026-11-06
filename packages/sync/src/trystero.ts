@@ -1,14 +1,17 @@
 import type { MessageAction, Room } from '@trystero-p2p/nostr';
 import type { Channel, Transport } from './sync';
 
-/** The Trystero action that carries each channel. */
-const ACTIONS: Record<Channel, string> = { state: 'y-state', diff: 'y-diff', update: 'y-update' };
+/** The Trystero action that carries each channel. Trystero takes an action name of at most 12 bytes. */
+export const ACTIONS: Record<Channel, string> = {
+  state: 'y-state',
+  diff: 'y-diff',
+  update: 'y-update',
+  awareness: 'y-awareness',
+};
 
-/** A `Transport` over a Trystero room, with the room's peers and their leaving. */
+/** A `Transport` over a Trystero room, with the room's peers. */
 export interface RoomTransport extends Transport {
   peers(): string[];
-  /** Calls `handler` as each peer leaves, and returns a function that stops it. */
-  onPeerLeave(handler: (peerId: string) => void): () => void;
 }
 
 /** The bytes of a binary message, or null for a message that isn't binary. */

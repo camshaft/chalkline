@@ -51,6 +51,22 @@ describe('connectDoc', () => {
     expect(shapes(b).toJSON()).toEqual({ left: 'from a', right: 'from b' });
   });
 
+  it("sends a peer whose link broke, as it comes back, the change that hadn't arrived", () => {
+    const network = new MemoryNetwork();
+    const synced: string[] = [];
+    const a = join(network, 'a');
+    const b = join(network, 'b', synced);
+    network.flush();
+
+    shapes(a).set('box', 'sent as the link broke');
+    network.disconnect('a', 'b');
+    network.flush();
+
+    expect(network.dropped).toBe(1);
+    expect(shapes(b).toJSON()).toEqual({ box: 'sent as the link broke' });
+    expect(synced).toEqual(['a', 'a']);
+  });
+
   it("doesn't send on a change that came from another peer", () => {
     const network = new MemoryNetwork();
     const docs = ['a', 'b', 'c'].map((id) => join(network, id));
@@ -84,6 +100,7 @@ describe('connectDoc', () => {
       },
       onMessage: () => {},
       onPeerJoin: (handler) => handler('gone'),
+      onPeerLeave: () => () => {},
     };
     const doc = new Y.Doc();
     connectDoc(doc, failing, { onSendError: (error) => errors.push(error) });
