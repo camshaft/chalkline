@@ -4,8 +4,8 @@ name: Lock file
 # dependency where no one runs npm on their own machine. It merges main into the
 # branch, runs `npm install --package-lock-only`, which keeps each version the lock
 # file pins that the package.json files still allow, commits the result to the
-# branch, and runs CI on the branch's new head. Run it from main with the branch as
-# its input:
+# branch, and runs CI and the Probe workflow on the branch's new head. Run it from
+# main with the branch as its input:
 #
 #   gh workflow run lock.yml --ref main -f branch=<the branch>
 on:
@@ -76,9 +76,11 @@ jobs:
             echo "pushed=true" >> "$GITHUB_OUTPUT"
           fi
       # A push made with this workflow's token doesn't start a workflow run, so this
-      # step runs CI on the branch's new head.
-      - name: Run CI on the new head
+      # step runs CI and the Probe workflow on the branch's new head.
+      - name: Run CI and the probe on the new head
         if: steps.push.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run ci.yml --ref "$BRANCH"
+        run: |
+          gh workflow run ci.yml --ref "$BRANCH"
+          gh workflow run probe.yml --ref "$BRANCH"
