@@ -1,4 +1,8 @@
-import type { ExcalidrawElement, ExcalidrawTextElement } from '@excalidraw/excalidraw/element/types';
+import type {
+  ExcalidrawElement,
+  ExcalidrawTextElement,
+  OrderedExcalidrawElement,
+} from '@excalidraw/excalidraw/element/types';
 
 /**
  * Node has no canvas to measure text on, so each character is measured as 0.6
@@ -29,7 +33,9 @@ export async function labelledBox(label: string, at = { x: 120, y: 420 }): Promi
     { type: 'rectangle', x: at.x, y: at.y, width: 280, height: 100, label: { text: label } },
   ]);
   const box = elements.find((element) => element.type === 'rectangle');
-  const text = elements.find((element): element is ExcalidrawTextElement => element.type === 'text');
+  const text = elements.find(
+    (element): element is OrderedExcalidrawElement & ExcalidrawTextElement => element.type === 'text',
+  );
   if (box === undefined || text === undefined || text.containerId !== box.id || text.originalText !== label) {
     throw new Error(`convertToExcalidrawElements didn't make a rectangle labelled "${label}": ${JSON.stringify(elements)}`);
   }
