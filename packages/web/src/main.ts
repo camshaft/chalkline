@@ -8,8 +8,10 @@ import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as Y from 'yjs';
 import { bindElements } from './binding';
+import { joinErrorText, loadSettings, roomOptions, type ConnectionSettings, type SettingsStorage } from './connection';
 import { connectionReport, type ConnectionReport } from './report';
-import { APP_ID, newRoomSecrets, parseRoomFragment, roomFragment, type RoomSecrets } from './room';
+import { newRoomSecrets, parseRoomFragment, roomFragment, type RoomSecrets } from './room';
+import { connectSettingsButton } from './settings-panel';
 
 /** What the page shows on `window.chalkline`, for the live probe and for debugging. */
 export interface ChalklineHandle {
@@ -17,6 +19,8 @@ export interface ChalklineHandle {
   selfId: string;
   doc: Y.Doc;
   api: ExcalidrawImperativeAPI;
+  /** The connection settings the page joined the room with. */
+  settings: ConnectionSettings;
   peers(): string[];
   onPeerLeave(handler: (peerId: string) => void): () => void;
   /** The connection to each peer, by peer id. */
@@ -46,13 +50,30 @@ function roomFromLink(): RoomSecrets {
   return fresh;
 }
 
+/** The browser's `localStorage`, or null where the browser doesn't let the page use it. */
+function browserStorage(): SettingsStorage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
 async function start(): Promise<ChalklineHandle> {
   const status = pageElement('status');
   const secrets = roomFromLink();
+  const storage = browserStorage();
+  const settings = loadSettings(storage);
+  connectSettingsButton(pageElement('settings-button'), pageElement('settings'), {
+    settings,
+    storage,
+    reload: () => window.location.reload(),
+  });
   const doc = new Y.Doc();
-  const room = joinRoom({ appId: APP_ID, password: secrets.key }, secrets.room, {
-    onJoinError: ({ error }) => {
-      status.textContent = `A peer couldn't connect: ${error}`;
+  const room = joinRoom(roomOptions(secrets, settings), secrets.room, {
+    onJoinError: ({ peerId, error }) => {
+      console.warn(`chalkline: peer ${peerId} couldn't connect: ${error}`);
+      status.textContent = joinErrorText(settings);
     },
   });
   const transport = trysteroTransport(room);
@@ -84,6 +105,7 @@ async function start(): Promise<ChalklineHandle> {
     selfId,
     doc,
     api,
+    settings,
     peers: () => transport.peers(),
     onPeerLeave: (handler) => transport.onPeerLeave(handler),
     connectionReports: async () => {
