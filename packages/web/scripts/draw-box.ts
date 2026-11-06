@@ -15,9 +15,10 @@ Joins a Chalkline board from Node and adds one labelled rectangle to it.
 Options:
   --label <text>       the box's label (default: "Drawn by draw-box")
   --name <name>        the name this script goes by in the room's probe map (default: script)
-  --wait-seen <names>  leave once each named participant marks the box seen, such as chromium,firefox;
+  --wait-seen <names>  leave once each named participant marks the box seen, such as chromium,firefox:
+                       the script then marks done-<name> and waits for each one's bye-<name>;
                        without it, the script stays in the room until Ctrl-C
-  --timeout <seconds>  how long --wait-seen waits before it fails (default: 600)
+  --timeout <seconds>  how long each of --wait-seen's waits lasts (default: 600)
   --print              print the converted elements and exit, without joining a room
   --help               print this text`;
 
@@ -31,11 +32,11 @@ function roomFrom(values: { link?: string; room?: string; key?: string }): RoomS
   throw new Error(USAGE);
 }
 
-/** Resolves once the probe map holds `seen-<name>` for each of `names`. */
-function seenBy(probe: Y.Map<unknown>, names: string[]): Promise<void> {
+/** Resolves once the probe map holds each of `keys`, such as `seen-chromium`. */
+function marked(probe: Y.Map<unknown>, keys: string[]): Promise<void> {
   return new Promise((resolve) => {
     const check = () => {
-      if (names.every((name) => probe.has(`seen-${name}`))) {
+      if (keys.every((key) => probe.has(key))) {
         probe.unobserve(check);
         resolve();
       }
@@ -122,8 +123,10 @@ async function main(): Promise<void> {
     .split(',')
     .map((name) => name.trim())
     .filter((name) => name.length > 0);
+  const timeoutMs = Number(values.timeout) * 1000;
   if (names.length > 0) {
-    await withTimeout(seenBy(probe, names), Number(values.timeout) * 1000, `${names.join(' and ')} to see the box`);
+    const seen = names.map((name) => `seen-${name}`);
+    await withTimeout(marked(probe, seen), timeoutMs, `${names.join(' and ')} to see the box`);
     console.log(`seen by ${names.join(' and ')}: ${JSON.stringify(probe.toJSON())}`);
   } else {
     console.log('Press Ctrl-C to leave the room.');
@@ -135,6 +138,19 @@ async function main(): Promise<void> {
       console.log(`connection to ${peerId}: ${JSON.stringify(await connectionReport(connection))}`);
     } catch (error) {
       console.log(`connection to ${peerId}: its stats couldn't be read (${error instanceof Error ? error.message : String(error)})`);
+    }
+  }
+
+  if (names.length > 0) {
+    // Tell the others that every mark arrived, and stay until each says goodbye: a browser leaves
+    // once it reads done-<name>, so this mark has to reach every one of them first.
+    probe.set(`done-${values.name}`, new Date().toISOString());
+    const byes = names.map((name) => `bye-${name}`);
+    try {
+      await withTimeout(marked(probe, byes), timeoutMs, `${names.join(' and ')} to say goodbye`);
+      console.log(`${names.join(' and ')} said goodbye`);
+    } catch (error) {
+      console.log(`leaving without every goodbye: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   await room.leave();

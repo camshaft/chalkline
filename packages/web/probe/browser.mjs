@@ -1,7 +1,8 @@
 // The live probe's browser: opens the board, draws a rectangle with the mouse,
 // and waits until the board shows each participant's shape and the script's
-// labelled box. The Probe workflow runs one copy on each of two runners, and
-// draw-box on a third.
+// labelled box. It then marks seen-<name>, stays until the script marks
+// done-script, and marks bye-<name> as it leaves. The Probe workflow runs one
+// copy on each of two runners, and draw-box on a third.
 //
 // Settings, from the environment:
 //   PROBE_NAME     this browser's name in the room's probe map, such as chromium
@@ -130,6 +131,30 @@ try {
   );
   console.log(`${name}: the board shows every shape: ${JSON.stringify(seen)}`);
 
+  // Mark this browser's view as seen, and stay until the script has every browser's mark: a
+  // browser that left at once could take its mark with it before any peer received it.
+  await page.evaluate((who) => window.chalkline.doc.getMap('probe').set(`seen-${who}`, new Date().toISOString()), name);
+  await page.evaluate(
+    ({ key, waitMs }) =>
+      new Promise((resolve, reject) => {
+        const probe = window.chalkline.doc.getMap('probe');
+        const timer = setTimeout(() => {
+          probe.unobserve(check);
+          reject(new Error(`timed out waiting for ${key}: ${JSON.stringify(probe.toJSON())}`));
+        }, waitMs);
+        function check() {
+          if (!probe.has(key)) return;
+          probe.unobserve(check);
+          clearTimeout(timer);
+          resolve();
+        }
+        probe.observe(check);
+        check();
+      }),
+    { key: 'done-script', waitMs },
+  );
+  console.log(`${name}: the script has every browser's mark`);
+
   const probeState = await page.evaluate(() => window.chalkline.doc.getMap('probe').toJSON());
   const names = Object.fromEntries(
     Object.entries(probeState)
@@ -145,7 +170,6 @@ try {
     return `| ${peer} | ${report.connectionState ?? 'unknown'} | ${describe(report.local)} | ${describe(report.remote)} |`;
   });
   await page.screenshot({ path: screenshot });
-  await page.evaluate((who) => window.chalkline.doc.getMap('probe').set(`seen-${who}`, new Date().toISOString()), name);
 
   if (process.env.GITHUB_STEP_SUMMARY) {
     const summary = [
@@ -161,31 +185,9 @@ try {
     await appendFile(process.env.GITHUB_STEP_SUMMARY, `${summary.join('\n')}\n`);
   }
 
-  // Stay until the script leaves, so that every peer can still reach this browser while it waits.
-  const scriptId = probeState['peer-script'];
-  const ending = await page.evaluate(
-    ({ scriptId, waitMs }) =>
-      new Promise((resolve) => {
-        const handle = window.chalkline;
-        if (!handle.peers().includes(scriptId)) {
-          resolve('the script had left');
-          return;
-        }
-        let stop = () => {};
-        const timer = setTimeout(() => {
-          stop();
-          resolve('the script was still in the room when the wait ended');
-        }, waitMs);
-        stop = handle.onPeerLeave((peerId) => {
-          if (peerId !== scriptId) return;
-          stop();
-          clearTimeout(timer);
-          resolve('the script left');
-        });
-      }),
-    { scriptId, waitMs },
-  );
-  console.log(`${name}: ${ending}`);
+  // Say goodbye, so that the script may leave as well.
+  await page.evaluate((who) => window.chalkline.doc.getMap('probe').set(`bye-${who}`, new Date().toISOString()), name);
+  console.log(`${name}: said goodbye`);
 } catch (error) {
   process.exitCode = 1;
   console.error(`${name}: the probe failed: ${error instanceof Error ? error.stack : error}`);
