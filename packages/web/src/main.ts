@@ -1,9 +1,10 @@
 import '@excalidraw/excalidraw/index.css';
-import { Awareness, connectAwareness, connectDoc, trysteroTransport } from '@chalkline/sync';
+import { Awareness, connectAwareness, connectDoc, relaysFromAddress, trysteroTransport } from '@chalkline/sync';
+import { joinBoardRoom } from '@chalkline/sync/join';
 import { CaptureUpdateAction, Excalidraw } from '@excalidraw/excalidraw';
 import type { OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type { Collaborator, ExcalidrawImperativeAPI, SocketId } from '@excalidraw/excalidraw/types';
-import { joinRoom, selfId } from '@trystero-p2p/nostr';
+import { selfId } from '@trystero-p2p/nostr';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as Y from 'yjs';
@@ -102,7 +103,10 @@ async function start(): Promise<ChalklineHandle> {
   const doc = new Y.Doc();
   const awareness = new Awareness(doc);
   bindNameField(pageInput('name'), awareness, storage ?? undefined);
-  const room = joinRoom(roomOptions(secrets, settings), secrets.room, {
+  // A page that the local-network mode serves names that machine's relay in its address, and finds
+  // the other participants through it in place of the Nostr relays.
+  const relays = relaysFromAddress(window.location.href);
+  const room = joinBoardRoom(roomOptions(secrets, settings), secrets.room, relays, {
     onJoinError: ({ peerId, error }) => {
       console.warn(`chalkline: peer ${peerId} couldn't connect: ${error}`);
       status.textContent = joinErrorText(settings);
