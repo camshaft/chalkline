@@ -46,6 +46,30 @@ async function installDom(): Promise<void> {
   if (typeof globalThis.document !== 'undefined') return;
   const { default: globalJsdom } = await import('global-jsdom');
   globalJsdom(undefined, { pretendToBeVisual: true, url: 'https://chalkline.invalid/' });
+  // jsdom's canvas has no 2D context, and Excalidraw checks which context features exist as it
+  // loads. draw-box doesn't draw anything, so a context whose methods do nothing is enough.
+  HTMLCanvasElement.prototype.getContext = function getContext(this: HTMLCanvasElement) {
+    return inertContext(this);
+  } as unknown as HTMLCanvasElement['getContext'];
+}
+
+/** A 2D context that holds the properties set on it and whose methods do nothing. */
+function inertContext(canvas: HTMLCanvasElement): unknown {
+  const state: Record<PropertyKey, unknown> = { canvas, filter: 'none', font: '10px sans-serif' };
+  const nothing = () => undefined;
+  return new Proxy(state, {
+    has: () => true,
+    get: (target, property) => {
+      if (property in target) return target[property];
+      if (typeof property === 'symbol' || property === 'then') return undefined;
+      if (property === 'measureText') return (text: string) => ({ width: text.length * 6 });
+      return nothing;
+    },
+    set: (target, property, value) => {
+      target[property] = value;
+      return true;
+    },
+  });
 }
 
 function fontSize(font: string): number {
