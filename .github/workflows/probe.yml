@@ -13,6 +13,14 @@ on:
         description: The page to test, such as https://camshaft.github.io/chalkline/. Left empty, each browser tests the branch's build.
         type: string
         required: false
+      room:
+        description: The room to join, such as one a browser on another network opened. Left empty, the run makes a new room.
+        type: string
+        required: false
+      key:
+        description: The room's password, given with room.
+        type: string
+        required: false
   workflow_call:
     inputs:
       page_url:
@@ -32,9 +40,17 @@ jobs:
       key: ${{ steps.room.outputs.key }}
     steps:
       - id: room
+        env:
+          ROOM: ${{ inputs.room }}
+          KEY: ${{ inputs.key }}
         run: |
-          echo "room=probe-$(openssl rand -hex 8)" >> "$GITHUB_OUTPUT"
-          echo "key=$(openssl rand -hex 16)" >> "$GITHUB_OUTPUT"
+          if [ -n "$ROOM" ] && [ -n "$KEY" ]; then
+            echo "room=$ROOM" >> "$GITHUB_OUTPUT"
+            echo "key=$KEY" >> "$GITHUB_OUTPUT"
+          else
+            echo "room=probe-$(openssl rand -hex 8)" >> "$GITHUB_OUTPUT"
+            echo "key=$(openssl rand -hex 16)" >> "$GITHUB_OUTPUT"
+          fi
 
   browser:
     name: Browser (${{ matrix.name }})
@@ -58,6 +74,9 @@ jobs:
         run: npm install
       - name: Install ${{ matrix.name }}
         working-directory: packages/web
+        # The system packages come from the runner's apt mirror, which once took more than eight
+        # minutes for Firefox's fonts: end the step then, so that a rerun can start sooner.
+        timeout-minutes: 8
         run: npx playwright install --with-deps ${{ matrix.name }}
       - name: Build the page
         if: ${{ !inputs.page_url }}
