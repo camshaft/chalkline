@@ -15,17 +15,13 @@ on:
         description: The branch to write package-lock.json on, such as a pull request's branch. It can't be main.
         type: string
         required: true
-  # Writes the first lock file on the branch that adds this workflow; the pull request
-  # takes this trigger out before it merges.
-  push:
-    branches: [lock-file]
 
 permissions:
   contents: write
   actions: write
 
 concurrency:
-  group: lock-${{ inputs.branch || github.ref_name }}
+  group: lock-${{ inputs.branch }}
   cancel-in-progress: false
 
 jobs:
@@ -33,7 +29,7 @@ jobs:
     name: Write package-lock.json
     runs-on: ubuntu-latest
     env:
-      BRANCH: ${{ inputs.branch || github.ref_name }}
+      BRANCH: ${{ inputs.branch }}
     steps:
       - name: Refuse main
         if: env.BRANCH == 'main'
