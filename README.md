@@ -19,6 +19,8 @@ It stays in the room until you press Ctrl-C. `--help` lists its options.
 
 ## Development
 
+The repository is one npm workspace. `packages/sync` holds the board's shared state and the adapter that carries it between participants over Trystero, with an in-memory network for its tests that loses, delays and reorders messages. `packages/web` holds the page and `draw-box`.
+
 CI runs `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` on each pull request and on `main`, and the Pages workflow publishes `main` to GitHub Pages.
 
 Installs use `npm ci`, which installs the versions package-lock.json pins. A change that adds, removes or updates a dependency changes package-lock.json too: run `npm install` on your machine, or run the Lock file workflow on the change's branch with `gh workflow run lock.yml --ref main -f branch=<the branch>`, which writes package-lock.json there and runs CI on the new head.
