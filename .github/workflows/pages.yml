@@ -26,7 +26,7 @@ jobs:
         with:
           node-version: 22
       - name: Install
-        run: npm install
+        run: npm ci
       - name: Build
         run: npm run build --workspace @chalkline/web
       - uses: actions/configure-pages@v5
