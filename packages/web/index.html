@@ -26,6 +26,15 @@
       #status {
         flex: 1;
       }
+      #bar > label {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      #name {
+        font: inherit;
+        width: 12rem;
+      }
       #app {
         flex: 1;
         min-height: 0;
@@ -86,6 +95,7 @@
   <body>
     <div id="bar">
       <span id="status">Joining the room...</span>
+      <label>Your name <input id="name" type="text" autocomplete="nickname" /></label>
       <button id="settings-button" type="button">Connection settings</button>
     </div>
     <div id="settings" hidden></div>
