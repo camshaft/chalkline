@@ -1,3 +1,4 @@
+export { Awareness } from 'y-protocols/awareness';
 export { connectAwareness, type AwarenessOptions } from './awareness';
 export {
   MemoryNetwork,
