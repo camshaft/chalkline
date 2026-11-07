@@ -32,10 +32,14 @@ describe('trysteroTransport', () => {
     await transport.send('state', bytes, 'p1');
     await transport.send('update', bytes);
     await transport.send('awareness', bytes, 'p2');
+    await transport.send('peers', bytes, 'p1');
+    await transport.send('resync', bytes, 'p2');
 
     expect(actions.get('y-state')?.send).toHaveBeenCalledWith(bytes, { target: 'p1' });
     expect(actions.get('y-update')?.send).toHaveBeenCalledWith(bytes, undefined);
     expect(actions.get('y-awareness')?.send).toHaveBeenCalledWith(bytes, { target: 'p2' });
+    expect(actions.get('y-peers')?.send).toHaveBeenCalledWith(bytes, { target: 'p1' });
+    expect(actions.get('y-resync')?.send).toHaveBeenCalledWith(bytes, { target: 'p2' });
     expect(actions.get('y-diff')?.send).not.toHaveBeenCalled();
   });
 
