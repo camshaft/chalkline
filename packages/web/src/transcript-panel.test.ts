@@ -213,6 +213,40 @@ describe('the chat panel', () => {
     expect(field.style.overflowY).toBe('');
   });
 
+  it("measures a content-box field without its padding, doesn't cap a field whose line height it can't read, and keeps a field the page doesn't show at its one row", () => {
+    const { field } = page();
+    expect(field.getAttribute('enterkeyhint')).toBe('send');
+    let height = 0;
+    Object.defineProperty(field, 'scrollHeight', { configurable: true, get: () => height });
+    const type = (text: string) => {
+      field.value = text;
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+
+    // The page doesn't show the field, so its scrollHeight is 0: it keeps its one row.
+    type('draw a box');
+    expect(field.style.height).toBe('');
+
+    // Without a line height to read, the field takes the height its text needs.
+    height = 500;
+    type('draw a box');
+    expect(field.style.height).toBe('500px');
+    expect(field.style.overflowY).toBe('hidden');
+
+    // A content-box height leaves out the padding that scrollHeight holds.
+    field.style.setProperty('box-sizing', 'content-box');
+    field.style.setProperty('line-height', '20px');
+    field.style.setProperty('padding-top', '4px');
+    field.style.setProperty('padding-bottom', '4px');
+    height = 28;
+    type('draw a box');
+    expect(field.style.height).toBe('20px');
+    height = 208;
+    type('ten lines of text');
+    expect(field.style.height).toBe('120px');
+    expect(field.style.overflowY).toBe('auto');
+  });
+
   it('goes back to one line once a message is sent, on Send and on Enter', () => {
     const { panel, transcript, field } = page();
     const type = laidOut(field);
