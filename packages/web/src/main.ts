@@ -36,6 +36,7 @@ import { keepBoard, storeName, type KeptBoard } from './keep';
 import { Followed } from './followed';
 import { ChalklineMenu, type FileCommands } from './menu';
 import { bindRequests, mermaidConverter } from './mermaid';
+import { bindMissedReleases } from './missed-release';
 import { bindPenSideButton, sideButtonSetting } from './pen';
 import {
   bindPresence,
@@ -284,6 +285,9 @@ async function start(): Promise<ChalklineHandle> {
     },
     () => sideButton.get(),
   );
+  // A press of a pen or a mouse ends the press on the board whose release the page didn't receive, which
+  // Excalidraw would go on counting, so that the new press acts.
+  bindMissedReleases(pageElement('app'));
   const shared = doc.getMap<OrderedExcalidrawElement>('elements');
   bindElements(shared, {
     elements: () => api.getSceneElementsIncludingDeleted(),
