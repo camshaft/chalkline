@@ -6,8 +6,9 @@
 // version on the element, reads as the person's. A text's change mark also records the words the
 // agent wrote, which stay the agent's after a later change that leaves them as they are, such as a
 // person's move of the text. Each page's binding also records on the board's copy of each text the
-// words mark: its words, and when they last changed. This module reads and writes the three marks,
-// and runs in Node and in the browser alike.
+// words mark: its words, and when they last changed, and on the board's copy of each freehand
+// stroke the drawing mark: a digest of its place and points, and when they last changed. This
+// module reads and writes the four marks, and runs in Node and in the browser alike.
 
 /** The member of an element's `customData` that holds Chalkline's fields. */
 export const CUSTOM_DATA = 'chalkline';
@@ -144,6 +145,67 @@ export function withWordsChanged<T extends object>(element: T, current: unknown)
   return at === undefined ? element : changed(at);
 }
 
+/**
+ * The drawing mark: a digest of the drawing of a freehand stroke, its place and its points, as
+ * `drawingOf` reads it, and when a page last changed them, in milliseconds since the epoch. Each
+ * page's binding records it on the board's copy of each stroke it writes, so that a reader that
+ * receives only the newest copy of a stroke, as a peer's copy of the board holds it, tells a change
+ * of its place or its points from a save that leaves them as they are, such as where Excalidraw
+ * sets a new version or index on the stroke.
+ */
+export interface DrawingChanged {
+  drawing: string;
+  at: number;
+}
+
+/**
+ * A digest of the drawing of the freehand stroke `element` holds: its x, its y and its points, as
+ * 8 hex digits. Two copies of a stroke with the same place and points have the same digest,
+ * whatever else differs, such as their version, index or `updated`. Undefined where the element
+ * isn't a freehand stroke.
+ */
+export function drawingOf(element: unknown): string | undefined {
+  const fields = recordOf(element);
+  if (fields?.type !== 'freedraw') return undefined;
+  return digest(JSON.stringify([fields.x, fields.y, fields.points]));
+}
+
+/**
+ * When the place and points of the freehand stroke `element` holds last changed, as its drawing
+ * mark records it, where the mark holds the stroke's drawing. Undefined where the element isn't a
+ * stroke or doesn't hold a mark, and where its mark holds another drawing, as where a page that
+ * doesn't write the mark moved the stroke or changed its points and kept the element's
+ * `customData` as it was.
+ */
+export function drawingChangedOf(element: unknown): number | undefined {
+  const drawing = drawingOf(element);
+  const mark = recordOf(fieldsOf(element)?.drawingChanged);
+  const at = mark?.at;
+  if (drawing === undefined || mark?.drawing !== drawing || !finite(at)) return undefined;
+  return at;
+}
+
+/**
+ * A copy of the freehand stroke `element`, which a page writes over `current`, the board's copy
+ * of the element before the change, or undefined where the board doesn't hold one, whose drawing
+ * mark records when its place and points last changed: the time the mark of `current` records,
+ * where the place and points are those of `current`, and else the element's `updated`, the time
+ * of the change that drew them. It answers `element` itself where the element isn't a stroke or
+ * doesn't hold an `updated` time, and where its place and points are those of `current` and
+ * `current` doesn't record when they changed, since the page can't tell. The other members of the
+ * element, of its `customData` and of Chalkline's member there stay as they are, and `element`
+ * itself doesn't change.
+ */
+export function withDrawingChanged<T extends object>(element: T, current: unknown): T {
+  const drawing = drawingOf(element);
+  const { updated } = element as { updated?: unknown };
+  if (drawing === undefined || !finite(updated)) return element;
+  const changed = (at: number): T => withFields(element, { drawingChanged: { drawing, at } satisfies DrawingChanged });
+  if (drawingOf(current) !== drawing) return changed(updated);
+  const at = drawingChangedOf(current);
+  return at === undefined ? element : changed(at);
+}
+
 /** A copy of `element` whose Chalkline member of `customData` holds `fields` beside its other members. */
 function withFields<T extends object>(element: T, fields: Record<string, unknown>): T {
   const customData = recordOf((element as { customData?: unknown }).customData) ?? {};
@@ -174,6 +236,15 @@ function agentIn(value: unknown): Creator | undefined {
   const agent = recordOf(value);
   if (agent?.kind !== 'agent' || typeof agent.name !== 'string') return undefined;
   return { kind: 'agent', name: agent.name };
+}
+
+/** The 32-bit FNV-1a hash of the UTF-16 code units of `text`, as 8 hex digits. */
+function digest(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
 function finite(value: unknown): value is number {

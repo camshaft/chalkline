@@ -1,4 +1,4 @@
-import { withWordsChanged, wordsChangedOf } from '@chalkline/mcp/creator';
+import { drawingChangedOf, withWordsChanged, wordsChangedOf } from '@chalkline/mcp/creator';
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import { bindElements, LOCAL, localChanges, mergeShared, wins, type Canvas } from './binding';
@@ -15,6 +15,8 @@ interface Shape {
   originalText?: string;
   updated?: number;
   x?: number;
+  y?: number;
+  points?: number[][];
   customData?: Record<string, unknown>;
 }
 
@@ -332,5 +334,41 @@ describe("the map's copy of a text", () => {
 
     expect(shared.get('note')?.version).toBe(2);
     expect(shared.get('note')?.customData).toBeUndefined();
+  });
+});
+
+function scrawl(id: string, version: number, points: number[][], updated: number, x = 0): Shape {
+  return { id, version, versionNonce: 1, index: 'a0', type: 'freedraw', x, y: 0, points, updated };
+}
+
+describe("the map's copy of a freehand stroke", () => {
+  it("keeps when the stroke's place and points last changed across a save that leaves them as they are, and sets it at a change of either", () => {
+    const { shared, canvas } = bound();
+    canvas.edit([scrawl('line', 1, [[0, 0], [10, 10]], 1000)]);
+    expect(drawingChangedOf(shared.get('line'))).toBe(1000);
+
+    // The page saves the stroke again with a new version and index, and the same place and points.
+    canvas.edit([{ ...scrawl('line', 2, [[0, 0], [10, 10]], 2000), index: 'a1' }]);
+    expect(shared.get('line')).toMatchObject({ version: 2, index: 'a1', updated: 2000 });
+    expect(drawingChangedOf(shared.get('line'))).toBe(1000);
+    // The canvas keeps its own object, which doesn't hold the mark.
+    expect(canvas.current[0].customData).toBeUndefined();
+
+    canvas.edit([scrawl('line', 3, [[0, 0], [10, 10], [20, 5]], 3000)]);
+    expect(drawingChangedOf(shared.get('line'))).toBe(3000);
+
+    canvas.edit([scrawl('line', 4, [[0, 0], [10, 10], [20, 5]], 4000, 40)]);
+    expect(drawingChangedOf(shared.get('line'))).toBe(4000);
+  });
+
+  it("leaves the mark out where the map's copy doesn't record when the same place and points changed", () => {
+    const { doc, shared, canvas } = bound();
+    // A page that doesn't write the mark drew the stroke.
+    fromPeer(doc, scrawl('line', 1, [[0, 0], [10, 10]], 1000));
+
+    canvas.edit([{ ...canvas.current[0], version: 2, versionNonce: 5, updated: 2000 }]);
+
+    expect(shared.get('line')?.version).toBe(2);
+    expect(shared.get('line')?.customData).toBeUndefined();
   });
 });

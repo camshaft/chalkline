@@ -5,8 +5,11 @@ import {
   changerOf,
   creatorOf,
   CUSTOM_DATA,
+  drawingChangedOf,
+  drawingOf,
   withChange,
   withCreator,
+  withDrawingChanged,
   withWordsChanged,
   wordsChangedOf,
   type Creator,
@@ -244,6 +247,111 @@ describe('withWordsChanged', () => {
     expect(written.customData).toEqual({
       other: 1,
       [CUSTOM_DATA]: { note: 'kept', wordsChanged: { words: 'draw a box', at: 1000 } },
+    });
+    expect(element).toEqual(before);
+  });
+});
+
+/** A person's freehand stroke at `x` and `y` through `points`, as a page last changed it at `updated`. */
+const scrawl = (x: number, y: number, points: number[][], updated = 1000): Record<string, unknown> => ({
+  id: 'scrawl',
+  type: 'freedraw',
+  version: 1,
+  versionNonce: 1,
+  x,
+  y,
+  points,
+  updated,
+});
+
+describe('drawingOf', () => {
+  it('is the same for two copies of a stroke with the same place and points, and differs where either differs', () => {
+    const drawing = drawingOf(scrawl(10, 20, [[0, 0], [30, 40]]));
+    expect(drawing).toMatch(/^[0-9a-f]{8}$/);
+    // A save of the stroke: a new version, index and `updated`, with the same place and points.
+    expect(drawingOf({ ...scrawl(10, 20, [[0, 0], [30, 40]], 2000), version: 2, index: 'a5' })).toBe(drawing);
+    expect(drawingOf(scrawl(15, 20, [[0, 0], [30, 40]]))).not.toBe(drawing);
+    expect(drawingOf(scrawl(10, 25, [[0, 0], [30, 40]]))).not.toBe(drawing);
+    expect(drawingOf(scrawl(10, 20, [[0, 0], [30, 41]]))).not.toBe(drawing);
+  });
+
+  it("is undefined for an element that isn't a freehand stroke", () => {
+    for (const value of [undefined, 'freedraw', note('draw a box'), { ...scrawl(0, 0, [[0, 0]]), type: 'line' }]) {
+      expect(drawingOf(value)).toBeUndefined();
+    }
+  });
+});
+
+describe('drawingChangedOf', () => {
+  it("is the time the drawing mark records where it holds the stroke's place and points", () => {
+    expect(drawingChangedOf(withDrawingChanged(scrawl(10, 20, [[0, 0], [30, 40]], 1000), undefined))).toBe(1000);
+  });
+
+  it('is undefined without a mark, and for a mark of another place or other points, or without a time', () => {
+    const marked = withDrawingChanged(scrawl(10, 20, [[0, 0], [30, 40]], 1000), undefined);
+    const untimed = { drawingChanged: { drawing: drawingOf(marked), at: '1000' } };
+    for (const value of [
+      undefined,
+      scrawl(10, 20, [[0, 0], [30, 40]]),
+      // A page that doesn't write the mark moved the stroke, or changed its points, and kept the
+      // custom data as it was.
+      { ...marked, x: 50 },
+      { ...marked, points: [[0, 0], [30, 41]] },
+      { ...scrawl(10, 20, [[0, 0], [30, 40]]), customData: { [CUSTOM_DATA]: untimed } },
+      { ...marked, type: 'line' },
+    ]) {
+      expect(drawingChangedOf(value)).toBeUndefined();
+    }
+  });
+});
+
+describe('withDrawingChanged', () => {
+  it("records the element's `updated` for a stroke the board doesn't hold yet, and for a new place or new points", () => {
+    expect(drawingChangedOf(withDrawingChanged(scrawl(10, 20, [[0, 0], [30, 40]], 1000), undefined))).toBe(1000);
+
+    const current = withDrawingChanged(scrawl(10, 20, [[0, 0], [30, 40]], 1000), undefined);
+    expect(drawingChangedOf(withDrawingChanged(scrawl(50, 20, [[0, 0], [30, 40]], 2000), current))).toBe(2000);
+    expect(drawingChangedOf(withDrawingChanged(scrawl(10, 20, [[0, 0], [30, 40], [5, 5]], 3000), current))).toBe(3000);
+  });
+
+  it("keeps the time the board's copy records where the place and points are the same, whatever else changed", () => {
+    const current = withDrawingChanged(scrawl(10, 20, [[0, 0], [30, 40]], 1000), undefined);
+    // A save of the stroke and a change of its color: a new version, index and `updated`, with the
+    // same place and points.
+    const saved = { ...scrawl(10, 20, [[0, 0], [30, 40]], 2000), version: 2, index: 'a5', strokeColor: '#e03131' };
+
+    const written = withDrawingChanged(saved, current);
+
+    expect(drawingChangedOf(written)).toBe(1000);
+    expect(written).toMatchObject({ version: 2, index: 'a5', updated: 2000, strokeColor: '#e03131' });
+  });
+
+  it("answers the element itself where the board's copy doesn't record when the same place and points changed", () => {
+    const saved = { ...scrawl(10, 20, [[0, 0], [30, 40]], 2000), version: 2 };
+    expect(withDrawingChanged(saved, scrawl(10, 20, [[0, 0], [30, 40]], 1000))).toBe(saved);
+
+    // The board's copy holds a mark of another place, which a page that doesn't write the mark moved
+    // the stroke from.
+    const stale = { ...withDrawingChanged(scrawl(50, 20, [[0, 0], [30, 40]], 500), undefined), x: 10 };
+    expect(withDrawingChanged(saved, stale)).toBe(saved);
+  });
+
+  it("answers the element itself where it isn't a freehand stroke or doesn't hold an `updated` time", () => {
+    const shape = { id: 'box', type: 'rectangle', x: 0, y: 0, updated: 1000 };
+    expect(withDrawingChanged(shape, undefined)).toBe(shape);
+    const untimed = { id: 'scrawl', type: 'freedraw', x: 0, y: 0, points: [[0, 0]] };
+    expect(withDrawingChanged(untimed, undefined)).toBe(untimed);
+  });
+
+  it("keeps the other members of the element's custom data, and leaves the element as it was", () => {
+    const element = { ...scrawl(10, 20, [[0, 0], [30, 40]], 1000), customData: { other: 1, [CUSTOM_DATA]: { note: 'kept' } } };
+    const before = structuredClone(element);
+
+    const written = withDrawingChanged(element, undefined);
+
+    expect(written.customData).toEqual({
+      other: 1,
+      [CUSTOM_DATA]: { note: 'kept', drawingChanged: { drawing: drawingOf(element), at: 1000 } },
     });
     expect(element).toEqual(before);
   });
