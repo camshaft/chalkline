@@ -1,4 +1,14 @@
-import { appendEntry, connectDoc, MemoryNetwork, transcriptOf, type TranscriptEntry, type TranscriptVia } from '@chalkline/sync';
+import {
+  appendEntry,
+  connectDoc,
+  feedbackOf,
+  MemoryNetwork,
+  transcriptOf,
+  writeFeedback,
+  type Feedback,
+  type TranscriptEntry,
+  type TranscriptVia,
+} from '@chalkline/sync';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { ELEMENTS } from './board';
@@ -6,6 +16,7 @@ import { withChange, withCreator, withDrawingChanged, withWordsChanged, type Cre
 import {
   BOARD_PAUSE_MS,
   listen,
+  listenFeedback,
   listenSketches,
   listenTexts,
   listenToBoard,
@@ -13,6 +24,7 @@ import {
   PAUSE_MS,
   watchRoom,
   type BoardListenOptions,
+  type FeedbackOpened,
   type Heard,
   type Line,
   type Listener,
@@ -800,6 +812,159 @@ describe('listenSketches', () => {
   });
 });
 
+/** A feedback Ada wrote on the box `seconds` after the listener starts, which no agent answered. */
+const feedback = (id: string, seconds: number, text = 'can we move this up a bit?'): Feedback => ({
+  id,
+  by: 'Ada',
+  at: at(seconds),
+  text,
+  region: { x: 0, y: 0, width: 100, height: 50 },
+  shapes: ['box'],
+  status: 'open',
+  answer: null,
+});
+
+/** `record` as an agent answered it `seconds` after the listener starts. */
+const answered = (record: Feedback, seconds: number): Feedback => ({
+  ...record,
+  status: 'answered',
+  answer: { by: 'Claude', at: at(seconds), text: 'moved the box up' },
+});
+
+/** `record` as a person reopened it, which keeps its answer. */
+const reopened = (record: Feedback): Feedback => ({ ...record, status: 'open' });
+
+/** The line the listener prints for `record`, which became open at `when`. */
+const opened = (record: Feedback, when: string): FeedbackOpened => ({
+  at: when,
+  kind: 'feedback',
+  id: record.id,
+  by: record.by,
+  text: record.text,
+  shapes: record.shapes,
+});
+
+interface Reading {
+  doc: Y.Doc;
+  board: Y.Map<unknown>;
+  /** Each line the listener would print, in order. */
+  lines: FeedbackOpened[];
+  listener: Listener;
+}
+
+/** A board's copy whose feedback holds `records`, and a listener of its feedback that starts at `START`. */
+function reading(records: Feedback[] = []): Reading {
+  const doc = new Y.Doc();
+  const board = feedbackOf(doc);
+  for (const record of records) writeFeedback(board, record);
+  const lines: FeedbackOpened[] = [];
+  const listener = listenFeedback(doc, { after: START, onLine: (line) => lines.push(line) });
+  return { doc, board, lines, listener };
+}
+
+describe('listenFeedback', () => {
+  it('prints a line at once for a feedback a person writes after the start, and leaves out one written before it', () => {
+    const { board, lines } = reading();
+    // A peer's copy of the board brings a feedback written before the start, and one written at the start.
+    writeFeedback(board, feedback('old', -60, 'an old request'));
+    writeFeedback(board, feedback('start', 0, 'written as the listener started'));
+    expect(lines).toEqual([]);
+
+    const record = feedback('move', 25);
+    writeFeedback(board, record);
+    expect(lines).toEqual([opened(record, at(25))]);
+  });
+
+  it('prints the feedback that one change opens in the order of its time', () => {
+    const { doc, board, lines } = reading();
+    const later = feedback('later', 30, 'and add a label');
+    const earlier = feedback('earlier', 20);
+    doc.transact(() => {
+      writeFeedback(board, later);
+      writeFeedback(board, earlier);
+    });
+    expect(lines).toEqual([opened(earlier, at(20)), opened(later, at(30))]);
+  });
+
+  it("prints a line for a feedback a person reopens, at the time the listener receives the reopening, and none for an agent's answer or a peer's copy of the same record", () => {
+    const { board, lines } = reading();
+    const record = feedback('move', 25);
+    writeFeedback(board, record);
+    const answer = answered(record, 40);
+    writeFeedback(board, answer);
+    // A peer writes the same answered record again.
+    writeFeedback(board, answer);
+    expect(lines).toEqual([opened(record, at(25))]);
+
+    vi.setSystemTime(START + 90_000);
+    writeFeedback(board, reopened(answer));
+    // A peer writes the same open record again.
+    writeFeedback(board, reopened(answer));
+    expect(lines).toEqual([opened(record, at(25)), opened(record, at(90))]);
+  });
+
+  it('leaves out the feedback the board held open before the listener started, and prints a later reopening of it', () => {
+    const old = feedback('old', -60);
+    const moved = feedback('moved', -50, 'and this one');
+    const { board, lines } = reading([old, reopened(answered(moved, -40))]);
+    expect(lines).toEqual([]);
+
+    vi.setSystemTime(START + 30_000);
+    const answer = answered(old, 20);
+    writeFeedback(board, answer);
+    writeFeedback(board, reopened(answer));
+    expect(lines).toEqual([opened(old, at(30))]);
+  });
+
+  it("receives a page's feedback through the board's network, and leaves out a reopened one whose answer came at or before `--after`", () => {
+    vi.setSystemTime(START + 5_000);
+    const network = new MemoryNetwork();
+    const page = new Y.Doc();
+    const board = feedbackOf(page);
+    // `--after` sets a time a minute before the listener starts. The page holds a feedback that an
+    // agent answered before that time and a person reopened, one answered at that time and
+    // reopened, one answered after it and reopened, and one written after it that no agent answered.
+    const before = feedback('before', -300, 'make it blue');
+    const atAfter = feedback('at-after', -300, 'make it green');
+    const since = feedback('since', -300, 'make it red');
+    const unanswered = feedback('unanswered', -20, 'and add a label');
+    for (const record of [answered(before, -90), answered(atAfter, -60), answered(since, -30)]) {
+      writeFeedback(board, reopened(record));
+    }
+    writeFeedback(board, unanswered);
+    connectDoc(page, network.join('page'));
+
+    const helper = new Y.Doc();
+    const lines: FeedbackOpened[] = [];
+    listenFeedback(helper, { after: START - 60_000, onLine: (line) => lines.push(line) });
+    connectDoc(helper, network.join('listener'));
+    network.flush();
+    expect(lines).toHaveLength(2);
+    expect(lines).toEqual(expect.arrayContaining([opened(unanswered, at(-20)), opened(since, at(5))]));
+  });
+
+  it("reads a deleted feedback, or a value under its id that doesn't read as a feedback, as not open, so that its next open copy prints a line", () => {
+    const { board, lines } = reading();
+    const record = feedback('move', 25);
+    writeFeedback(board, record);
+    board.set('move', { id: 'move', text: 'a value without the other fields' });
+    vi.setSystemTime(START + 60_000);
+    writeFeedback(board, record);
+    board.delete('move');
+    vi.setSystemTime(START + 90_000);
+    writeFeedback(board, record);
+    expect(lines).toEqual([opened(record, at(25)), opened(record, at(60)), opened(record, at(90))]);
+  });
+
+  it('prints nothing once stopped', () => {
+    const { board, lines, listener } = reading();
+    listener.stop();
+    writeFeedback(board, feedback('move', 25));
+    listener.flush();
+    expect(lines).toEqual([]);
+  });
+});
+
 describe('listenToBoard', () => {
   it("prints what people say, write and draw, each as its line, and nothing for an agent's shape", () => {
     const doc = new Y.Doc();
@@ -859,6 +1024,21 @@ describe('listenToBoard', () => {
       { at: at(70), kind: 'text', text: 'a box here' },
       { at: at(70), kind: 'sketch', ids: ['one'], box: { x: 0, y: 0, width: 5, height: 5 } },
     ]);
+  });
+
+  it('prints a line at once for each feedback that becomes open', () => {
+    const doc = new Y.Doc();
+    const lines: Line[] = [];
+    listenToBoard(doc, {
+      after: START,
+      start: START,
+      pauseMs: PAUSE_MS,
+      boardPauseMs: BOARD_PAUSE_MS,
+      print: (line) => lines.push(line),
+    });
+    const record = feedback('move', 25);
+    writeFeedback(feedbackOf(doc), record);
+    expect(lines).toEqual([opened(record, at(25))]);
   });
 });
 
@@ -932,6 +1112,7 @@ describe('parseListenArgs', () => {
   it('answers --help with the usage text', () => {
     expect(parseListenArgs(['--help'], START)).toEqual({ help: true });
     expect(LISTEN_USAGE).toMatch(/^Usage: chalkline-mcp listen <board link>/);
+    expect(LISTEN_USAGE).toContain('{"at", "kind": "feedback", "id", "by", "text", "shapes"}');
   });
 
   it("refuses a pause, a time or a link it can't read, and a call that doesn't give one link", () => {
