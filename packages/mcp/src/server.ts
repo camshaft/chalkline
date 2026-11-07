@@ -9,7 +9,7 @@ import type { Creator } from './creator';
 import { connect, deleteShapes, updateShape } from './edit';
 import { renderBoard, RenderError } from './render';
 import { pendingRequests, RequestError, waitForRequest, writeMermaidRequest } from './requests';
-import { boardShapeSchema, changeSchema, connectionSchema, deletionSchema, shapeSchema } from './shapes';
+import { boardShapeSchema, changeSchema, connectionSchema, deletionSchema, LISTED_POINTS, shapeSchema } from './shapes';
 import { registerTranscript } from './transcript';
 
 /** A Mermaid request's state, as add_mermaid and get_request answer it. */
@@ -51,7 +51,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
     {
       title: 'Read the board',
       description:
-        "Reads the board: every shape on it, from back to front, with its id, kind, position, size and label, its stroke and background colors, each style field, font and alignment that isn't Excalidraw's default, for an arrow the ids of the shapes it starts and ends at, and for a shape an agent added, its creator; and, in pending, each Mermaid request that no page has converted yet. An arrow's or a line's width and height say how far its last point lies right of and below its first, as add_shapes reads them.",
+        `Reads the board: every shape on it, from back to front, with its id, kind, position, size and label, its stroke and background colors, each style field, font and alignment that isn't Excalidraw's default, for an arrow the ids of the shapes it starts and ends at, for a line, an arrow or a freehand stroke its points, and for a shape an agent added, its creator; and, in pending, each Mermaid request that no page has converted yet. An arrow's or a line's width and height say how far its last point lies right of and below its first, as add_shapes reads them. Of a stroke that holds more than ${LISTED_POINTS} points, it lists ${LISTED_POINTS} of them, evenly spaced from its first to its last, and their count in pointCount.`,
       outputSchema: {
         shapes: z.array(boardShapeSchema),
         pending: z.array(z.object({ id: z.string(), kind: z.literal('mermaid') })),
@@ -108,10 +108,14 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       title: 'Add shapes to the board',
       description: [
         "Adds shapes to the board in Excalidraw's skeleton format, above the shapes on it, and answers each new shape's id, in the order of the call's shapes.",
-        'Each shape sets its type (rectangle, ellipse, diamond, text, arrow or line), its x and its y, and may set an id.',
+        'Each shape sets its type (rectangle, ellipse, diamond, text, arrow, line or freedraw), its x and its y, and may set an id.',
         'A rectangle, an ellipse or a diamond takes a width, a height and a label, and a text its text.',
-        "An arrow's width and height say where it ends, from its x and y, and its start and end name shapes of the same call, which it binds to.",
-        'Every shape may set strokeColor, strokeWidth (1, 2 or 4), strokeStyle (solid, dashed or dotted), fillStyle (solid, hachure, cross-hatch or zigzag), roughness (0, 1 or 2) and opacity (0 to 100), and a rectangle, an ellipse or a diamond its backgroundColor.',
+        "A line's or an arrow's width and height say where it ends, from its x and y; or its points, each [x, y] from its x and y, say where it goes, so that one line or arrow draws a curve or a zigzag.",
+        'A line that sets closed true goes back from its last point to its first, through three points or more, and its backgroundColor fills the shape it encloses.',
+        'A freedraw is one stroke of the pen through its points, each [x, y] from its x and y.',
+        "Where a shape's first point isn't [0, 0], its x and y move to that point.",
+        "An arrow's start and end name shapes of the same call, which it binds to.",
+        'Every shape may set strokeColor, strokeWidth (1, 2 or 4), strokeStyle (solid, dashed or dotted), fillStyle (solid, hachure, cross-hatch or zigzag), roughness (0, 1 or 2) and opacity (0 to 100), and a rectangle, an ellipse, a diamond or a line its backgroundColor.',
         "A text and a label may set fontFamily (Excalifont, Nunito, Comic Shanns or another of Excalidraw's fonts) and textAlign (left, center or right).",
         'Each new shape records the agent as its creator, which get_board lists.',
       ].join(' '),

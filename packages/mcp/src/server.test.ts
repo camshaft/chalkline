@@ -283,8 +283,8 @@ describe('lines and arrows of add_shapes', () => {
     expect(elements.get(down)).toMatchObject({ type: 'line', x: 10, y: 20, width: 0, height: 50, points: [[0, 0], [0, 50]] });
     expect(elements.get(up)).toMatchObject({ type: 'line', x: 40, y: 70, width: 0, height: 50, points: [[0, 0], [0, -50]] });
     expect(shapes(await call(client, 'get_board'))).toEqual([
-      { id: down, kind: 'line', x: 10, y: 20, width: 0, height: 50, creator, ...colors },
-      { id: up, kind: 'line', x: 40, y: 70, width: 0, height: -50, creator, ...colors },
+      { id: down, kind: 'line', x: 10, y: 20, width: 0, height: 50, points: [[0, 0], [0, 50]], creator, ...colors },
+      { id: up, kind: 'line', x: 40, y: 70, width: 0, height: -50, points: [[0, 0], [0, -50]], creator, ...colors },
     ]);
   });
 
@@ -322,6 +322,10 @@ describe('lines and arrows of add_shapes', () => {
       y: 55,
       width: 0,
       height: 49,
+      points: [
+        [0, 0.5],
+        [0, 49.5],
+      ],
       start: 'top',
       end: 'bottom',
       creator,
@@ -349,6 +353,108 @@ describe('lines and arrows of add_shapes', () => {
       [120, 0],
       [100, 0],
       [-80, 0],
+    ]);
+  });
+
+  it('draws a line or an arrow through its points, at its first point, and get_board lists the points', async () => {
+    const { network, elements, client } = await board();
+    const [zigzag, moved, curve] = ids(
+      await call(client, 'add_shapes', {
+        shapes: [
+          { type: 'line', x: 10, y: 20, points: [[0, 0], [40, 30], [80, -10], [120, 20]] },
+          { type: 'line', x: 0, y: 0, points: [[5, 10], [25, 10], [25, 40]] },
+          { type: 'arrow', x: 100, y: 100, points: [[0, 0], [50, -40], [100, 0]] },
+        ],
+      }),
+    );
+
+    network.flush();
+    expect(elements.get(zigzag)).toMatchObject({
+      type: 'line',
+      x: 10,
+      y: 20,
+      width: 120,
+      height: 40,
+      points: [[0, 0], [40, 30], [80, -10], [120, 20]],
+    });
+    expect(elements.get(moved)).toMatchObject({ type: 'line', x: 5, y: 10, width: 20, height: 30, points: [[0, 0], [20, 0], [20, 30]] });
+    // The converter moves this arrow's first point 0.5 right and down and its last point 0.5 left and up, and keeps the width and height it reads.
+    expect(elements.get(curve)).toMatchObject({ type: 'arrow', x: 100, y: 100, width: 100, height: 40, points: [[0.5, 0.5], [50, -40], [99.5, -0.5]] });
+    expect(shapes(await call(client, 'get_board'))).toEqual([
+      { id: zigzag, kind: 'line', x: 10, y: 20, width: 120, height: 20, points: [[0, 0], [40, 30], [80, -10], [120, 20]], creator, ...colors },
+      { id: moved, kind: 'line', x: 5, y: 10, width: 20, height: 30, points: [[0, 0], [20, 0], [20, 30]], creator, ...colors },
+      { id: curve, kind: 'arrow', x: 100, y: 100, width: 99, height: -1, points: [[0.5, 0.5], [50, -40], [99.5, -0.5]], creator, ...colors },
+    ]);
+  });
+
+  it('closes a line back to its first point, so that its background color fills the shape it encloses', async () => {
+    const { network, elements, client } = await board();
+    const [triangle, square] = ids(
+      await call(client, 'add_shapes', {
+        shapes: [
+          { type: 'line', x: 0, y: 0, points: [[0, 0], [60, 0], [30, 50]], closed: true, backgroundColor: '#ffc9c9' },
+          { type: 'line', x: 100, y: 0, points: [[0, 0], [40, 0], [40, 40], [0, 40], [0, 0]], closed: true, backgroundColor: '#a5d8ff' },
+        ],
+      }),
+    );
+
+    network.flush();
+    expect(elements.get(triangle)).toMatchObject({
+      type: 'line',
+      width: 60,
+      height: 50,
+      backgroundColor: '#ffc9c9',
+      points: [[0, 0], [60, 0], [30, 50], [0, 0]],
+    });
+    expect(elements.get(square)).toMatchObject({
+      type: 'line',
+      width: 40,
+      height: 40,
+      backgroundColor: '#a5d8ff',
+      points: [[0, 0], [40, 0], [40, 40], [0, 40], [0, 0]],
+    });
+  });
+
+  it('draws a freehand stroke through its points, at its first point, and get_board lists the points', async () => {
+    const { network, elements, client } = await board();
+    const [stroke, moved] = ids(
+      await call(client, 'add_shapes', {
+        shapes: [
+          { type: 'freedraw', x: 50, y: 60, points: [[0, 0], [10, 5], [20, -5], [30, 10]], strokeColor: '#1971c2' },
+          { type: 'freedraw', x: 0, y: 0, points: [[200, 100], [210, 120]] },
+        ],
+      }),
+    );
+
+    network.flush();
+    expect(elements.get(stroke)).toMatchObject({
+      type: 'freedraw',
+      x: 50,
+      y: 60,
+      width: 30,
+      height: 15,
+      strokeColor: '#1971c2',
+      points: [[0, 0], [10, 5], [20, -5], [30, 10]],
+      pressures: [],
+      simulatePressure: true,
+    });
+    expect(elements.get(moved)).toMatchObject({ type: 'freedraw', x: 200, y: 100, width: 10, height: 20, points: [[0, 0], [10, 20]] });
+    // restoreElements sets the seed 1 on an element that leaves it out, and add_shapes sets a random one.
+    expect(elements.get(stroke)?.seed).not.toBe(elements.get(moved)?.seed);
+    expect(shapes(await call(client, 'get_board'))).toEqual([
+      {
+        id: stroke,
+        kind: 'freedraw',
+        x: 50,
+        y: 60,
+        width: 30,
+        height: 15,
+        points: [[0, 0], [10, 5], [20, -5], [30, 10]],
+        creator,
+        strokeColor: '#1971c2',
+        backgroundColor: 'transparent',
+      },
+      { id: moved, kind: 'freedraw', x: 200, y: 100, width: 10, height: 20, points: [[0, 0], [10, 20]], creator, ...colors },
     ]);
   });
 });
@@ -405,6 +511,39 @@ describe('add_shapes refusals', () => {
     expect(text(result)).toContain(`shapes[0].id is "oval", which a shape on the board has already`);
     network.flush();
     expect([...elements.keys()]).toEqual(['oval']);
+  });
+
+  it('refuses a line or an arrow that sets both points and a width or a height, and adds nothing', async () => {
+    const { network, elements, client } = await board();
+    const cases: [Record<string, unknown>, string][] = [
+      [{ type: 'line', x: 0, y: 0, width: 10, points: [[0, 0], [10, 10]] }, 'width'],
+      [{ type: 'arrow', x: 0, y: 0, height: 20, points: [[0, 0], [10, 10]] }, 'height'],
+    ];
+    for (const [shape, field] of cases) {
+      const result = await call(client, 'add_shapes', { shapes: [{ type: 'rectangle', x: 0, y: 0 }, shape] });
+      expect(result.isError).toBe(true);
+      expect(text(result)).toBe(
+        `shapes[1] sets both points and ${field}: a line or an arrow through points gets its size from them, so leave out its width and height.`,
+      );
+    }
+    network.flush();
+    expect(elements.size).toBe(0);
+  });
+
+  it('refuses a closed line of fewer than three points, and adds nothing', async () => {
+    const { network, elements, client } = await board();
+    for (const line of [
+      { type: 'line', x: 0, y: 0, points: [[0, 0], [10, 10]], closed: true },
+      { type: 'line', x: 0, y: 0, width: 10, height: 10, closed: true },
+    ]) {
+      const result = await call(client, 'add_shapes', { shapes: [line] });
+      expect(result.isError).toBe(true);
+      expect(text(result)).toBe(
+        'shapes[0].closed is true, and the line has fewer than three points: a closed line needs points, three or more, that enclose the shape it fills.',
+      );
+    }
+    network.flush();
+    expect(elements.size).toBe(0);
   });
 });
 
@@ -590,6 +729,39 @@ describe('add_shapes styles', () => {
     expect(read('note')).not.toHaveProperty('opacity');
     expect(read('arrow')).toMatchObject({ kind: 'arrow', ...arrow });
     expect(read('line')).toMatchObject({ kind: 'line', ...line });
+  });
+
+  it('stores the style of a freehand stroke and of a closed line, and get_board reports it', async () => {
+    const { network, elements, client } = await board();
+    const added = ids(
+      await call(client, 'add_shapes', {
+        shapes: [
+          { type: 'freedraw', id: 'stroke', x: 0, y: 0, points: [[0, 0], [10, 5], [20, 0]], strokeWidth: 4, strokeStyle: 'dashed', roughness: 0, opacity: 50 },
+          {
+            type: 'line',
+            id: 'loop',
+            x: 0,
+            y: 50,
+            points: [[0, 0], [40, 0], [20, 30]],
+            closed: true,
+            backgroundColor: '#ffc9c9',
+            fillStyle: 'hachure',
+            strokeWidth: 1,
+          },
+        ],
+      }),
+    );
+    expect(added).toEqual(['stroke', 'loop']);
+
+    network.flush();
+    const stroke = { strokeWidth: 4, strokeStyle: 'dashed', roughness: 0, opacity: 50 };
+    expect(elements.get('stroke')).toMatchObject({ type: 'freedraw', ...stroke });
+    const loop = { backgroundColor: '#ffc9c9', fillStyle: 'hachure', strokeWidth: 1 };
+    expect(elements.get('loop')).toMatchObject({ type: 'line', ...loop });
+
+    const listed = shapes(await call(client, 'get_board'));
+    expect(listed.find((shape) => shape.id === 'stroke')).toMatchObject({ kind: 'freedraw', ...stroke });
+    expect(listed.find((shape) => shape.id === 'loop')).toMatchObject({ kind: 'line', ...loop });
   });
 
   it("leaves out of get_board each style field that is Excalidraw's default", async () => {

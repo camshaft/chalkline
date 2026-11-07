@@ -281,7 +281,7 @@ describe('update_shape', () => {
       await call(client, 'update_shape', { id: 'free', x: 10, y: null, width: 0, height: -50 }),
     );
     expect(elements.get('free')).toMatchObject({ x: 10, y: 0, width: 0, height: 50, points: [[0, 0], [0, -50]], version: 2 });
-    expect(shape).toEqual({ id: 'free', kind: 'arrow', x: 10, y: 0, width: 0, height: -50 });
+    expect(shape).toEqual({ id: 'free', kind: 'arrow', x: 10, y: 0, width: 0, height: -50, points: [[0, 0], [0, -50]] });
   });
 
   it('recolors a shape and its label', async () => {

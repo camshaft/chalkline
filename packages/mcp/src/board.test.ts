@@ -85,6 +85,34 @@ describe('readBoard', () => {
     ]);
   });
 
+  it("lists the points of a line, an arrow or a freehand stroke, and leaves them out where one isn't a point", () => {
+    const shapes = readBoard([
+      element({ id: 'zigzag', type: 'line', index: 'a0', points: [[0, 0], [40, 30], [80, -10]] }),
+      element({ id: 'stroke', type: 'freedraw', index: 'a1', points: [[0, 0], [3, 4], [6, 2]] }),
+      element({ id: 'odd', type: 'arrow', index: 'a2', points: [[0, 0], ['far', 10]] }),
+      element({ id: 'box', type: 'rectangle', index: 'a3', points: [[0, 0], [5, 5]] }),
+    ]);
+    expect(shapes.map(({ id, width, height, points }) => ({ id, width, height, points }))).toEqual([
+      { id: 'zigzag', width: 80, height: -10, points: [[0, 0], [40, 30], [80, -10]] },
+      { id: 'stroke', width: 100, height: 50, points: [[0, 0], [3, 4], [6, 2]] },
+      { id: 'odd', width: 100, height: 50 },
+      { id: 'box', width: 100, height: 50 },
+    ]);
+  });
+
+  it('lists 100 of the points of a stroke that holds more, evenly spaced from its first to its last, with the count of all', () => {
+    const many = Array.from({ length: 199 }, (_, place) => [place, place % 3]);
+    const hundred = Array.from({ length: 100 }, (_, place) => [place, 0]);
+    const [stroke, line] = readBoard([
+      element({ id: 'stroke', type: 'freedraw', index: 'a0', points: many }),
+      element({ id: 'line', type: 'line', index: 'a1', points: hundred }),
+    ]);
+    expect(stroke.pointCount).toBe(199);
+    expect(stroke.points).toEqual(Array.from({ length: 100 }, (_, place) => many[place * 2]));
+    expect(line.points).toEqual(hundred);
+    expect(line.pointCount).toBeUndefined();
+  });
+
   it("answers each shape's colors, and each style, font and alignment that isn't Excalidraw's default", () => {
     const plain = { strokeColor: '#1e1e1e', backgroundColor: 'transparent', strokeWidth: 2, strokeStyle: 'solid', fillStyle: 'solid', roughness: 1, opacity: 100 };
     const shapes = readBoard([
