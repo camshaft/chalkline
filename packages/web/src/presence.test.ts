@@ -1,4 +1,4 @@
-import { Awareness, connectAwareness, MemoryNetwork } from '@chalkline/sync';
+import { AGENT, Awareness, connectAwareness, MemoryNetwork } from '@chalkline/sync';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import {
@@ -158,6 +158,15 @@ describe('collaboratorsFrom', () => {
       ['2', { id: '2', username: 'Ada', pointer: { x: 1, y: 2, tool: 'pointer' }, button: 'up' }],
       ['3', { id: '3' }],
     ]);
+  });
+
+  it("leaves out an agent's helper, whose state says only that an agent is on the board", () => {
+    const states = new Map<number, unknown>([
+      [2, { name: 'Ada' }],
+      [5, { [AGENT]: true }],
+    ]);
+
+    expect([...collaboratorsFrom(states, 1)]).toEqual([['2', { id: '2', username: 'Ada' }]]);
   });
 });
 
