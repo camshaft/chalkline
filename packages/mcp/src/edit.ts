@@ -1,7 +1,7 @@
 // The agent's edits of shapes that are on the board already: connect draws an arrow bound to two
 // of them, update_shape moves, resizes, relabels or recolors one, or moves a group of them,
-// delete_shapes deletes some, by their ids or by their groups, and reorder_shapes moves some
-// forward or back.
+// delete_shapes deletes some, by their ids or by their groups, reorder_shapes moves some forward
+// or back, and scale_shapes makes some smaller or larger, by their ids or by their groups.
 // Each reads the board as chalkline-mcp's copy holds it, and writes its change in one transaction,
 // which reaches the page as any change of the board does.
 import { randomInt } from 'node:crypto';
@@ -22,7 +22,7 @@ import {
 import { withCreator, type Creator } from './creator';
 import { arrowPoints, boardPoints, type Outline, type Point } from './geometry';
 import { indicesAbove } from './order';
-import type { BoardShape, Connection, Place, ShapeChange } from './shapes';
+import type { BoardShape, Connection, Place, Scaling, ShapeChange } from './shapes';
 import { convertSkeletons, type Skeleton } from './skeleton';
 
 /** An Excalidraw element, as the board's shared map holds it. */
@@ -216,34 +216,62 @@ export async function moveGroup(doc: Y.Doc, change: ShapeChange): Promise<BoardS
   if (members.length === 0) {
     throw new ShapeError(`group is "${group}", which no shape on the board is in: get_board lists each shape's groups.`);
   }
-  // The group's left and top edges: the least x and y of its shapes, each point of a line, an arrow
-  // or a freehand stroke among them.
-  const corners = members.flatMap((shape) =>
-    (shape.points ?? [[0, 0], [shape.width, shape.height]]).map((point) => ({
-      x: shape.x + (point[0] ?? 0),
-      y: shape.y + (point[1] ?? 0),
-    })),
-  );
-  const left = Math.min(...corners.map((corner) => corner.x));
-  const top = Math.min(...corners.map((corner) => corner.y));
+  const { x: left, y: top } = edgesOf(members);
   const dx = present(x) ? x - left : 0;
   const dy = present(y) ? y - top : 0;
 
   // The group's shapes and their labels move together, and keep where each lies from the others.
-  const moved = new Set(members.map((shape) => shape.id));
-  for (const [elementId, value] of shared.entries()) {
-    const element = elementOf(value);
-    if (element === undefined || element.isDeleted === true) continue;
-    if (element.type === 'text' && typeof element.containerId === 'string' && moved.has(element.containerId)) {
-      moved.add(elementId);
-    }
-  }
+  const moved = withLabels(shared, members.map((shape) => shape.id));
   const writes = new Writes(shared);
   for (const elementId of moved) {
     const element = writes.get(elementId);
     if (element !== undefined) writes.set(touched(element, { x: numberOf(element.x) + dx, y: numberOf(element.y) + dy }));
   }
   // An arrow between a shape that moved and one that didn't is laid out again between them.
+  await followMoved(writes, moved);
+  writes.commit(doc);
+  return inGroup(readBoard(shared.values()), group);
+}
+
+/** The shapes of `shapes` that are in the group `group`, in their order. */
+function inGroup(shapes: readonly BoardShape[], group: string): BoardShape[] {
+  return shapes.filter((shape) => shape.groups?.includes(group) === true);
+}
+
+/**
+ * The left and top edges of the bounds of `shapes`, as get_board lists them: the least x and y of
+ * the shapes, each point of a line, an arrow or a freehand stroke among them.
+ */
+function edgesOf(shapes: readonly BoardShape[]): Point {
+  const corners = shapes.flatMap((shape) =>
+    (shape.points ?? [[0, 0], [shape.width, shape.height]]).map((point) => ({
+      x: shape.x + (point[0] ?? 0),
+      y: shape.y + (point[1] ?? 0),
+    })),
+  );
+  return { x: Math.min(...corners.map((corner) => corner.x)), y: Math.min(...corners.map((corner) => corner.y)) };
+}
+
+/** The ids `ids` of shapes, with the id of each label on the board whose shape is one of them. */
+function withLabels(shared: Y.Map<unknown>, ids: Iterable<string>): Set<string> {
+  const chosen = new Set(ids);
+  for (const [elementId, value] of shared.entries()) {
+    const element = elementOf(value);
+    if (element === undefined || element.isDeleted === true) continue;
+    if (element.type === 'text' && typeof element.containerId === 'string' && chosen.has(element.containerId)) {
+      chosen.add(elementId);
+    }
+  }
+  return chosen;
+}
+
+/**
+ * Lays out again, between the shapes it binds, each straight arrow that binds an element of
+ * `moved`, as the change writes it, to a shape outside `moved`: an arrow outside `moved` bound to
+ * a shape of it, and an arrow of `moved` bound to a shape outside it. An arrow of more than two
+ * points and an elbow arrow stay as the change writes them.
+ */
+async function followMoved(writes: Writes, moved: ReadonlySet<string>): Promise<void> {
   for (const elementId of moved) {
     const element = writes.get(elementId);
     if (element === undefined) continue;
@@ -256,13 +284,6 @@ export async function moveGroup(doc: Y.Doc, change: ShapeChange): Promise<BoardS
       if (shape !== undefined) await relayArrows(writes, shape, (arrow) => arrow !== elementId);
     }
   }
-  writes.commit(doc);
-  return inGroup(readBoard(shared.values()), group);
-}
-
-/** The shapes of `shapes` that are in the group `group`, in their order. */
-function inGroup(shapes: readonly BoardShape[], group: string): BoardShape[] {
-  return shapes.filter((shape) => shape.groups?.includes(group) === true);
 }
 
 /**
@@ -279,45 +300,12 @@ export function deleteShapes(doc: Y.Doc, ids: readonly string[], groups: readonl
   if (ids.length === 0 && groups.length === 0) {
     throw new ShapeError("The call doesn't name a shape to delete: give ids, groups or both.");
   }
-  const first = new Map<string, number>();
-  ids.forEach((id, place) => {
-    const earlier = first.get(id);
-    if (earlier !== undefined) {
-      throw new ShapeError(`ids[${place}] is "${id}", which ids[${earlier}] is too: list each shape once.`);
-    }
-    first.set(id, place);
-    shapeOf(
-      shared,
-      `ids[${place}]`,
-      id,
-      (container) => `delete "${container}", or remove its label with update_shape and an empty label`,
-    );
-  });
-
-  const deleted = [...ids];
-  if (groups.length > 0) {
-    const shapes = readBoard(shared.values());
-    const listed = new Set(ids);
-    const firstGroup = new Map<string, number>();
-    groups.forEach((group, place) => {
-      const earlier = firstGroup.get(group);
-      if (earlier !== undefined) {
-        throw new ShapeError(`groups[${place}] is "${group}", which groups[${earlier}] is too: list each group once.`);
-      }
-      firstGroup.set(group, place);
-      const members = inGroup(shapes, group);
-      if (members.length === 0) {
-        throw new ShapeError(
-          `groups[${place}] is "${group}", which no shape on the board is in: get_board lists each shape's groups.`,
-        );
-      }
-      for (const shape of members) {
-        if (listed.has(shape.id)) continue;
-        listed.add(shape.id);
-        deleted.push(shape.id);
-      }
-    });
-  }
+  const deleted = selected(
+    shared,
+    ids,
+    groups,
+    (container) => `delete "${container}", or remove its label with update_shape and an empty label`,
+  );
 
   doc.transact(() => {
     const board = [...shared.entries()].flatMap(([id, value]): [string, Element][] => {
@@ -345,6 +333,118 @@ export function deleteShapes(doc: Y.Doc, ids: readonly string[], groups: readonl
     }
   });
   return deleted;
+}
+
+/**
+ * The ids of the shapes a call names by `ids` and by `groups`, each once: `ids`, then each group's
+ * shapes that `ids` and an earlier group leave out, from back to front. Throws a ShapeError where
+ * `ids` holds one id twice, or an id that isn't a shape on the board or is a label, whose refusal
+ * ends with `forLabel` of the label's shape, or where `groups` holds one group twice, or a group
+ * that no shape on the board is in.
+ */
+function selected(
+  shared: Y.Map<unknown>,
+  ids: readonly string[],
+  groups: readonly string[],
+  forLabel: (container: string) => string,
+): string[] {
+  const first = new Map<string, number>();
+  ids.forEach((id, place) => {
+    const earlier = first.get(id);
+    if (earlier !== undefined) {
+      throw new ShapeError(`ids[${place}] is "${id}", which ids[${earlier}] is too: list each shape once.`);
+    }
+    first.set(id, place);
+    shapeOf(shared, `ids[${place}]`, id, forLabel);
+  });
+
+  const chosen = [...ids];
+  if (groups.length > 0) {
+    const shapes = readBoard(shared.values());
+    const taken = new Set(ids);
+    const firstGroup = new Map<string, number>();
+    groups.forEach((group, place) => {
+      const earlier = firstGroup.get(group);
+      if (earlier !== undefined) {
+        throw new ShapeError(`groups[${place}] is "${group}", which groups[${earlier}] is too: list each group once.`);
+      }
+      firstGroup.set(group, place);
+      const members = inGroup(shapes, group);
+      if (members.length === 0) {
+        throw new ShapeError(
+          `groups[${place}] is "${group}", which no shape on the board is in: get_board lists each shape's groups.`,
+        );
+      }
+      for (const shape of members) {
+        if (taken.has(shape.id)) continue;
+        taken.add(shape.id);
+        chosen.push(shape.id);
+      }
+    });
+  }
+  return chosen;
+}
+
+/**
+ * Scales the shapes `scaling.ids`, and every shape of each group of `scaling.groups`, each with
+ * its label, by `scaling.factor` around the point `scaling.about`, in one transaction, and returns
+ * them as get_board lists them after the change, from back to front. Each one's distance from
+ * that point, its width and its height, the points of a line, an arrow or a freehand stroke, and
+ * the font size of a text or a label scale by the factor; where `scaling.about` is left out, the
+ * left and top edges of the shapes' bounds, as get_board lists them, stay where they are. An arrow
+ * that scales keeps its binding to each shape that scales with it, with the binding's gap scaled,
+ * and each straight arrow between a shape that scales and one that doesn't is laid out again
+ * between them. Throws a ShapeError, and changes nothing, where neither `scaling.ids` nor
+ * `scaling.groups` lists anything, where `scaling.ids` holds one id twice, or an id that isn't a
+ * shape on the board or is a label, or where `scaling.groups` holds one group twice, or a group
+ * that no shape on the board is in.
+ */
+export async function scaleShapes(doc: Y.Doc, scaling: Scaling): Promise<BoardShape[]> {
+  const shared = doc.getMap<unknown>(ELEMENTS);
+  const ids = scaling.ids ?? [];
+  const groups = scaling.groups ?? [];
+  if (ids.length === 0 && groups.length === 0) {
+    throw new ShapeError("The call doesn't name a shape to scale: give ids, groups or both.");
+  }
+  const chosen = new Set(selected(shared, ids, groups, (container) => `scale "${container}", and its label scales with it`));
+  const chosenShapes = () => readBoard(shared.values()).filter((shape) => chosen.has(shape.id));
+  const about = scaling.about ?? edgesOf(chosenShapes());
+  const scaled = withLabels(shared, chosen);
+  const writes = new Writes(shared);
+  for (const elementId of scaled) {
+    const element = writes.get(elementId);
+    if (element !== undefined) writes.set(touched(element, scaledFields(element, about, scaling.factor, scaled)));
+  }
+  // An arrow between a shape that scaled and one that didn't is laid out again between them.
+  await followMoved(writes, scaled);
+  writes.commit(doc);
+  return chosenShapes();
+}
+
+/**
+ * The fields of `element` that scale by `factor` around `about`: its place, its size, its points,
+ * its font size, and the gap of each binding to a shape of `scaled`, which scales with it.
+ */
+function scaledFields(element: Element, about: Point, factor: number, scaled: ReadonlySet<string>): Element {
+  const fields: Element = {
+    x: about.x + (numberOf(element.x) - about.x) * factor,
+    y: about.y + (numberOf(element.y) - about.y) * factor,
+    width: numberOf(element.width) * factor,
+    height: numberOf(element.height) * factor,
+  };
+  const points = pointsOf(element);
+  if (points.length > 0) fields.points = points.map(([x, y]) => [x * factor, y * factor]);
+  const fontSize = element.fontSize;
+  if (finite(fontSize)) fields.fontSize = fontSize * factor;
+  for (const key of ['startBinding', 'endBinding'] as const) {
+    const binding = elementOf(element[key]);
+    const bound = boundTo(element[key]);
+    const gap = binding?.gap;
+    if (binding !== undefined && bound !== undefined && scaled.has(bound) && finite(gap)) {
+      fields[key] = { ...binding, gap: gap * factor };
+    }
+  }
+  return fields;
 }
 
 /**
