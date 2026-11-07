@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type * as Y from 'yjs';
 import { answer, refusal } from './answer';
+import { running, waiting } from './presence';
 import { subscriptionsOf } from './subscriptions';
 
 /** The address of the transcript's MCP resource. */
@@ -130,14 +131,16 @@ export function registerTranscript(server: McpServer, doc: Y.Doc): TranscriptLog
       inputSchema: { cursor: z.number().int().min(0).optional() },
       outputSchema: { entries: z.array(entrySchema), cursor: z.number().int().min(0) },
     },
-    async ({ cursor = 0 }, extra) => {
-      if (cursor > log.length) {
-        return refusal(
-          `cursor is ${cursor}, and the transcript's end is at cursor ${log.length} in this run of the helper: give a cursor that read_transcript answered, or 0 to read from the start.`,
-        );
-      }
-      return answer(await log.next(cursor, extra.signal));
-    },
+    ({ cursor = 0 }, extra) =>
+      running(server, async () => {
+        if (cursor > log.length) {
+          return refusal(
+            `cursor is ${cursor}, and the transcript's end is at cursor ${log.length} in this run of the helper: give a cursor that read_transcript answered, or 0 to read from the start.`,
+          );
+        }
+        // The time the call waits for an entry doesn't count as working.
+        return answer(await waiting(server, log.next(cursor, extra.signal)));
+      }),
   );
 
   server.registerTool(
@@ -152,19 +155,20 @@ export function registerTranscript(server: McpServer, doc: Y.Doc): TranscriptLog
       inputSchema: { text: z.string().describe('The words to post.') },
       outputSchema: { entry: entrySchema },
     },
-    ({ text }) => {
-      const words = text.trim();
-      if (words === '') return refusal("text is blank: give the words to post in the board's chat.");
-      const entry: TranscriptEntry = {
-        id: newEntryId(),
-        speaker: agentName(server),
-        at: new Date().toISOString(),
-        text: words,
-        via: 'agent',
-      };
-      appendEntry(transcriptOf(doc), entry);
-      return answer({ entry });
-    },
+    ({ text }) =>
+      running(server, () => {
+        const words = text.trim();
+        if (words === '') return refusal("text is blank: give the words to post in the board's chat.");
+        const entry: TranscriptEntry = {
+          id: newEntryId(),
+          speaker: agentName(server),
+          at: new Date().toISOString(),
+          text: words,
+          via: 'agent',
+        };
+        appendEntry(transcriptOf(doc), entry);
+        return answer({ entry });
+      }),
   );
 
   server.registerResource(
