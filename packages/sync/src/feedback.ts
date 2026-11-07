@@ -52,6 +52,12 @@ export interface Feedback {
    * keeps its answer.
    */
   answer: FeedbackAnswer | null;
+  /**
+   * When a person last reopened the feedback, as an ISO 8601 time, or null
+   * before the first reopen. A record without it, such as one from a page that
+   * doesn't record when a person reopens a feedback, reads with null.
+   */
+  reopened: string | null;
 }
 
 /**
@@ -96,13 +102,14 @@ function readAnswer(value: unknown): FeedbackAnswer | null {
  * blank text, or that holds a time that doesn't parse, reads as null. So does
  * a value whose `region` lacks a finite `x`, `y`, `width` or `height`, whose
  * `shapes` holds anything but text, whose `status` isn't "open" or
- * "answered", or whose `answer` isn't null or a `by`, `at` and `text` that
- * read as the feedback's own do. Other fields are left out, and the record it
- * answers is a copy.
+ * "answered", whose `answer` isn't null or a `by`, `at` and `text` that read
+ * as the feedback's own do, or whose `reopened` isn't null or a time that
+ * parses. A value that lacks `reopened` reads with `reopened` null. Other
+ * fields are left out, and the record it answers is a copy.
  */
 export function readFeedback(value: unknown): Feedback | null {
   if (!isRecord(value)) return null;
-  const { id, by, at, text, region, shapes, status, answer } = value;
+  const { id, by, at, text, region, shapes, status, answer, reopened } = value;
   if (!filled(id) || !filled(by) || !isTime(at) || !filled(text)) return null;
   const area = readRegion(region);
   if (area === null) return null;
@@ -113,7 +120,9 @@ export function readFeedback(value: unknown): Feedback | null {
     reply = readAnswer(answer);
     if (reply === null) return null;
   }
-  return { id, by, at, text, region: area, shapes: [...shapes], status, answer: reply };
+  if (reopened !== undefined && reopened !== null && !isTime(reopened)) return null;
+  const opened = isTime(reopened) ? reopened : null;
+  return { id, by, at, text, region: area, shapes: [...shapes], status, answer: reply, reopened: opened };
 }
 
 /**
@@ -142,8 +151,8 @@ export function listFeedback(feedback: Y.Map<unknown>): Feedback[] {
 
 /**
  * Writes `record` whole under its id, which sends it to every peer: a new
- * feedback, or a change of one, such as a reopen that sets `status` back to
- * "open" and keeps the answer. It keeps only the record's fields, as a copy.
+ * feedback, or a change of one, such as the reopen that `reopenFeedback`
+ * writes. It keeps only the record's fields, as a copy.
  * Where the record doesn't read as a feedback, it throws a TypeError and
  * doesn't write anything, so that a writer doesn't make a feedback absent
  * for every reader.
@@ -170,5 +179,24 @@ export function answerFeedback(feedback: Y.Map<unknown>, id: string, answer: Fee
   const answered = readFeedback({ ...record, status: 'answered', answer });
   if (answered === null) throw new TypeError(`not an answer: ${JSON.stringify(answer)}`);
   feedback.set(id, answered);
+  return getFeedback(feedback, id);
+}
+
+/**
+ * Reopens the feedback that `feedback` holds under `id`: sets its `status`
+ * to "open" and its `reopened` to `at`, the time of the reopen, keeps its
+ * answer, and returns the record as it then stands. Where `getFeedback`
+ * doesn't read a feedback under `id`, it returns null and doesn't write
+ * anything; where the feedback is open already, it returns the record as it
+ * stands and doesn't change it. Where `at` isn't a time that parses, it
+ * throws a TypeError and doesn't write anything.
+ */
+export function reopenFeedback(feedback: Y.Map<unknown>, id: string, at: string): Feedback | null {
+  const record = getFeedback(feedback, id);
+  if (record === null) return null;
+  if (record.status === 'open') return record;
+  const reopened = readFeedback({ ...record, status: 'open', reopened: at });
+  if (reopened === null) throw new TypeError(`not a time: ${JSON.stringify(at)}`);
+  feedback.set(id, reopened);
   return getFeedback(feedback, id);
 }
