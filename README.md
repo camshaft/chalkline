@@ -21,7 +21,7 @@ The main menu's Save file item downloads the board as an `.excalidraw` file, whi
 
 Connection settings, in the main menu, or the Connection settings button on the join screen, opens two settings. They stay in the browser's own storage, apply to every board that browser opens, and are unset by default. Saving them reloads the board.
 
-- TURN servers. Some networks, such as some office networks and VPNs, block direct connections between browsers, and the page then says that a peer couldn't connect. A TURN server forwards the encrypted traffic between two such browsers. Sign up for a hosted TURN service, such as [Cloudflare's](https://developers.cloudflare.com/calls/turn/), or run your own, such as [coturn](https://github.com/coturn/coturn), and enter its address, such as `turn:turn.example.com:3478`, with its username and password.
+- TURN servers. Some networks, such as some office networks and VPNs, block direct connections between browsers, and the page then says that a peer couldn't connect. A TURN server forwards the encrypted traffic between two such browsers. Sign up for a hosted TURN service, such as [Cloudflare's](https://developers.cloudflare.com/calls/turn/), or run your own, such as [coturn](https://github.com/coturn/coturn), and enter its address, such as `turn:turn.example.com:3478`, with its username and password. On a board of three or more, a browser that connects to two others that can't connect to each other carries the board's changes and cursors between them.
 - Relays. Your own Nostr relays, one `wss://` address a line, which the page uses in place of the public relays. Everyone on a board needs at least one relay in common.
 
 ## Run the local mode
