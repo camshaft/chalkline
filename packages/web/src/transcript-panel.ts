@@ -35,6 +35,14 @@ export interface ChatOptions {
 /** The most lines the message field grows to; past them, its text scrolls inside the field. */
 export const MESSAGE_LINES = 6;
 
+/** How many pixels above the end of the chat's list the person may have scrolled and still read its newest entry. */
+export const BOTTOM_SLACK = 4;
+
+/** Whether `list` shows the end of its entries, to within `BOTTOM_SLACK` pixels. */
+function atBottom(list: HTMLElement): boolean {
+  return list.scrollTop + list.clientHeight >= list.scrollHeight - BOTTOM_SLACK;
+}
+
 /** What the panel says under its title for each state. */
 export function statusText(state: SpeechState): string {
   switch (state.kind) {
@@ -152,6 +160,10 @@ function entryItem(doc: Document, { id, speaker, at, text, via }: TranscriptEntr
  * `transcript` as a typed entry under `chat.speaker()`. Shift+Enter adds a line
  * break to the message, and the field grows with its text up to
  * `MESSAGE_LINES` lines, and goes back to one line once the message is sent.
+ * The list of entries opens on its newest entry, and follows each new one
+ * while the person reads its end; where they scrolled up to read earlier
+ * ones, a new entry leaves the list where it is and shows a New messages
+ * button, which scrolls to the end, as sending a message does.
  * `opener` opens and closes the panel, and counts the entries; the panel's
  * Close button, as Escape in the panel does, closes it with one press and puts
  * the focus back on `opener`. The panel opens as speech starts to turn on, so
@@ -183,8 +195,11 @@ export function bindTranscriptPanel(
   };
 
   const open = (shown: boolean) => {
+    const opening = shown && panel.hidden;
     panel.hidden = !shown;
     opener.setAttribute('aria-expanded', String(shown));
+    // The panel opens on its newest entry; a state of the speech that keeps it open doesn't move the list.
+    if (opening) scrollToEnd();
   };
   const close = () => {
     open(false);
@@ -205,6 +220,21 @@ export function bindTranscriptPanel(
   const heard = make('p', 'speech-heard');
   heard.hidden = true;
   const entries = make('ol', 'transcript-entries');
+  const newer = button('New messages', () => scrollToEnd());
+  newer.className = 'chat-new-messages';
+  newer.hidden = true;
+  // Whether the list follows the newest entry: true while the person reads its end, and false once they
+  // scroll up to read earlier entries.
+  let following = true;
+  const scrollToEnd = (): void => {
+    following = true;
+    newer.hidden = true;
+    entries.scrollTop = entries.scrollHeight;
+  };
+  entries.addEventListener('scroll', () => {
+    following = atBottom(entries);
+    if (following) newer.hidden = true;
+  });
   const empty = make('p', 'transcript-empty', 'No one has said or typed anything yet.');
   const field = make('textarea', 'chat-field');
   field.rows = 1;
@@ -216,11 +246,12 @@ export function bindTranscriptPanel(
   const send = (): void => {
     const words = field.value.trim();
     if (words === '') return;
+    // Show the person's own message, though they scrolled up to read earlier ones.
+    following = true;
     appendEntry(transcript, { id: newId(), speaker: chat.speaker(), at: now().toISOString(), text: words, via: 'typed' });
     field.value = '';
     fitMessageField(field);
-    // Show the person's own message, though they scrolled up to read earlier ones.
-    entries.scrollTop = entries.scrollHeight;
+    scrollToEnd();
   };
   field.addEventListener('input', () => fitMessageField(field));
   field.addEventListener('keydown', (event) => {
@@ -231,7 +262,7 @@ export function bindTranscriptPanel(
   });
   const compose = make('div', 'chat-compose');
   compose.append(field, button('Send', send));
-  panel.replaceChildren(header, status, ask, heard, entries, empty, compose);
+  panel.replaceChildren(header, status, ask, heard, entries, newer, empty, compose);
   panel.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || event.isComposing) return;
     event.preventDefault();
@@ -242,14 +273,17 @@ export function bindTranscriptPanel(
   mic.addEventListener('click', () => actions.toggle());
   open(false);
 
+  let entryCount = 0;
   const render = () => {
-    const atEnd = entries.scrollTop + entries.clientHeight >= entries.scrollHeight - 4;
     const read = readTranscript(transcript);
+    const arrived = read.length > entryCount;
+    entryCount = read.length;
     entries.replaceChildren(...read.map((entry) => entryItem(doc, entry)));
     empty.hidden = read.length > 0;
     opener.textContent = read.length === 0 ? 'Chat' : `Chat (${read.length})`;
-    // Follow new entries, unless the person scrolled up to read earlier ones.
-    if (atEnd) entries.scrollTop = entries.scrollHeight;
+    // Follow new entries, unless the person scrolled up to read earlier ones: then say that new ones came.
+    if (following) entries.scrollTop = entries.scrollHeight;
+    else if (arrived) newer.hidden = false;
   };
   transcript.observe(render);
   render();
