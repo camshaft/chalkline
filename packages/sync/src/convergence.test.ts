@@ -33,17 +33,43 @@ function stateVector(doc: Y.Doc): Array<[number, number]> {
   return [...Y.decodeStateVector(Y.encodeStateVector(doc))].sort(([left], [right]) => left - right);
 }
 
+/** How many participants a test runs, and the pairs of them that never connect. */
+interface Mesh {
+  count: number;
+  apart: Array<[string, string]>;
+  /** How the test's title describes the pairs that never connect. */
+  where: string;
+}
+
+const meshes: Mesh[] = [
+  { count: 2, apart: [], where: '' },
+  { count: 3, apart: [], where: '' },
+  { count: 3, apart: [['a', 'c']], where: ', where a and c never connect' },
+  {
+    count: 4,
+    apart: [
+      ['a', 'c'],
+      ['a', 'd'],
+      ['b', 'd'],
+    ],
+    where: ', in a line where each connects only to its neighbours',
+  },
+];
+
 /**
- * Runs `count` participants on a network that loses, delays and reorders
- * messages. In each round one participant changes a shape, deletes one, adds
- * to the transcript or moves its cursor, and the network runs a few events.
- * The last participant joins a third of the way through. Then the network
- * heals, and every queued event runs.
+ * Runs the participants of `mesh` on a network that loses, delays and
+ * reorders messages, where each pair that `mesh` keeps apart never connects.
+ * In each round one participant changes a shape, deletes one, adds to the
+ * transcript or moves its cursor, and the network runs a few events. The last
+ * participant joins a third of the way through. Then the network heals, and
+ * every queued event runs, and where `mesh` keeps a pair apart, each
+ * participant renews its awareness state once.
  */
-function chaos(count: number, seed: number) {
+function chaos({ count, apart }: Mesh, seed: number) {
   const network = new MemoryNetwork({ seed, drop: 0.1, delay: 4 });
+  for (const [first, second] of apart) network.keepApart(first, second);
   const random = seededRandom(seed + 1_000_003);
-  const ids = ['a', 'b', 'c'].slice(0, count);
+  const ids = ['a', 'b', 'c', 'd'].slice(0, count);
   const participants = ids.slice(0, -1).map((id) => participant(network, id));
   const rounds = 60;
   for (let round = 0; round < rounds; round += 1) {
@@ -59,16 +85,23 @@ function chaos(count: number, seed: number) {
   }
   network.drop = 0;
   network.flush();
+  if (apart.length > 0) {
+    // y-protocols renews each participant's state every 15 seconds, which
+    // carries a state that a broken link lost on to the participants that
+    // don't connect to its sender. Renew each state once, as that renewal does.
+    for (const { awareness } of participants) awareness.setLocalState(awareness.getLocalState());
+    network.flush();
+  }
   return { network, participants };
 }
 
 describe('documents on a network that loses, delays and reorders messages', () => {
-  for (const count of [2, 3]) {
-    it(`end with all ${count} copies equal, and each participant shows the others' latest awareness`, () => {
+  for (const mesh of meshes) {
+    it(`end with all ${mesh.count} copies equal${mesh.where}, and each participant shows the others' latest awareness`, () => {
       let dropped = 0;
       let reordered = 0;
       for (let seed = 1; seed <= 40; seed += 1) {
-        const { network, participants } = chaos(count, seed);
+        const { network, participants } = chaos(mesh, seed);
         dropped += network.dropped;
         reordered += network.reordered;
         const [first, ...rest] = participants;

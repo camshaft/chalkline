@@ -10,6 +10,14 @@ function join(network: MemoryNetwork, id: string, synced: string[] = [], doc = n
 
 const shapes = (doc: Y.Doc) => doc.getMap<string>('shapes');
 
+/** Each message sent since the `before`th, as `from->to channel`, sorted. */
+function sentSince(network: MemoryNetwork, before: number): string[] {
+  return network.sent
+    .slice(before)
+    .map(({ from, to, channel }) => `${from}->${to} ${channel}`)
+    .sort();
+}
+
 describe('connectDoc', () => {
   it('sends a peer that joins later the state it lacks', () => {
     const network = new MemoryNetwork();
@@ -67,7 +75,7 @@ describe('connectDoc', () => {
     expect(synced).toEqual(['a', 'a']);
   });
 
-  it("doesn't send on a change that came from another peer", () => {
+  it("doesn't send a peer's change on to a peer that the sender reaches", () => {
     const network = new MemoryNetwork();
     const docs = ['a', 'b', 'c'].map((id) => join(network, id));
     network.flush();
@@ -76,8 +84,85 @@ describe('connectDoc', () => {
     shapes(docs[0]).set('box', 'from a');
     network.flush();
 
-    const sent = network.sent.slice(before).map(({ from, to, channel }) => `${from}->${to} ${channel}`);
-    expect(sent.sort()).toEqual(['a->b update', 'a->c update']);
+    expect(sentSince(network, before)).toEqual(['a->b update', 'a->c update']);
+  });
+
+  it("carries a change on to a peer that the sender doesn't connect to", () => {
+    const network = new MemoryNetwork();
+    network.keepApart('a', 'c');
+    const [a, , c] = ['a', 'b', 'c'].map((id) => join(network, id));
+    network.flush();
+    const before = network.sent.length;
+
+    shapes(a).set('box', 'from a');
+    network.flush();
+
+    expect(shapes(c).toJSON()).toEqual({ box: 'from a' });
+    expect(sentSince(network, before)).toEqual(['a->b update', 'b->c update']);
+  });
+
+  it("doesn't send on an update that its copy holds already", () => {
+    const network = new MemoryNetwork();
+    const a = join(network, 'a');
+    join(network, 'b');
+    const x = network.join('x');
+    const updates: Uint8Array[] = [];
+    x.onMessage((channel, data) => {
+      if (channel === 'update') updates.push(data);
+    });
+    network.flush();
+    shapes(a).set('box', 'from a');
+    network.flush();
+    const before = network.sent.length;
+
+    x.send('update', updates[0], 'b');
+    network.flush();
+
+    expect(updates).toHaveLength(1);
+    expect(sentSince(network, before)).toEqual(['x->b update']);
+  });
+
+  it("sends an update that it can't apply yet on to every other connected peer, which may lack the same earlier updates", () => {
+    const network = new MemoryNetwork();
+    const b = join(network, 'b');
+    const c = join(network, 'c');
+    const x = network.join('x');
+    network.flush();
+    // x says that it connects to b and c, so that b would leave c out of a change from x that b can apply.
+    x.send('peers', new TextEncoder().encode(JSON.stringify({ seq: 1, peers: ['b', 'c'] })), 'b');
+    const source = new Y.Doc();
+    const updates: Uint8Array[] = [];
+    source.on('update', (update: Uint8Array) => updates.push(update));
+    shapes(source).set('box', 'first');
+    shapes(source).set('box', 'second');
+    network.flush();
+    const before = network.sent.length;
+
+    // The second update needs the first, which b and c lack.
+    x.send('update', updates[1], 'b');
+    network.flush();
+
+    expect(shapes(b).toJSON()).toEqual({});
+    expect(b.store.pendingStructs).not.toBeNull();
+    expect(c.store.pendingStructs).not.toBeNull();
+    expect(sentSince(network, before)).toContain('b->c update');
+  });
+
+  it('asks each connected peer again for the updates it lacks as a link ends, so that a change the link lost comes through another peer', () => {
+    const network = new MemoryNetwork();
+    const [a, , c] = ['a', 'b', 'c'].map((id) => join(network, id));
+    network.flush();
+    const before = network.sent.length;
+
+    shapes(a).set('box', 'sent as the link to c ended');
+    network.keepApart('a', 'c');
+    network.flush();
+
+    expect(network.dropped).toBe(1);
+    expect(shapes(c).toJSON()).toEqual({ box: 'sent as the link to c ended' });
+    const sent = sentSince(network, before);
+    expect(sent).toContain('c->b resync');
+    expect(sent).toContain('b->c resync');
   });
 
   it('reports each peer that answered its state', () => {
@@ -95,8 +180,8 @@ describe('connectDoc', () => {
     const errors: unknown[] = [];
     const failing: Transport = {
       send: (channel) => {
-        if (channel === 'update') return Promise.reject(new Error('the channel closed'));
-        throw new Error('the peer is gone');
+        if (channel === 'update') return Promise.reject(new Error(`${channel}: the channel closed`));
+        throw new Error(`${channel}: the peer is gone`);
       },
       onMessage: () => {},
       onPeerJoin: (handler) => handler('gone'),
@@ -108,8 +193,9 @@ describe('connectDoc', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(errors.map((error) => (error as Error).message).sort()).toEqual([
-      'the channel closed',
-      'the peer is gone',
+      'peers: the peer is gone',
+      'state: the peer is gone',
+      'update: the channel closed',
     ]);
   });
 });

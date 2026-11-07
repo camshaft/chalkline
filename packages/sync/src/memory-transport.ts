@@ -62,9 +62,9 @@ function earlier(event: Event, than: Event): boolean {
 
 /**
  * An in-memory network for tests: every peer that joins connects to every
- * other. Each join, leave and message waits in a queue until the test calls
- * `step`, `run` or `flush`, and the options make the network lose, delay and
- * reorder messages.
+ * other, except two peers that `keepApart` keeps apart. Each join, leave and
+ * message waits in a queue until the test calls `step`, `run` or `flush`, and
+ * the options make the network lose, delay and reorder messages.
  */
 export class MemoryNetwork {
   /** Each message a peer sent to a connected peer, the lost ones among them. */
@@ -80,6 +80,8 @@ export class MemoryNetwork {
   private readonly random: () => number;
   private readonly peers = new Map<string, MemoryPeer>();
   private readonly links = new Map<string, Link>();
+  /** The pairs of peers that never connect, by their link's key. */
+  private readonly apart = new Set<string>();
   /** The newest message that arrived in each direction of each link, by its place in `sent`. */
   private readonly newest = new Map<string, number>();
   private readonly queue: Event[] = [];
@@ -96,6 +98,7 @@ export class MemoryNetwork {
     if (this.peers.has(id)) throw new Error(`${id} is on the network already`);
     const peer = new MemoryPeer(id, this);
     for (const other of this.peers.values()) {
+      if (this.apart.has(linkKey(id, other.id))) continue;
       this.links.set(linkKey(id, other.id), { up: true, breaks: 0 });
       this.schedule(0, () => other.joined(id));
       this.schedule(0, () => peer.joined(other.id));
@@ -123,6 +126,27 @@ export class MemoryNetwork {
   disconnect(a: string, b: string): void {
     const link = this.links.get(linkKey(a, b));
     if (link?.up) this.cut(a, b, link);
+  }
+
+  /**
+   * Keeps `a` and `b` from ever connecting, as two browsers behind networks
+   * that block a direct connection between them: a link they hold ends, with
+   * its messages that haven't arrived, and doesn't come back.
+   */
+  keepApart(a: string, b: string): void {
+    const key = linkKey(a, b);
+    this.apart.add(key);
+    const link = this.links.get(key);
+    if (link === undefined) return;
+    this.links.delete(key);
+    const first = this.peers.get(a);
+    const second = this.peers.get(b);
+    if (link.up && first !== undefined && second !== undefined) {
+      this.schedule(0, () => first.left(b));
+      this.schedule(0, () => second.left(a));
+    }
+    link.up = false;
+    link.breaks += 1;
   }
 
   /** Queues `data` for `target`, or for every other connected peer where `target` is left out. */
