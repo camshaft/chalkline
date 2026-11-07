@@ -62,18 +62,78 @@ export const shapeSchema = z.discriminatedUnion('type', [
   }),
 ]);
 
+/** Who added a shape, where an agent did: the agent, by the name its MCP client gave as it connected. */
+export const creatorSchema = z.object({
+  kind: z.literal('agent'),
+  name: z.string().describe("The name the agent's client gave as it connected."),
+});
+
 /** One shape on the board, as get_board answers it. */
 export const boardShapeSchema = z.object({
   id: z.string(),
   kind: z.string().describe("Excalidraw's type of the shape, such as rectangle, ellipse, diamond, text, arrow or line."),
-  x: z.number(),
-  y: z.number(),
-  width: z.number(),
-  height: z.number(),
+  x: z.number().describe("The shape's left edge, or the x of an arrow's or a line's first point."),
+  y: z.number().describe("The shape's top edge, or the y of an arrow's or a line's first point."),
+  width: z
+    .number()
+    .describe("The shape's width, or how far right of its first point an arrow or a line ends, or left where negative."),
+  height: z
+    .number()
+    .describe("The shape's height, or how far below its first point an arrow or a line ends, or above where negative."),
   label: z.string().optional().describe("A text's text, or the text inside a shape or on an arrow."),
   start: z.string().optional().describe("The id of the shape an arrow's start is bound to."),
   end: z.string().optional().describe("The id of the shape an arrow's end is bound to."),
+  creator: creatorSchema
+    .optional()
+    .describe('The agent that added the shape; a shape that a person drew, or a page added for them, has none.'),
+});
+
+/** The arrow that connect draws between two shapes on the board. */
+export const connectionSchema = z.object({
+  start: z
+    .string()
+    .min(1)
+    .describe('The id of the shape the arrow starts at: a rectangle, an ellipse, a diamond, a text, an image or a frame.'),
+  end: z.string().min(1).describe('The id of the shape the arrow ends at, of the same kinds as start.'),
+  id: z.string().min(1).nullish().describe("The arrow's id; chalkline-mcp makes one where it is left out."),
+  label: label.nullish().describe('The text on the arrow.'),
+  strokeColor: color.nullish(),
+});
+
+/**
+ * The change update_shape makes to one shape on the board. A field left out, or given as null,
+ * stays as it is.
+ */
+export const changeSchema = z.object({
+  id: z.string().min(1).describe('The id of the shape to change, as get_board lists it.'),
+  x: coordinate.nullish().describe("The shape's new left edge, or the new x of an arrow's or a line's first point."),
+  y: coordinate.nullish().describe("The shape's new top edge, or the new y of an arrow's or a line's first point."),
+  width: coordinate
+    .nullish()
+    .describe(
+      "A rectangle's, an ellipse's or a diamond's new width, above 0; or how far right of its first point a straight arrow or line now ends, or left where negative.",
+    ),
+  height: coordinate
+    .nullish()
+    .describe(
+      "A rectangle's, an ellipse's or a diamond's new height, above 0; or how far below its first point a straight arrow or line now ends, or above where negative.",
+    ),
+  label: z
+    .object({ text: z.string() })
+    .nullish()
+    .describe("The new text inside a rectangle, an ellipse or a diamond, or on an arrow; an empty text removes the label."),
+  text: z.string().min(1).nullish().describe("A text's new text."),
+  fontSize: size.nullish().describe("A text's new font size."),
+  strokeColor: color.nullish().describe('The new color of the shape and its label, a CSS color such as #1971c2.'),
+  backgroundColor: color.nullish().describe("The new fill of a rectangle, an ellipse or a diamond, a CSS color such as #a5d8ff."),
+});
+
+/** The shapes that delete_shapes deletes. */
+export const deletionSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).describe('The ids of the shapes to delete, as get_board lists them.'),
 });
 
 export type Shape = z.infer<typeof shapeSchema>;
 export type BoardShape = z.infer<typeof boardShapeSchema>;
+export type Connection = z.infer<typeof connectionSchema>;
+export type ShapeChange = z.infer<typeof changeSchema>;
