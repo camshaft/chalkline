@@ -1,3 +1,7 @@
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { inflateSync } from 'node:zlib';
 import { Awareness } from '@chalkline/sync';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -204,6 +208,60 @@ async function drawn(doc: Y.Doc, region: Region, maxWidth = region.width, maxHei
   return decodePng((await renderBoard(doc, { region, maxWidth, maxHeight })).png);
 }
 
+/** A text of 32 px at (0, 0), as add_shapes adds it, drawn by render_board: `region` of it, at twice its size. */
+async function drawnText(words: string, region: Region): Promise<Pixels> {
+  const client = await connected(new Y.Doc());
+  const added = await call(client, 'add_shapes', { shapes: [{ type: 'text', x: 0, y: 0, text: words, fontSize: 32 }] });
+  expect(added.isError, JSON.stringify(added.content)).not.toBe(true);
+  const size = { max_width: 2 * region.width, max_height: 2 * region.height };
+  return picture(await call(client, 'render_board', { region, ...size })).pixels;
+}
+
+/** How many pixels of two pictures of one size differ in their red, green or blue. */
+function differing(a: Pixels, b: Pixels): number {
+  expect([a.width, a.height]).toEqual([b.width, b.height]);
+  let count = 0;
+  for (let pixel = 0; pixel < a.data.length; pixel += 4) {
+    if ([0, 1, 2].some((channel) => a.data[pixel + channel] !== b.data[pixel + channel])) count++;
+  }
+  return count;
+}
+
+/** The path of a font file of the dejavu-fonts-ttf package, such as DejaVuSans.ttf. */
+function dejavu(font: string): string {
+  return createRequire(import.meta.url).resolve(`dejavu-fonts-ttf/ttf/${font}`);
+}
+
+/**
+ * Runs `work` as on a machine whose fonts are the files of dejavu-fonts-ttf that `fonts` lists. On
+ * Linux, resvg reads the machine's fonts from the directories that the fontconfig file named by
+ * FONTCONFIG_FILE lists, each time it draws.
+ */
+async function withMachineFonts<T>(fonts: string[], work: () => Promise<T>): Promise<T> {
+  const machine = mkdtempSync(join(tmpdir(), 'chalkline-fonts-'));
+  const directory = join(machine, 'fonts');
+  mkdirSync(directory);
+  for (const font of fonts) copyFileSync(dejavu(font), join(directory, font));
+  const config = join(machine, 'fonts.conf');
+  writeFileSync(config, `<?xml version="1.0"?>\n<fontconfig><dir>${directory}</dir></fontconfig>\n`);
+  const before = process.env.FONTCONFIG_FILE;
+  process.env.FONTCONFIG_FILE = config;
+  try {
+    return await work();
+  } finally {
+    if (before === undefined) delete process.env.FONTCONFIG_FILE;
+    else process.env.FONTCONFIG_FILE = before;
+    rmSync(machine, { recursive: true, force: true });
+  }
+}
+
+/** Whether resvg, drawing in the machine's fonts, draws the letter of an SVG text. */
+function machineDrawsText(): boolean {
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><text x="4" y="32" font-size="32">A</text></svg>';
+  return some(decodePng(new Resvg(svg, { background: '#ffffff' }).render().asPng()), dark);
+}
+
 const LABELLED = { shapes: [{ type: 'rectangle', x: 0, y: 0, width: 240, height: 80, label: { text: 'Hello' } }] };
 
 describe('render_board', () => {
@@ -245,6 +303,40 @@ describe('render_board', () => {
     const { pixels, answer } = picture(await call(client, 'render_board', { region, max_width: 100, max_height: 100 }));
     expect(answer).toEqual({ region, width: 100, height: 40 });
     expect([...colors(pixels)]).toEqual(['255,255,255,255']);
+  });
+
+  it("draws a text's letters as it draws them in the same text without its emoji and its em dash", async () => {
+    // At 32 px, "Hi, I'm Claude " runs from x 0 to about 234 in DejaVu Sans, so the region holds
+    // most of its letters and none of the em dash or the emoji.
+    const region = { x: 0, y: 0, width: 200, height: 40 };
+    const marked = await drawnText("Hi, I'm Claude \u2014 I'm on the board \u{1F44B}", region);
+    const plain = await drawnText("Hi, I'm Claude I'm on the board", region);
+    expect(some(plain, dark)).toBe(true);
+    expect(differing(marked, plain)).toBe(0);
+  });
+
+  it('draws a character that its font lacks, such as an emoji, as a box', async () => {
+    const pixels = await drawnText('\u{1F44B}', { x: 0, y: 0, width: 40, height: 40 });
+    expect(some(pixels, dark)).toBe(true);
+  });
+
+  it.runIf(process.platform === 'linux')("draws a text in the helper's font, whatever fonts the machine holds", async () => {
+    // DejaVu Math TeX Gyre holds every character of the text, and DejaVu Sans lacks its last, a
+    // mathematical bold A. Were resvg to load the machine's fonts beside the helper's, it would draw
+    // the whole text in DejaVu Math TeX Gyre on the first machine, and its letters in DejaVu Sans on
+    // the second.
+    const words = 'Hello \u{1D400}';
+    const region = { x: 0, y: 0, width: 140, height: 40 };
+    const withMath = await withMachineFonts(['DejaVuMathTeXGyre.ttf'], async () => {
+      expect(machineDrawsText()).toBe(true);
+      return drawnText(words, region);
+    });
+    const withNone = await withMachineFonts([], async () => {
+      expect(machineDrawsText()).toBe(false);
+      return drawnText(words, region);
+    });
+    expect(some(withNone, dark)).toBe(true);
+    expect(differing(withMath, withNone)).toBe(0);
   });
 });
 

@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { Resvg } from '@resvg/resvg-js';
 import type * as Y from 'yjs';
 import { backToFront, ELEMENTS } from './board';
@@ -7,8 +8,18 @@ import { loadExcalidraw, type Excalidraw } from './skeleton';
 // for it through a request as add_mermaid does: it draws with no page open, it draws the shapes
 // that get_board reads, and the picture's bytes stay out of the shared state that every
 // participant keeps. Excalidraw's exportToSvg draws the board as SVG under jsdom, and resvg turns
-// the SVG into a PNG. The helper loads Excalidraw's fonts as nothing, so resvg draws text in a font
-// of the helper's machine.
+// the SVG into a PNG. The helper loads Excalidraw's fonts as nothing, so resvg draws every text in
+// FONT, the one font it loads.
+
+/**
+ * The font resvg draws every text in: DejaVu Sans, from the dejavu-fonts-ttf package, on every
+ * machine. resvg loads none of the machine's fonts. Where a text holds a character that its font
+ * lacks, resvg draws the whole text in the first loaded font that holds that character, wherever
+ * that font holds each other character of the text too: a machine font that holds every character
+ * as a box, as one of macOS's fonts does, then draws the whole text as boxes. A character that
+ * DejaVu Sans lacks, such as most emoji, draws as that font's box for a missing character.
+ */
+const FONT = createRequire(import.meta.url).resolve('dejavu-fonts-ttf/ttf/DejaVuSans.ttf');
 
 /** The shared map that holds the board's files, such as an image's picture, by id, as the page keeps them. */
 export const FILES = 'files';
@@ -104,6 +115,9 @@ export async function renderBoard(
   const png = new Resvg(new XMLSerializer().serializeToString(svg), {
     background: '#ffffff',
     fitTo: { mode: 'original' },
+    // Excalidraw names its own fonts in the SVG, which resvg doesn't find, so it draws each text in
+    // the first font it loads, FONT.
+    font: { loadSystemFonts: false, fontFiles: [FONT] },
   })
     .render()
     .asPng();

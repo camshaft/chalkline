@@ -80,7 +80,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         'Where the call leaves region out, it draws the bounds of every shape with a margin of 10; a region, with its x, y, width and height in the units get_board reads, draws that part of the board.',
         "The picture keeps the region's shape, and is at most max_width pixels wide and max_height pixels high, 1024 each when left out.",
         "It answers the picture, then region, width and height: the part of the board it drew and the picture's size in pixels, where the pixel (px, py) shows the board's point (region.x + px * region.width / width, region.y + py * region.height / height).",
-        "It draws text in a font of the helper's machine, not in Excalidraw's hand-drawn font, and leaves out a frame's name.",
+        "It draws every text in DejaVu Sans, not in Excalidraw's hand-drawn font, and each character that DejaVu Sans lacks, such as most emoji and Chinese, Japanese or Korean characters, as a box; it leaves out a frame's name.",
         "On a board that doesn't hold a shape, it refuses a call that leaves region out.",
       ].join(' '),
       inputSchema: {

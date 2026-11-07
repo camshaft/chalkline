@@ -17,8 +17,8 @@ await build({
     'process.env.NODE_ENV': JSON.stringify('production'),
     'process.env.IS_PREACT': JSON.stringify('false'),
   },
-  // The helper draws its pictures from SVG with resvg, which draws text in a font of the machine,
-  // so Excalidraw's styles, fonts and images load as nothing.
+  // The helper draws its pictures from SVG with resvg, which draws text in the font that render.ts
+  // loads from node_modules, so Excalidraw's styles, fonts and images load as nothing.
   loader: {
     '.css': 'empty',
     '.woff2': 'empty',
