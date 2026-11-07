@@ -20,6 +20,24 @@ The Connection settings button above the board opens two settings. They stay in 
 - TURN servers. Some networks, such as some office networks and VPNs, block direct connections between browsers, and the page then says that a peer couldn't connect. A TURN server forwards the encrypted traffic between two such browsers. Sign up for a hosted TURN service, such as [Cloudflare's](https://developers.cloudflare.com/calls/turn/), or run your own, such as [coturn](https://github.com/coturn/coturn), and enter its address, such as `turn:turn.example.com:3478`, with its username and password.
 - Relays. Your own Nostr relays, one `wss://` address a line, which the page uses in place of the public relays. Everyone on a board needs at least one relay in common.
 
+## Live speech
+
+The microphone button above the board turns on live speech. Speech is off by default, and each browser turns it on for itself. Before the browser starts listening, the page says where recognition runs: on the device, where the browser offers on-device recognition of your language (Web Speech's `processLocally`), after a download where the language needs one, or else on the browser vendor's speech service, which receives your audio. Recognition starts only once you choose Start listening. Each final result goes on the board's transcript with your name and the time, and everyone on the board and the agent can read it; the words the browser hasn't settled yet show on your page alone. The Transcript button opens the transcript. Where the browser doesn't offer speech recognition, the microphone button is disabled, and the transcript still shows what the others say.
+
+The Probe workflow's Speech jobs open a board in Playwright's Chromium, the runner's Google Chrome and Microsoft Edge, and Firefox, each with a fake microphone. Each checks that the microphone button is enabled only where the browser offers speech recognition, that the page doesn't start recognition before you press the button and agree, and that the page says where recognition runs first, and its job summary lists what the browser offered and did.
+
+The browsers the change ran in, in those jobs on 2026-11-07 (the fake microphone's tone has no words, so these runs didn't add a transcript entry) and on cameron's desktop:
+
+| Browser | What it offered | What happened |
+| --- | --- | --- |
+| Google Chrome 156.0.8078.79, headless, Linux (the runner's own Chrome) | `SpeechRecognition`, `processLocally`, `available` and `install` | Its check said that en-US needs a download, and the page said so before it started. After Start listening, the browser downloaded the language and recognition started on the device. The microphone button turned it off. |
+| Microsoft Edge 156.0.4314.58, headless, Linux (the runner's own Edge) | `SpeechRecognition`, `processLocally`, `available` and `install` | Its check didn't offer en-US on the device, so the page named the vendor's speech service before it started. After Start listening, recognition started on the service. The microphone button turned it off. |
+| Firefox 159.0, headless, Linux | Neither `SpeechRecognition` nor `webkitSpeechRecognition` | The microphone button is disabled. |
+| Playwright's Chromium 158.0.8127.18 (its headless shell), Linux | `SpeechRecognition`, `processLocally`, `available` and `install` | The tab crashed when the page called `SpeechRecognition.available({ langs: ['en-US'], processLocally: true })`, after the microphone button. |
+| Headless Chromium 149.0.7827.0, Linux, on cameron's desktop, on the live page before this change | `SpeechRecognition`, `processLocally`, `available` and `install` | A direct call of `SpeechRecognition.available({ langs: ['en-US'], processLocally: true })` didn't answer, and the page stopped answering, in each of three tries. |
+
+So the page asks the browser where recognition runs only once you press the microphone button, and shows Cancel speech while the browser answers.
+
 ## Add a box from a script
 
 `draw-box` joins a board from Node, with Trystero over [werift](https://github.com/shinyoshiaki/werift-webrtc), and adds one labelled rectangle made from Excalidraw's skeleton format:
@@ -34,7 +52,7 @@ It stays in the room until you press Ctrl-C. `--help` lists its options.
 
 ## Development
 
-The repository is one npm workspace. `packages/sync` holds the board's shared state, the format of a board's link, and the adapter that carries the state between participants over Trystero, with an in-memory network for its tests that loses, delays and reorders messages. `packages/web` holds the page and `draw-box`. `packages/mcp` holds `chalkline-mcp`, the agent's helper: a local MCP server over standard input and output that joins the board its link opens, keeps its own copy of the board, and serves the tools `get_board`, which reads the board's shapes, and `add_shapes`, which adds shapes in Excalidraw's skeleton format. `packages/lan` holds the local-network mode, `chalkline-lan`, one command that serves the built page and a Trystero WebSocket relay from one machine. It sends a request for the page to the same address with `?relay=/relay`, and a page whose address names a relay finds the other participants through that relay in place of the public Nostr relays and the relays of Connection settings. The TURN servers of Connection settings still apply.
+The repository is one npm workspace. `packages/sync` holds the board's shared state, the entries of its transcript, the format of a board's link, and the adapter that carries the state between participants over Trystero, with an in-memory network for its tests that loses, delays and reorders messages. `packages/web` holds the page and `draw-box`. `packages/mcp` holds `chalkline-mcp`, the agent's helper: a local MCP server over standard input and output that joins the board its link opens, keeps its own copy of the board, and serves the tools `get_board`, which reads the board's shapes, and `add_shapes`, which adds shapes in Excalidraw's skeleton format. `packages/lan` holds the local-network mode, `chalkline-lan`, one command that serves the built page and a Trystero WebSocket relay from one machine. It sends a request for the page to the same address with `?relay=/relay`, and a page whose address names a relay finds the other participants through that relay in place of the public Nostr relays and the relays of Connection settings. The TURN servers of Connection settings still apply.
 
 CI runs `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` on each pull request and on `main`, then starts the built `chalkline-mcp` on a new board and calls its tools, and the Pages workflow publishes `main` to GitHub Pages.
 
