@@ -822,6 +822,7 @@ const feedback = (id: string, seconds: number, text = 'can we move this up a bit
   shapes: ['box'],
   status: 'open',
   answer: null,
+  reopened: null,
 });
 
 /** `record` as an agent answered it `seconds` after the listener starts. */
@@ -831,8 +832,11 @@ const answered = (record: Feedback, seconds: number): Feedback => ({
   answer: { by: 'Claude', at: at(seconds), text: 'moved the box up' },
 });
 
-/** `record` as a person reopened it, which keeps its answer. */
+/** `record` as a person reopened it on a page that doesn't record when, which keeps its answer. */
 const reopened = (record: Feedback): Feedback => ({ ...record, status: 'open' });
+
+/** `record` as a person reopened it `seconds` after the listener starts, on a page that records when. */
+const reopenedAt = (record: Feedback, seconds: number): Feedback => ({ ...record, status: 'open', reopened: at(seconds) });
 
 /** The line the listener prints for `record`, which became open at `when`. */
 const opened = (record: Feedback, when: string): FeedbackOpened => ({
@@ -886,7 +890,7 @@ describe('listenFeedback', () => {
     expect(lines).toEqual([opened(earlier, at(20)), opened(later, at(30))]);
   });
 
-  it("prints a line for a feedback a person reopens, at the time the listener receives the reopening, and none for an agent's answer or a peer's copy of the same record", () => {
+  it("prints a line for a feedback a person reopens on a page that doesn't record when, at the time the listener receives the reopening, and none for an agent's answer or a peer's copy of the same record", () => {
     const { board, lines } = reading();
     const record = feedback('move', 25);
     writeFeedback(board, record);
@@ -941,6 +945,55 @@ describe('listenFeedback', () => {
     network.flush();
     expect(lines).toHaveLength(2);
     expect(lines).toEqual(expect.arrayContaining([opened(unanswered, at(-20)), opened(since, at(5))]));
+  });
+
+  it('prints a line for a feedback a person reopens at the time their page recorded, though the listener receives the reopening later', () => {
+    const { board, lines } = reading();
+    const record = feedback('move', 25);
+    writeFeedback(board, record);
+    const answer = answered(record, 40);
+    writeFeedback(board, answer);
+
+    vi.setSystemTime(START + 90_000);
+    writeFeedback(board, reopenedAt(answer, 60));
+    // A peer writes the same reopened record again.
+    writeFeedback(board, reopenedAt(answer, 60));
+    expect(lines).toEqual([opened(record, at(25)), opened(record, at(60))]);
+  });
+
+  it('leaves out a feedback reopened at or before the start, though the listener receives the reopening after it read the feedback as answered', () => {
+    const before = answered(feedback('before', -120), -90);
+    const start = answered(feedback('start', -120, 'and add a label'), -90);
+    const { board, lines } = reading([before, start]);
+
+    vi.setSystemTime(START + 30_000);
+    writeFeedback(board, reopenedAt(before, -10));
+    writeFeedback(board, reopenedAt(start, 0));
+    expect(lines).toEqual([]);
+  });
+
+  it('prints a feedback that the listener first receives reopened after `--after` at its reopen time, and leaves out one reopened at or before `--after`', () => {
+    vi.setSystemTime(START + 5_000);
+    const doc = new Y.Doc();
+    const board = feedbackOf(doc);
+    // `--after` sets a time a minute before the listener starts. The board holds a feedback reopened
+    // before that time and one reopened after it, each answered long before, and a change brings
+    // one reopened at that time and one reopened after it.
+    const before = reopenedAt(answered(feedback('before', -300, 'make it blue'), -200), -90);
+    const since = reopenedAt(answered(feedback('since', -300, 'make it red'), -200), -30);
+    writeFeedback(board, before);
+    writeFeedback(board, since);
+    const lines: FeedbackOpened[] = [];
+    listenFeedback(doc, { after: START - 60_000, onLine: (line) => lines.push(line) });
+    expect(lines).toEqual([opened(since, at(-30))]);
+
+    const later = reopenedAt(answered(feedback('later', -300, 'and add a label'), -200), -10);
+    const atAfter = reopenedAt(answered(feedback('at-after', -300, 'make it green'), -200), -60);
+    doc.transact(() => {
+      writeFeedback(board, later);
+      writeFeedback(board, atAfter);
+    });
+    expect(lines).toEqual([opened(since, at(-30)), opened(later, at(-10))]);
   });
 
   it("reads a deleted feedback, or a value under its id that doesn't read as a feedback, as not open, so that its next open copy prints a line", () => {
