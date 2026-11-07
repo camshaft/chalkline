@@ -9,7 +9,7 @@ import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as Y from 'yjs';
 import { bindElements } from './binding';
-import { joinErrorText, loadSettings, roomOptions, type ConnectionSettings, type SettingsStorage } from './connection';
+import { loadSettings, roomOptions, type ConnectionSettings, type SettingsStorage } from './connection';
 import { bindPresence, keepName, participantName, setName, type Button, type NameStorage, type Pointer } from './presence';
 import { connectionReport, type ConnectionReport } from './report';
 import type { RoomSecrets } from './room';
@@ -22,6 +22,7 @@ import {
   type PageAddress,
 } from './room-links';
 import { connectSettingsButton } from './settings-panel';
+import { statusLine, watchedPeerConnection } from './status';
 
 /** What the page shows on `window.chalkline`, for the live probe and for debugging. */
 export interface ChalklineHandle {
@@ -106,6 +107,7 @@ async function start(): Promise<ChalklineHandle> {
   const status = pageElement('status');
   const storage = browserStorage();
   const settings = loadSettings(storage);
+  const line = statusLine(status, settings);
   connectSettingsButton(pageElement('settings-button'), pageElement('settings'), {
     settings,
     storage,
@@ -126,10 +128,16 @@ async function start(): Promise<ChalklineHandle> {
   // A page that the local-network mode serves names that machine's relay in its address, and finds
   // the other participants through it in place of the Nostr relays.
   const relays = relaysFromAddress(window.location.href);
-  const room = joinBoardRoom(roomOptions(secrets, settings), secrets.room, relays, {
+  // Trystero makes each connection to a peer with `rtcPolyfill`. This class says as soon as one can't open,
+  // where Trystero's onJoinError says so only once one of its own timers runs out.
+  const rtcPolyfill = watchedPeerConnection(RTCPeerConnection, (failure) => {
+    console.warn("chalkline: a connection to a peer can't open", failure);
+    line.showFailure();
+  });
+  const room = joinBoardRoom({ ...roomOptions(secrets, settings), rtcPolyfill }, secrets.room, relays, {
     onJoinError: ({ peerId, error }) => {
       console.warn(`chalkline: peer ${peerId} couldn't connect: ${error}`);
-      status.textContent = joinErrorText(settings);
+      line.showFailure();
     },
   });
   const transport = trysteroTransport(room);
@@ -138,13 +146,7 @@ async function start(): Promise<ChalklineHandle> {
   connectDoc(doc, transport, { onSendError });
   connectAwareness(awareness, transport, { onSendError });
 
-  const showPeers = () => {
-    const count = transport.peers().length;
-    status.textContent =
-      count === 0
-        ? "No one else is here yet. Share this page's link to invite people."
-        : `${count} other ${count === 1 ? 'person is' : 'people are'} on this board.`;
-  };
+  const showPeers = () => line.showPeers(transport.peers().length);
   transport.onPeerJoin(showPeers);
   transport.onPeerLeave(showPeers);
   showPeers();
