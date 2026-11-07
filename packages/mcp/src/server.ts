@@ -4,9 +4,9 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type * as Y from 'yjs';
 import { answer, refusal } from './answer';
-import { addShapes, ELEMENTS, readBoard, ShapeError } from './board';
+import { addShapes, ELEMENTS, newId, readBoard, ShapeError } from './board';
 import type { Creator } from './creator';
-import { connect, deleteShapes, updateShape } from './edit';
+import { connect, deleteShapes, moveGroup, updateShape } from './edit';
 import { renderBoard, RenderError } from './render';
 import { pendingRequests, RequestError, waitForRequest, writeMermaidRequest } from './requests';
 import { boardShapeSchema, changeSchema, connectionSchema, deletionSchema, shapeSchema } from './shapes';
@@ -51,7 +51,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
     {
       title: 'Read the board',
       description:
-        "Reads the board: every shape on it, from back to front, with its id, kind, position, size and label, its stroke and background colors, each style field, font and alignment that isn't Excalidraw's default, for an arrow the ids of the shapes it starts and ends at, and for a shape an agent added, its creator; and, in pending, each Mermaid request that no page has converted yet. An arrow's or a line's width and height say how far its last point lies right of and below its first, as add_shapes reads them.",
+        "Reads the board: every shape on it, from back to front, with its id, kind, position, size and label, its stroke and background colors, each style field, font and alignment that isn't Excalidraw's default, for a shape in a group the ids of its groups, the innermost first, for an arrow the ids of the shapes it starts and ends at, and for a shape an agent added, its creator; and, in pending, each Mermaid request that no page has converted yet. An arrow's or a line's width and height say how far its last point lies right of and below its first, as add_shapes reads them.",
       outputSchema: {
         shapes: z.array(boardShapeSchema),
         pending: z.array(z.object({ id: z.string(), kind: z.literal('mermaid') })),
@@ -114,11 +114,23 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         'Every shape may set strokeColor, strokeWidth (1, 2 or 4), strokeStyle (solid, dashed or dotted), fillStyle (solid, hachure, cross-hatch or zigzag), roughness (0, 1 or 2) and opacity (0 to 100), and a rectangle, an ellipse or a diamond its backgroundColor.',
         "A text and a label may set fontFamily (Excalifont, Nunito, Comic Shanns or another of Excalidraw's fonts) and textAlign (left, center or right).",
         'Each new shape records the agent as its creator, which get_board lists.',
+        "With group true, the call's shapes go into one new group, whose id the answer holds: update_shape moves the group by that id, and delete_shapes deletes it with groups.",
       ].join(' '),
-      inputSchema: { shapes: z.array(shapeSchema).min(1) },
-      outputSchema: { ids: z.array(z.string()) },
+      inputSchema: {
+        shapes: z.array(shapeSchema).min(1),
+        group: z.boolean().nullish().describe("Whether the call's shapes go into one new group, whose id the answer holds."),
+      },
+      outputSchema: {
+        ids: z.array(z.string()),
+        group: z.string().optional().describe("The id of the group the call's shapes went into, where the call asked for one."),
+      },
     },
-    ({ shapes }) => refusing(async () => answer({ ids: await addShapes(doc, shapes, creator()) })),
+    ({ shapes, group }) =>
+      refusing(async () => {
+        const id = group === true ? newId() : undefined;
+        const ids = await addShapes(doc, shapes, creator(), id);
+        return answer(id === undefined ? { ids } : { ids, group: id });
+      }),
   );
 
   server.registerTool(
@@ -147,11 +159,17 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         "A shape's label moves with it, and each arrow bound to it follows it.",
         "A straight arrow's or line's width and height say where it ends from its first point; an arrow bound to a shape follows that shape, so move the shape in its place.",
         'An empty label removes the label.',
+        "To move a group, give group, the id get_board lists in its shapes' groups, instead of id, with x, y or both: the group's left and top edges go there, every shape of it moves with its label, each arrow bound to it follows it, and the answer holds the group's shapes.",
       ].join(' '),
       inputSchema: changeSchema.shape,
-      outputSchema: { shape: boardShapeSchema },
+      outputSchema: { shape: boardShapeSchema.optional(), shapes: z.array(boardShapeSchema).optional() },
     },
-    (change) => refusing(async () => answer({ shape: await updateShape(doc, change, creator()) })),
+    (change) =>
+      refusing(async () =>
+        change.group === undefined || change.group === null
+          ? answer({ shape: await updateShape(doc, change, creator()) })
+          : answer({ shapes: await moveGroup(doc, change) }),
+      ),
   );
 
   server.registerTool(
@@ -159,13 +177,14 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
     {
       title: 'Delete shapes from the board',
       description: [
-        'Deletes shapes from the board by their ids, as get_board lists them, and answers the ids it deleted.',
+        'Deletes shapes from the board by their ids, as get_board lists them, by their groups, or both, and answers the ids it deleted.',
+        'Each shape whose groups hold one of groups goes, with its label.',
         "A shape's label goes with it, and each arrow bound to a deleted shape stays on the board, no longer bound at that end.",
       ].join(' '),
       inputSchema: deletionSchema.shape,
       outputSchema: { ids: z.array(z.string()) },
     },
-    ({ ids }) => refusing(async () => answer({ ids: deleteShapes(doc, ids) })),
+    ({ ids, groups }) => refusing(async () => answer({ ids: deleteShapes(doc, ids ?? [], groups ?? []) })),
   );
 
   server.registerTool(
