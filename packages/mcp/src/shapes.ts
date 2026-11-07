@@ -311,8 +311,26 @@ export const reorderSchema = z.object({
   place: placeSchema,
 });
 
+/** The shapes that scale_shapes scales, by their ids, by their groups, or both, and by how much. */
+export const scalingSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).nullish().describe('The ids of the shapes to scale, as get_board lists them.'),
+  groups: z
+    .array(z.string().min(1))
+    .min(1)
+    .nullish()
+    .describe("The ids of groups to scale with every shape in them, as get_board lists them in a shape's groups."),
+  factor: size.describe('How many times its size each shape becomes, above 0: 0.5 halves it, and 2 doubles it.'),
+  about: z
+    .object({ x: coordinate, y: coordinate })
+    .nullish()
+    .describe(
+      "The point the shapes scale around, which stays where it is; where it is left out, the left and top edges of the shapes' bounds stay where they are.",
+    ),
+});
+
 export type Shape = z.infer<typeof shapeSchema>;
 export type BoardShape = z.infer<typeof boardShapeSchema>;
 export type Connection = z.infer<typeof connectionSchema>;
 export type ShapeChange = z.infer<typeof changeSchema>;
 export type Place = z.infer<typeof placeSchema>;
+export type Scaling = z.infer<typeof scalingSchema>;
