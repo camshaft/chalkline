@@ -890,6 +890,30 @@ describe('listenFeedback', () => {
     expect(lines).toEqual([opened(earlier, at(20)), opened(later, at(30))]);
   });
 
+  it('prints kind "ask" for an ask, new or reopened, and kind "feedback" for a feedback and for a record without a kind', () => {
+    const { board, lines } = reading();
+    const ask: Feedback = { ...feedback('ask', 20, 'Tidy this up'), shapes: ['box', 'arrow'], kind: 'ask' };
+    const marked: Feedback = { ...feedback('marked', 25), kind: 'feedback' };
+    // A record that a page wrote before kinds, which doesn't hold one.
+    const old = feedback('old', 30, 'and add a label');
+    writeFeedback(board, ask);
+    writeFeedback(board, marked);
+    writeFeedback(board, old);
+    expect(board.get('old')).not.toHaveProperty('kind');
+    expect(lines).toEqual([{ ...opened(ask, at(20)), kind: 'ask' }, opened(marked, at(25)), opened(old, at(30))]);
+
+    // An agent answers the ask, and a person reopens it.
+    const answer = answered(ask, 40);
+    writeFeedback(board, answer);
+    writeFeedback(board, reopenedAt(answer, 60));
+    expect(lines.map(({ id, kind }) => [id, kind])).toEqual([
+      ['ask', 'ask'],
+      ['marked', 'feedback'],
+      ['old', 'feedback'],
+      ['ask', 'ask'],
+    ]);
+  });
+
   it("prints a line for a feedback a person reopens on a page that doesn't record when, at the time the listener receives the reopening, and none for an agent's answer or a peer's copy of the same record", () => {
     const { board, lines } = reading();
     const record = feedback('move', 25);
@@ -1175,6 +1199,7 @@ describe('parseListenArgs', () => {
     expect(parseListenArgs(['--help'], START)).toEqual({ help: true });
     expect(LISTEN_USAGE).toMatch(/^Usage: chalkline-mcp listen <board link>/);
     expect(LISTEN_USAGE).toContain('{"at", "kind": "feedback", "id", "by", "text", "shapes"}');
+    expect(LISTEN_USAGE).toContain('"kind" is "ask"');
   });
 
   it("refuses a pause, a time or a link it can't read, and a call that doesn't give one link", () => {

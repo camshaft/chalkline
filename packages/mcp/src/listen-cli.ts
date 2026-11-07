@@ -29,9 +29,11 @@ what people on the board say, write and draw, and for each feedback they open:
       the board they cover, as {"x", "y", "width", "height"}, and "at" when the person last
       changed one;
   {"at", "kind": "feedback", "id", "by", "text", "shapes"}  at once for each feedback that
-      becomes open, a new one or one a person reopens after an agent's answer: "id" holds its
-      id, as read_feedback lists it, to pass to answer_feedback, "by" its writer, "text" what
-      they wrote, "shapes" the ids of the shapes under its area, and "at" when the person wrote
+      becomes open, a new one or one a person reopens after an agent's answer: "kind" is "ask"
+      for an ask that a person sends with Ask an agent on the shapes they selected, and
+      "feedback" for every other feedback; "id" holds its id, as read_feedback lists it, to pass
+      to answer_feedback, "by" its writer, "text" what they wrote, "shapes" the ids of the shapes
+      under its area, or of the shapes an ask's writer selected, and "at" when the person wrote
       it, or, for a reopened feedback, when the person reopened it, and where the page that
       reopened it doesn't record that time, when the listener received the reopening.
 
