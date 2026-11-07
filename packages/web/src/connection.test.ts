@@ -1,17 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import {
+  boardTurnServers,
   joinErrorText,
+  linkErrorText,
+  linkOnlyServers,
   loadSettings,
   defaultSettings,
   parseSettings,
   relayUrlError,
   roomOptions,
+  sameTurnServer,
   saveSettings,
   SETTINGS_KEY,
   settingsFromForm,
+  turnPartOf,
   turnUrlError,
   type ConnectionSettings,
   type SettingsStorage,
+  type TurnServer,
 } from './connection';
 import { APP_ID } from './room';
 
@@ -153,5 +159,86 @@ describe('the connection settings', () => {
   it('point a person who meets a failed connection to the TURN settings', () => {
     expect(joinErrorText(defaultSettings())).toContain('add a TURN server in Connection settings');
     expect(joinErrorText(saved)).toContain('Check their addresses, usernames and passwords in Connection settings');
+  });
+});
+
+/** The servers a board's link carries: Cloudflare's STUN server, and a TURN server of three addresses. */
+const link: TurnServer[] = [
+  { urls: ['stun:stun.cloudflare.com:3478'] },
+  {
+    urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turns:turn.cloudflare.com:5349?transport=tcp'],
+    username: 'link-user',
+    credential: 'link-pass',
+  },
+];
+
+describe("the TURN servers of a board's link", () => {
+  it("go into the ICE servers the page joins the board with, after the browser's own", () => {
+    const linkServers = linkOnlyServers(saved, link);
+    expect(linkServers).toStrictEqual(link);
+    const options = roomOptions(secrets, saved, linkServers);
+    expect(options.turnConfig).toStrictEqual([...saved.turnServers, ...link]);
+    expect(options.turnConfig?.[3]).not.toBe(link[1]);
+    expect(roomOptions(secrets, defaultSettings(), link)).toStrictEqual({
+      appId: APP_ID,
+      password: 'password-1',
+      turnConfig: link,
+    });
+  });
+
+  it("stay out of the browser's settings, so that another board joins without them", () => {
+    const storage = new MemoryStorage();
+    saveSettings(storage, saved);
+    const kept = storage.getItem(SETTINGS_KEY);
+    const settings = loadSettings(storage);
+    expect(roomOptions(secrets, settings, linkOnlyServers(settings, link)).turnConfig).toHaveLength(4);
+    expect(storage.getItem(SETTINGS_KEY)).toBe(kept);
+    expect(loadSettings(storage)).toStrictEqual(saved);
+    // The link of another board carries none, so the page joins it with the browser's own servers alone.
+    const other = { room: 'room-2', key: 'password-2' };
+    expect(roomOptions(other, loadSettings(storage), linkOnlyServers(settings, [])).turnConfig).toStrictEqual(saved.turnServers);
+    expect(roomOptions(other, loadSettings(new MemoryStorage()))).not.toHaveProperty('turnConfig');
+  });
+
+  it('leave out each server whose TURN part the browser keeps already', () => {
+    const part = turnPartOf(link[1]);
+    expect(part).toStrictEqual({
+      urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turns:turn.cloudflare.com:5349?transport=tcp'],
+      username: 'link-user',
+      credential: 'link-pass',
+    });
+    const settings = { turnServers: part === null ? [] : [part], relays: [] };
+    expect(linkOnlyServers(settings, link)).toStrictEqual([link[0]]);
+    expect(boardTurnServers(settings, linkOnlyServers(settings, link))).toStrictEqual([...settings.turnServers, link[0]]);
+  });
+
+  it("keep a server's turn: and turns: addresses alone, with its username and password", () => {
+    expect(turnPartOf(link[0])).toBeNull();
+    expect(
+      turnPartOf({ urls: ['stun:stun.example.com', 'turn:turn.example.com:3478'], username: 'alice', credential: 'secret' }),
+    ).toStrictEqual({ urls: ['turn:turn.example.com:3478'], username: 'alice', credential: 'secret' });
+    expect(turnPartOf({ urls: ['turn:open.example.com:80'] })).toStrictEqual({ urls: ['turn:open.example.com:80'] });
+  });
+
+  it('tell one server from another by its addresses, in order, its username and its password', () => {
+    const server = { urls: ['turn:a.example.com', 'turn:b.example.com'], username: 'alice', credential: 'secret' };
+    expect(sameTurnServer(server, { ...server, urls: ['turn:a.example.com', 'turn:b.example.com'] })).toBe(true);
+    expect(sameTurnServer(server, { ...server, urls: ['turn:b.example.com', 'turn:a.example.com'] })).toBe(false);
+    expect(sameTurnServer(server, { ...server, urls: ['turn:a.example.com'] })).toBe(false);
+    expect(sameTurnServer(server, { ...server, username: 'bob' })).toBe(false);
+    expect(sameTurnServer(server, { ...server, credential: 'other' })).toBe(false);
+  });
+
+  it('list the servers a page shares: the browser\'s own, then the link\'s', () => {
+    expect(boardTurnServers(saved, link)).toStrictEqual([...saved.turnServers, ...link]);
+    expect(boardTurnServers(defaultSettings(), [])).toStrictEqual([]);
+  });
+
+  it('point a person whose link carries TURN servers to the person who shared it, and say why a link is refused', () => {
+    expect(joinErrorText(defaultSettings(), true)).toContain('may have expired: ask the person who shared the link for a fresh link');
+    expect(joinErrorText(saved, true)).toBe(joinErrorText(defaultSettings(), true));
+    expect(linkErrorText("The link's turn parameter isn't base64url text.")).toBe(
+      "The link's turn parameter isn't base64url text. The page joins the board without the link's TURN servers: ask the person who shared the link to copy it again.",
+    );
   });
 });
