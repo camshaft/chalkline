@@ -316,6 +316,18 @@ describe('the outlines of open feedback', () => {
     expect(outlines(layer)).toEqual([]);
   });
 
+  it('draws the outline of an answered feedback again once a person reopens it', () => {
+    const map = feedbackOf(new Y.Doc());
+    const answered = record('reopened-1', 'Grace', AREA, true);
+    writeFeedback(map, answered);
+    const { layer } = page(PLAIN, [], map);
+    expect(outlines(layer)).toEqual([]);
+    writeFeedback(map, { ...answered, status: 'open' });
+    expect(outlines(layer)).toEqual([
+      { id: 'reopened-1', name: 'Grace', shown: false, left: '100px', top: '50px', width: '200px', height: '80px' },
+    ]);
+  });
+
   it('scrolls and zooms the canvas to the area that Show asks for, and outlines it until the next click or tap', () => {
     const map = feedbackOf(new Y.Doc());
     const answered = record('answered-1', 'Lin', AREA, true);

@@ -1,4 +1,14 @@
-import { appendEntry, listFeedback, newEntryId, readTranscript, type Feedback, type TranscriptEntry } from '@chalkline/sync';
+import {
+  appendEntry,
+  getFeedback,
+  listFeedback,
+  newEntryId,
+  readTranscript,
+  writeFeedback,
+  type Feedback,
+  type FeedbackAnswer,
+  type TranscriptEntry,
+} from '@chalkline/sync';
 import type * as Y from 'yjs';
 import type { SpeechState } from './speech';
 
@@ -34,7 +44,7 @@ export interface ChatOptions {
 
 /** The board's feedback, which the panel lists among the chat's entries, and what its Show button does. */
 export interface PanelFeedback {
-  /** The board's `feedback` map. */
+  /** The board's `feedback` map, which the panel's Reopen buttons write to. */
   map: Y.Map<unknown>;
   /** Scrolls and zooms the canvas to a feedback's area, and outlines that area. */
   show(record: Feedback): void;
@@ -192,8 +202,34 @@ function entryItem(doc: Document, { id, speaker, at, text, via }: TranscriptEntr
   return item;
 }
 
-/** A feedback in the chat's list: its writer, its time, its text, how many shapes it covers, and Show. */
-function feedbackItem(doc: Document, record: Feedback, show: (record: Feedback) => void): HTMLLIElement {
+/** What the buttons of a feedback in the chat's list do. */
+interface FeedbackButtons {
+  /** Show: scrolls and zooms the canvas to the feedback's area. */
+  show(record: Feedback): void;
+  /** Reopen: sets an answered feedback open again. */
+  reopen(record: Feedback): void;
+}
+
+/**
+ * The agent's answer under a feedback in the chat's list: its writer, its time and its text. A reopened
+ * feedback keeps its answer, which the list shows as its earlier answer.
+ */
+function answerPart(doc: Document, { by, at, text }: FeedbackAnswer, reopened: boolean): HTMLDivElement {
+  const part = doc.createElement('div');
+  part.className = 'transcript-feedback-answer';
+  const [who, when, words] = itemParts(doc, by, at, text);
+  const tag = doc.createElement('span');
+  tag.className = 'transcript-feedback-answer-tag';
+  tag.textContent = reopened ? 'Earlier answer' : 'Answer';
+  part.append(who, when, tag, words);
+  return part;
+}
+
+/**
+ * A feedback in the chat's list: its writer, its time, its text, how many shapes it covers and Show; Reopen
+ * while it is answered; and under them the agent's answer, where the feedback holds one.
+ */
+function feedbackItem(doc: Document, record: Feedback, buttons: FeedbackButtons): HTMLLIElement {
   const item = doc.createElement('li');
   item.className = 'transcript-feedback';
   item.dataset.id = record.id;
@@ -210,8 +246,18 @@ function feedbackItem(doc: Document, record: Feedback, show: (record: Feedback) 
   showButton.className = 'transcript-feedback-show';
   showButton.textContent = 'Show';
   showButton.title = 'Scroll and zoom the board to the area of this feedback';
-  showButton.addEventListener('click', () => show(record));
+  showButton.addEventListener('click', () => buttons.show(record));
   item.append(who, when, tag, words, covers, showButton);
+  if (record.status === 'answered') {
+    const reopenButton = doc.createElement('button');
+    reopenButton.type = 'button';
+    reopenButton.className = 'transcript-feedback-reopen';
+    reopenButton.textContent = 'Reopen';
+    reopenButton.title = 'Ask the agent to look at this feedback again';
+    reopenButton.addEventListener('click', () => buttons.reopen(record));
+    item.append(reopenButton);
+  }
+  if (record.answer !== null) item.append(answerPart(doc, record.answer, record.status === 'open'));
   return item;
 }
 
@@ -231,7 +277,10 @@ function feedbackItem(doc: Document, record: Feedback, show: (record: Feedback) 
  * Where `feedback` is given, the list shows each feedback of its map among
  * the entries, in the order of their times, with its writer, its time, its
  * text, how many shapes its area covers and a Show button, which calls
- * `feedback.show`; and the panel opens when a feedback arrives.
+ * `feedback.show`. Under an answered feedback it shows the agent's answer
+ * and a Reopen button, which sets the feedback open again and keeps the
+ * answer, so that the agent reads it again; a reopened feedback shows its
+ * earlier answer. The panel opens when a feedback arrives.
  * `opener` opens and closes the panel, and counts the entries and the
  * feedback; the panel's Close button, as Escape in the panel does, closes it
  * with one press and puts the focus back on `opener`. The panel opens as
@@ -342,7 +391,16 @@ export function bindTranscriptPanel(
   mic.addEventListener('click', () => actions.toggle());
   open(false);
 
-  const showFeedback = (record: Feedback): void => feedback?.show(record);
+  const feedbackButtons: FeedbackButtons = {
+    show: (record) => feedback?.show(record),
+    // Reopen reads the feedback as the board holds it at the press, and writes it open again only while the
+    // board holds it answered, so that a press doesn't undo a peer's newer change of it.
+    reopen: ({ id }) => {
+      if (feedback === undefined) return;
+      const current = getFeedback(feedback.map, id);
+      if (current?.status === 'answered') writeFeedback(feedback.map, { ...current, status: 'open' });
+    },
+  };
   let entryCount = 0;
   // The ids of the feedback the list showed, so that the panel opens for each one that arrives after.
   let known: ReadonlySet<string> | null = null;
@@ -352,7 +410,7 @@ export function bindTranscriptPanel(
     const arrived = items.length > entryCount;
     entryCount = items.length;
     entries.replaceChildren(
-      ...items.map((item) => (item.kind === 'entry' ? entryItem(doc, item.entry) : feedbackItem(doc, item.feedback, showFeedback))),
+      ...items.map((item) => (item.kind === 'entry' ? entryItem(doc, item.entry) : feedbackItem(doc, item.feedback, feedbackButtons))),
     );
     empty.hidden = items.length > 0;
     opener.textContent = items.length === 0 ? 'Chat' : `Chat (${items.length})`;
