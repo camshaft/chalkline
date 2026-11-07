@@ -5,7 +5,9 @@ name: Probe
 # draw-box script joins it from a third runner. Each browser types its name,
 # draws a rectangle with the mouse, and waits until it shows the other browser's
 # rectangle, the script's labelled box, and the other browser's cursor with its
-# name; the script waits until both browsers mark it seen.
+# name; the script waits until both browsers mark it seen. The speech job opens
+# a board in each browser with a fake microphone, and records what the browser
+# offers for speech recognition and what the page does with it.
 on:
   pull_request:
   workflow_dispatch:
@@ -103,6 +105,42 @@ jobs:
         with:
           name: probe-${{ matrix.name }}
           path: packages/web/probe-${{ matrix.name }}.png
+          if-no-files-found: ignore
+
+  speech:
+    name: Speech (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [chromium, firefox]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: npm ci
+      - name: Install ${{ matrix.name }}
+        working-directory: packages/web
+        timeout-minutes: 8
+        run: npx playwright install ${{ matrix.name }}
+      - name: Build the page
+        if: ${{ !inputs.page_url }}
+        run: npm run build --workspace @chalkline/web
+      - name: Turn speech on, and record what the browser does
+        working-directory: packages/web
+        env:
+          BROWSER: ${{ matrix.name }}
+          PAGE_URL: ${{ inputs.page_url }}
+        run: node probe/speech.mjs
+      - name: Keep the screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: speech-${{ matrix.name }}
+          path: packages/web/speech-${{ matrix.name }}.png
           if-no-files-found: ignore
 
   script:
