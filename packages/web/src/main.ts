@@ -36,8 +36,8 @@ import { keepBoard, storeName, type KeptBoard } from './keep';
 import { Followed } from './followed';
 import { ChalklineMenu, type FileCommands } from './menu';
 import { bindRequests, mermaidConverter } from './mermaid';
-import { bindParticipants } from './participants';
 import { bindPenSideButton, sideButtonSetting } from './pen';
+import { bindParticipants } from './participants';
 import {
   bindPresence,
   keepName,
