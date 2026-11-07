@@ -1,4 +1,4 @@
-import { appendEntry } from '@chalkline/sync';
+import { appendEntry, newEntryId } from '@chalkline/sync';
 import type * as Y from 'yjs';
 
 /** One of a recognition result's alternatives: the words the browser heard. */
@@ -181,12 +181,6 @@ export interface Speech {
   decline(): void;
 }
 
-function randomId(): string {
-  const bytes = new Uint8Array(8);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
 /** The one error after which the browser goes on listening once it starts again: a silence. */
 const SILENCE = 'no-speech';
 
@@ -201,7 +195,7 @@ const SILENCE = 'no-speech';
  */
 export function speechControl(options: SpeechOptions): Speech {
   const { Class, lang, transcript } = options;
-  const newId = options.newId ?? randomId;
+  const newId = options.newId ?? newEntryId;
   const now = options.now ?? (() => new Date());
   const handlers = new Set<(state: SpeechState) => void>();
   let state: SpeechState = Class === null ? { kind: 'unsupported' } : { kind: 'off' };
@@ -234,7 +228,7 @@ export function speechControl(options: SpeechOptions): Speech {
         const words = result.length > 0 ? result[0].transcript.trim() : '';
         if (words === '') continue;
         if (result.isFinal) {
-          appendEntry(transcript, { id: newId(), speaker: options.speaker(), at: now().toISOString(), text: words });
+          appendEntry(transcript, { id: newId(), speaker: options.speaker(), at: now().toISOString(), text: words, via: 'speech' });
         } else {
           heard = heard === '' ? words : `${heard} ${words}`;
         }

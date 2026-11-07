@@ -25,8 +25,8 @@ server over standard input and output: get_board reads the board, render_board d
 picture, add_shapes draws on it, connect draws an arrow between two of its shapes, update_shape
 changes a shape, delete_shapes deletes shapes, reorder_shapes moves shapes forward or back,
 add_mermaid asks a page of the board to draw a Mermaid diagram, whose request get_request reads,
-read_changes reads the shapes added, changed and deleted on the board, and read_transcript reads
-what the people on the board said.
+read_changes reads the shapes added, changed and deleted on the board, read_transcript reads what
+the people on the board said and typed, and post_message posts a message in the board's chat.
 The link is the board's address, with its #room=<name>&key=<password> fragment, and with its
 ?relay= parameters where the board's participants meet through a relay. Each line the helper
 logs goes to standard error.

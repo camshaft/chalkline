@@ -109,6 +109,14 @@
       .transcript-empty {
         color: #666;
       }
+      .chat-compose {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .chat-compose input {
+        flex: 1;
+        min-width: 0;
+      }
       .join-screen {
         max-width: 34rem;
         margin: 3rem auto;
@@ -195,7 +203,7 @@
       <button id="open-button" type="button" hidden>Open file</button>
       <button id="mic" type="button" aria-pressed="false" hidden>Turn on speech</button>
       <button id="transcript-button" type="button" aria-expanded="false" aria-controls="transcript" hidden>
-        Transcript
+        Chat
       </button>
       <input id="open-file" type="file" accept=".excalidraw,application/json,application/vnd.excalidraw+json" hidden />
       <button id="settings-button" type="button">Connection settings</button>
@@ -203,7 +211,7 @@
     <div id="settings" hidden></div>
     <div id="board">
       <div id="app"></div>
-      <aside id="transcript" aria-label="Transcript" hidden></aside>
+      <aside id="transcript" aria-label="Chat" hidden></aside>
     </div>
     <script type="module" src="./src/main.ts"></script>
   </body>

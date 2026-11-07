@@ -1,4 +1,4 @@
-import { readEntry, transcriptOf, type TranscriptEntry } from '@chalkline/sync';
+import { appendEntry, newEntryId, readEntry, transcriptOf, type TranscriptEntry } from '@chalkline/sync';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   ErrorCode,
@@ -21,7 +21,19 @@ export type TranscriptRead = {
   cursor: number;
 };
 
-const entrySchema = z.object({ id: z.string(), speaker: z.string(), at: z.string(), text: z.string() });
+const entrySchema = z.object({
+  id: z.string(),
+  speaker: z.string(),
+  at: z.string(),
+  text: z.string(),
+  via: z.enum(['speech', 'typed', 'agent']),
+});
+
+/** The speaker of the agent's posts: its client, by the name it gave as it connected. */
+function agentName(server: McpServer): string {
+  const name = server.server.getClientVersion()?.name;
+  return name !== undefined && name.trim() !== '' ? name : 'chalkline-mcp';
+}
 
 /**
  * The board's transcript as this run of the helper received it: each entry that reads as one, in
@@ -97,9 +109,9 @@ export class TranscriptLog {
 }
 
 /**
- * Adds read_transcript to `server`, and the transcript as the resource chalkline://transcript, with
- * notifications/resources/updated after each change that adds an entry, to a client that subscribes
- * to it. Call it before the server connects: it adds subscriptions to the server's resources
+ * Adds read_transcript and post_message to `server`, and the transcript as the resource
+ * chalkline://transcript, with notifications/resources/updated after each change that adds an
+ * entry, to a client that subscribes to it. Call it before the server connects: it adds subscriptions to the server's resources
  * capability, which a server can't change once it is connected.
  */
 export function registerTranscript(server: McpServer, doc: Y.Doc): TranscriptLog {
@@ -110,8 +122,9 @@ export function registerTranscript(server: McpServer, doc: Y.Doc): TranscriptLog
     {
       title: "Read the board's transcript",
       description: [
-        "Reads the board's transcript, what people on the board said: each final speech result after `cursor`, with its id, its speaker's name, its time (ISO 8601) and its words, and the cursor to give the next call.",
-        'Where no entry follows the cursor, it answers once someone on the board says one, or with no entries once the client cancels the call.',
+        "Reads the board's transcript, which the page shows as its chat: what people on the board said or typed, and what an agent posted with post_message.",
+        "It answers each entry after `cursor`, with its id, its speaker's name, its time (ISO 8601), its words, and how they came, as `via`: \"speech\" for a final speech result, \"typed\" for a message a person typed in the chat, or \"agent\" for an agent's post; and the cursor to give the next call.",
+        'Where no entry follows the cursor, it answers once someone on the board says, types or posts one, or with no entries once the client cancels the call.',
         "Left out, the cursor is 0, the transcript's start.",
         'A cursor counts the entries this run of the helper has received, in the order it received them, so it holds within one run of the helper.',
         `The resource ${TRANSCRIPT_URI} holds the same entries, and a client that subscribes to it is notified after each change that adds an entry.`,
@@ -126,6 +139,33 @@ export function registerTranscript(server: McpServer, doc: Y.Doc): TranscriptLog
         );
       }
       return answer(await log.next(cursor, extra.signal));
+    },
+  );
+
+  server.registerTool(
+    'post_message',
+    {
+      title: "Post a message in the board's chat",
+      description: [
+        "Posts `text` in the board's chat, where the people on the board read what they said and typed: it appends an entry to the transcript with the agent's name, the name its client gave as it connected, as its speaker, the time now, the words, and `via` \"agent\", and answers that entry.",
+        'Every page on the board shows it in its chat, and read_transcript answers it as it answers every entry.',
+        "`chalkline-mcp listen` leaves out each entry with `via` \"agent\", so the agent doesn't receive its own posts as people's words.",
+      ].join(' '),
+      inputSchema: { text: z.string().describe('The words to post.') },
+      outputSchema: { entry: entrySchema },
+    },
+    ({ text }) => {
+      const words = text.trim();
+      if (words === '') return refusal("text is blank: give the words to post in the board's chat.");
+      const entry: TranscriptEntry = {
+        id: newEntryId(),
+        speaker: agentName(server),
+        at: new Date().toISOString(),
+        text: words,
+        via: 'agent',
+      };
+      appendEntry(transcriptOf(doc), entry);
+      return answer({ entry });
     },
   );
 

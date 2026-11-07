@@ -1,4 +1,4 @@
-import { appendEntry, connectDoc, MemoryNetwork, transcriptOf, type TranscriptEntry } from '@chalkline/sync';
+import { appendEntry, connectDoc, MemoryNetwork, transcriptOf, type TranscriptEntry, type TranscriptVia } from '@chalkline/sync';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { ELEMENTS } from './board';
@@ -28,12 +28,13 @@ const START = Date.parse('2026-11-07T03:00:00.000Z');
 /** The time `seconds` after the listener starts, or before it where `seconds` is below 0. */
 const at = (seconds: number): string => new Date(START + seconds * 1000).toISOString();
 
-/** An entry said `seconds` after the listener starts. */
-const said = (id: string, seconds: number, text: string, speaker = 'Ada'): TranscriptEntry => ({
+/** An entry said, or typed or posted as `via` says, `seconds` after the listener starts. */
+const said = (id: string, seconds: number, text: string, speaker = 'Ada', via: TranscriptVia = 'speech'): TranscriptEntry => ({
   id,
   speaker,
   at: at(seconds),
   text,
+  via,
 });
 
 interface Listening {
@@ -102,6 +103,33 @@ describe('listen', () => {
       { at: at(1), speakers: ['Ada'], text: 'draw a box' },
       { at: at(3), speakers: ['Grace'], text: 'now an arrow to it' },
     ]);
+  });
+
+  it('prints a typed message as it prints speech, in one group with the words said within the pause', () => {
+    const { transcript, heard } = listening();
+    appendEntry(transcript, said('one', 1, 'draw a box', 'Ada'));
+    appendEntry(transcript, said('two', 2, 'in red', 'Grace', 'typed'));
+    vi.advanceTimersByTime(PAUSE_MS);
+    expect(heard).toEqual([{ at: at(2), speakers: ['Ada', 'Grace'], text: 'draw a box in red' }]);
+  });
+
+  it("leaves out an agent's post, and prints the person's words around it", () => {
+    const { transcript, heard } = listening();
+    appendEntry(transcript, said('posted', 1, 'I drew a box', 'claude-code', 'agent'));
+    vi.advanceTimersByTime(10 * PAUSE_MS);
+    expect(heard).toEqual([]);
+
+    appendEntry(transcript, said('typed', 2, 'thanks, now an arrow', 'Ada', 'typed'));
+    appendEntry(transcript, said('again', 3, 'I drew the arrow', 'claude-code', 'agent'));
+    vi.advanceTimersByTime(PAUSE_MS);
+    expect(heard).toEqual([{ at: at(2), speakers: ['Ada'], text: 'thanks, now an arrow' }]);
+  });
+
+  it('prints an entry written before the chat, without `via`, as speech', () => {
+    const { transcript, heard } = listening();
+    transcript.push([{ id: 'old-page', speaker: 'Grace', at: at(1), text: 'draw a circle' }]);
+    vi.advanceTimersByTime(PAUSE_MS);
+    expect(heard).toEqual([{ at: at(1), speakers: ['Grace'], text: 'draw a circle' }]);
   });
 
   it('ends a group at the pause the listener is given', () => {

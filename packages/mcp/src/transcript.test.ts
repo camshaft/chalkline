@@ -6,6 +6,7 @@ import {
   readTranscript,
   transcriptOf,
   type TranscriptEntry,
+  type TranscriptVia,
 } from '@chalkline/sync';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -15,11 +16,12 @@ import * as Y from 'yjs';
 import { createServer } from './server';
 import { TRANSCRIPT_URI, TranscriptLog, type TranscriptRead } from './transcript';
 
-const entry = (id: string, speaker = 'Ada'): TranscriptEntry => ({
+const entry = (id: string, speaker = 'Ada', via: TranscriptVia = 'speech'): TranscriptEntry => ({
   id,
   speaker,
   at: '2026-11-07T01:02:03.000Z',
   text: `said ${id}`,
+  via,
 });
 
 /** A copy of `from`, as a peer that has synced with it holds it, whose own changes carry `clientID`. */
@@ -152,8 +154,11 @@ afterEach(async () => {
   for (const awareness of awarenesses.splice(0)) awareness.destroy();
 });
 
-/** A page whose transcript holds `entries`, and chalkline-mcp's copy of the board, on one in-memory network. */
-async function board(entries: TranscriptEntry[] = []): Promise<Board> {
+/**
+ * A page whose transcript holds `entries`, and chalkline-mcp's copy of the board, on one in-memory network, with a
+ * client that connects with the name `clientName`.
+ */
+async function board(entries: TranscriptEntry[] = [], clientName = 'chalkline-test'): Promise<Board> {
   const network = new MemoryNetwork();
   const page = new Y.Doc();
   const transcript = transcriptOf(page);
@@ -168,7 +173,7 @@ async function board(entries: TranscriptEntry[] = []): Promise<Board> {
 
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   await createServer(helper, awareness).connect(serverSide);
-  const client = new Client({ name: 'chalkline-test', version: '0.0.0' });
+  const client = new Client({ name: clientName, version: '0.0.0' });
   await client.connect(clientSide);
   clients.push(client);
   return { network, transcript, client };
@@ -176,6 +181,10 @@ async function board(entries: TranscriptEntry[] = []): Promise<Board> {
 
 async function readTool(client: Client, args: Record<string, unknown> = {}, signal?: AbortSignal): Promise<CallToolResult> {
   return (await client.callTool({ name: 'read_transcript', arguments: args }, undefined, { signal })) as CallToolResult;
+}
+
+async function post(client: Client, words: string): Promise<CallToolResult> {
+  return (await client.callTool({ name: 'post_message', arguments: { text: words } })) as CallToolResult;
 }
 
 function read(result: CallToolResult): TranscriptRead {
@@ -239,6 +248,22 @@ describe('read_transcript', () => {
     expect(read(await readTool(client, { cursor: 1 }))).toEqual({ entries: [entry('two', 'Grace')], cursor: 2 });
   });
 
+  it("answers each entry's `via`, and an entry written before the chat, without `via`, as speech", async () => {
+    const { network, transcript, client } = await board([entry('typed', 'Ada', 'typed'), entry('posted', 'claude-code', 'agent')]);
+    const { id, speaker, at, text: words } = entry('old', 'Grace');
+    transcript.push([{ id, speaker, at, text: words }]);
+    network.flush();
+
+    const answered = read(await readTool(client));
+    expect(answered.entries.map((answer) => `${answer.id}: ${answer.via}`)).toEqual([
+      'typed: typed',
+      'posted: agent',
+      'old: speech',
+    ]);
+    expect(answered.entries[2]).toEqual(entry('old', 'Grace'));
+    expect(await resource(client)).toEqual(answered);
+  });
+
   it('refuses a cursor past the transcript\'s end', async () => {
     const { client } = await board([entry('one')]);
     const result = await readTool(client, { cursor: 2 });
@@ -246,6 +271,42 @@ describe('read_transcript', () => {
     expect(text(result)).toBe(
       "cursor is 2, and the transcript's end is at cursor 1 in this run of the helper: give a cursor that read_transcript answered, or 0 to read from the start.",
     );
+  });
+});
+
+describe('post_message', () => {
+  it("appends the agent's message under its client's name, which the page receives and read_transcript answers", async () => {
+    const { network, transcript, client } = await board([entry('one')]);
+    const before = Date.now();
+    const result = await post(client, '  I drew a box  ');
+    expect(result.isError, text(result)).not.toBe(true);
+    const posted = (result.structuredContent as { entry: TranscriptEntry }).entry;
+
+    expect(posted).toMatchObject({ speaker: 'chalkline-test', text: 'I drew a box', via: 'agent' });
+    expect(posted.id).toMatch(/^[0-9a-f]{16}$/);
+    expect(Date.parse(posted.at)).toBeGreaterThanOrEqual(before);
+    expect(Date.parse(posted.at)).toBeLessThanOrEqual(Date.now());
+    network.flush();
+    expect(readTranscript(transcript)).toEqual([entry('one'), posted]);
+    expect(read(await readTool(client, { cursor: 1 }))).toEqual({ entries: [posted], cursor: 2 });
+  });
+
+  it('posts under chalkline-mcp where the client gave a blank name', async () => {
+    const { client } = await board([], '  ');
+    const result = await post(client, 'hello');
+    expect(result.isError, text(result)).not.toBe(true);
+
+    expect((result.structuredContent as { entry: TranscriptEntry }).entry.speaker).toBe('chalkline-mcp');
+  });
+
+  it('refuses a blank message, and appends nothing', async () => {
+    const { network, transcript, client } = await board();
+    const result = await post(client, '   ');
+
+    expect(result.isError).toBe(true);
+    expect(text(result)).toBe("text is blank: give the words to post in the board's chat.");
+    network.flush();
+    expect(transcript.length).toBe(0);
   });
 });
 
