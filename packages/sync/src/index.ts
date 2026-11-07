@@ -7,6 +7,7 @@ export {
   getFeedback,
   listFeedback,
   readFeedback,
+  reopenFeedback,
   writeFeedback,
   type Feedback,
   type FeedbackAnswer,
