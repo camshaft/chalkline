@@ -82,8 +82,9 @@ async function main(): Promise<void> {
   // The server answers the client at once, and its tools work on the helper's copy of the board
   // while the helper joins the room.
   const doc = new Y.Doc();
-  // The helper doesn't show in the room's presence: it reads the pages' awareness states to learn
-  // whether a page is in the room to convert a Mermaid request.
+  // The helper shows nothing in the room's presence until its client initializes, and then its client's
+  // name, its status and a pointer at the shapes it last drew (presence.ts). It reads the pages'
+  // awareness states too, to learn whether a page is in the room to convert a Mermaid request.
   const awareness = new Awareness(doc);
   awareness.setLocalState(null);
   const server = createServer(doc, awareness);
