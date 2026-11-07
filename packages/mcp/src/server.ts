@@ -8,6 +8,7 @@ import { addShapes, ELEMENTS, newId, readBoard, ShapeError } from './board';
 import { registerChanges } from './changes';
 import type { Creator } from './creator';
 import { connect, deleteShapes, moveGroup, reorderShapes, scaleShapes, updateShape } from './edit';
+import { listedFeedback, listedFeedbackSchema, registerFeedback } from './feedback';
 import { renderBoard, RenderError } from './render';
 import { pendingRequests, RequestError, waitForRequest, writeMermaidRequest } from './requests';
 import {
@@ -65,13 +66,15 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
     {
       title: 'Read the board',
       description:
-        `Reads the board: every shape on it, from back to front, with its id, kind, position, size and label, its stroke and background colors, each style field, font and alignment that isn't Excalidraw's default, for a shape in a group the ids of its groups, the innermost first, for an arrow the ids of the shapes it starts and ends at, for a line, an arrow or a freehand stroke its points, and for a shape an agent added, its creator; and, in pending, each Mermaid request that no page has converted yet. An arrow's or a line's width and height say how far its last point lies right of and below its first, as add_shapes reads them. Of a stroke that holds more than ${LISTED_POINTS} points, it lists ${LISTED_POINTS} of them, evenly spaced from its first to its last, and their count in pointCount.`,
+        `Reads the board: every shape on it, from back to front, with its id, kind, position, size and label, its stroke and background colors, each style field, font and alignment that isn't Excalidraw's default, for a shape in a group the ids of its groups, the innermost first, for an arrow the ids of the shapes it starts and ends at, for a line, an arrow or a freehand stroke its points, and for a shape an agent added, its creator; in pending, each Mermaid request that no page has converted yet; and, in feedback, each open feedback that people wrote on an area of the board, with its id, its writer as by, its text and its region, which read_feedback answers with the shapes the region meets, and answer_feedback answers. An arrow's or a line's width and height say how far its last point lies right of and below its first, as add_shapes reads them. Of a stroke that holds more than ${LISTED_POINTS} points, it lists ${LISTED_POINTS} of them, evenly spaced from its first to its last, and their count in pointCount.`,
       outputSchema: {
         shapes: z.array(boardShapeSchema),
         pending: z.array(z.object({ id: z.string(), kind: z.literal('mermaid') })),
+        feedback: z.array(listedFeedbackSchema),
       },
     },
-    () => answer({ shapes: readBoard(elements.values()), pending: pendingRequests(doc) }),
+    () =>
+      answer({ shapes: readBoard(elements.values()), pending: pendingRequests(doc), feedback: listedFeedback(doc) }),
   );
 
   server.registerTool(
@@ -296,6 +299,9 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
 
   // read_transcript, and the transcript as a resource with its notification.
   registerTranscript(server, doc);
+
+  // read_feedback and answer_feedback, and the open feedback as a resource with its notification.
+  registerFeedback(server, doc);
 
   return server;
 }
