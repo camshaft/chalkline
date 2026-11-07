@@ -20,6 +20,7 @@ const feedback = (id: string, fields: Partial<Feedback> = {}): Feedback => ({
   shapes: [],
   status: 'open',
   answer: null,
+  reopened: null,
   ...fields,
 });
 
@@ -355,5 +356,14 @@ describe('the feedback resource', () => {
     await expect(client.subscribeResource({ uri: 'chalkline://board' })).rejects.toThrow(
       "chalkline://board isn't a resource of the helper's: subscribe to chalkline://transcript or chalkline://feedback.",
     );
+  });
+
+  it('lists `reopened` in the record that read_feedback and answer_feedback answer', async () => {
+    const { client } = await board();
+    const { tools } = await client.listTools();
+    for (const name of ['read_feedback', 'answer_feedback']) {
+      const tool = tools.find((each) => each.name === name);
+      expect(JSON.stringify(tool?.outputSchema), name).toContain('"reopened"');
+    }
   });
 });
