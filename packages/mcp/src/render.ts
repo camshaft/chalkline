@@ -43,6 +43,9 @@ const RESVG_OPTIONS = {
   font: { loadSystemFonts: false, fontFiles: [FONT] },
 };
 
+/** resvg's options for a transparent picture: RESVG_OPTIONS without the white background. */
+const TRANSPARENT_OPTIONS = { fitTo: RESVG_OPTIONS.fitTo, font: RESVG_OPTIONS.font };
+
 /**
  * The rasterizer, a script that Node runs in a process of its own: it reads an SVG on its standard
  * input and writes resvg's PNG of the SVG on its standard output. It loads resvg's module from the
@@ -103,6 +106,10 @@ export interface RenderOptions {
   maxWidth: number;
   /** The highest the picture may be, in pixels. */
   maxHeight: number;
+  /** The ids of the elements to draw; every element of the board where it is left out. */
+  only?: ReadonlySet<string>;
+  /** Whether the picture is transparent where it doesn't show a shape, in place of white. */
+  transparent?: boolean;
   /** The seconds the render may take before it stops with a RenderError; it doesn't stop at a time where this is left out. */
   timeout?: number;
   /** A signal whose abort stops the render with a RenderError, such as the client's cancel of the call. */
@@ -113,7 +120,9 @@ type ExportOptions = Parameters<Excalidraw['exportToSvg']>[0];
 
 /**
  * Draws `region` of the board that `doc` holds, or the whole board with MARGIN around its shapes
- * where `region` is left out, as Excalidraw exports it, on white. The picture keeps the region's
+ * where `region` is left out, as Excalidraw exports it, on white, or on a transparent background
+ * where `transparent` is true. Where `only` is given, it draws only the elements whose ids it holds,
+ * and the whole board's bounds are those elements' bounds. The picture keeps the region's
  * shape, and is at most `maxWidth` pixels wide and `maxHeight` pixels high. Throws a RenderError
  * where the board doesn't hold a shape and `region` is left out, where resvg fails or stops before
  * it draws the picture, where `signal` aborts, and where `timeout` seconds pass first. On the
@@ -154,13 +163,15 @@ export async function renderBoard(doc: Y.Doc, options: RenderOptions): Promise<P
 /** Draws the picture renderBoard answers, and hands `signal` to resvg's process. */
 async function draw(
   doc: Y.Doc,
-  { region, maxWidth, maxHeight }: RenderOptions,
+  { region, maxWidth, maxHeight, only, transparent }: RenderOptions,
   signal: AbortSignal,
 ): Promise<Picture> {
   const excalidraw = await loadExcalidraw();
-  const elements = excalidraw.getNonDeletedElements(
-    excalidraw.restoreElements(boardElements(doc) as unknown as Parameters<Excalidraw['restoreElements']>[0], null),
-  );
+  const elements = excalidraw
+    .getNonDeletedElements(
+      excalidraw.restoreElements(boardElements(doc) as unknown as Parameters<Excalidraw['restoreElements']>[0], null),
+    )
+    .filter((element) => only === undefined || only.has(element.id));
   // The whole board's bounds: those of the frames, and of the shapes outside frames.
   const roots = rootElements(elements);
   const bounds = roots.length === 0 ? null : excalidraw.getCommonBounds(roots);
@@ -202,7 +213,7 @@ async function draw(
   svg.setAttribute('width', String(width));
   svg.setAttribute('height', String(height));
   svg.setAttribute('preserveAspectRatio', 'none');
-  const png = await rasterize(new XMLSerializer().serializeToString(svg), signal);
+  const png = await rasterize(new XMLSerializer().serializeToString(svg), signal, { transparent });
   return { png, region: drawn, width, height };
 }
 
@@ -240,15 +251,21 @@ function near<T extends ExcalidrawElement>(excalidraw: Excalidraw, elements: rea
  * Turns `svg` into a PNG with resvg, in a Node process of its own, so that a panic of resvg's,
  * which aborts the process it runs in, ends that process and not the helper. Rejects with a
  * RenderError where the process fails or stops before it writes the PNG, and with the reason of
- * `signal` where `signal` aborts, which ends the process.
+ * `signal` where `signal` aborts, which ends the process. The PNG is on white, or transparent where
+ * `transparent` is true.
  */
-export function rasterize(svg: string, signal?: AbortSignal): Promise<Buffer> {
+export function rasterize(
+  svg: string,
+  signal?: AbortSignal,
+  { transparent = false }: { transparent?: boolean } = {},
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(signal.reason);
       return;
     }
-    const child = spawn(process.execPath, ['-e', RASTERIZER, RESVG, JSON.stringify(RESVG_OPTIONS)]);
+    const options = transparent ? TRANSPARENT_OPTIONS : RESVG_OPTIONS;
+    const child = spawn(process.execPath, ['-e', RASTERIZER, RESVG, JSON.stringify(options)]);
     const kill = () => child.kill('SIGKILL');
     signal?.addEventListener('abort', kill, { once: true });
     const png: Buffer[] = [];
@@ -323,6 +340,7 @@ function isFrame(element: { type: string }): boolean {
   return element.type === 'frame' || element.type === 'magicframe';
 }
 
-function withMargin([minX, minY, maxX, maxY]: readonly [number, number, number, number]): Region {
+/** The region of the bounds `[minX, minY, maxX, maxY]` with MARGIN around them. */
+export function withMargin([minX, minY, maxX, maxY]: readonly [number, number, number, number]): Region {
   return { x: minX - MARGIN, y: minY - MARGIN, width: maxX - minX + 2 * MARGIN, height: maxY - minY + 2 * MARGIN };
 }

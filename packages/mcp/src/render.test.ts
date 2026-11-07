@@ -3,7 +3,6 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'nod
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { inflateSync } from 'node:zlib';
 import { Awareness } from '@chalkline/sync';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -13,6 +12,7 @@ import { generateNKeysBetween } from 'fractional-indexing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { ELEMENTS } from './board';
+import { decodePng, type Pixels } from './decode-png';
 import { FILES, rasterize, renderBoard, RenderError, type Picture, type Region } from './render';
 import { createServer } from './server';
 
@@ -24,13 +24,6 @@ vi.mock('./render', async (importOriginal) => {
 });
 
 type Element = Record<string, unknown>;
-
-/** A picture's pixels: 4 bytes each, red, green, blue and alpha, row by row from the top. */
-interface Pixels {
-  width: number;
-  height: number;
-  data: Uint8Array;
-}
 
 /** Whether a pixel's red, green and blue are of a color. */
 type Color = (red: number, green: number, blue: number) => boolean;
@@ -78,76 +71,6 @@ function picture(result: CallToolResult): { pixels: Pixels; answer: unknown } {
   expect(JSON.parse(json.type === 'text' ? json.text : '')).toEqual(result.structuredContent);
   const png = Buffer.from(image.type === 'image' ? image.data : '', 'base64');
   return { pixels: decodePng(png), answer: result.structuredContent };
-}
-
-/** Decodes a PNG of 8 bits a channel, RGB or RGBA and not interlaced, as resvg writes it. */
-function decodePng(png: Buffer): Pixels {
-  expect([...png.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  let width = 0;
-  let height = 0;
-  let channels = 0;
-  const data: Buffer[] = [];
-  for (let at = 8; at < png.length; ) {
-    const length = png.readUInt32BE(at);
-    const type = png.toString('latin1', at + 4, at + 8);
-    const body = png.subarray(at + 8, at + 8 + length);
-    if (type === 'IHDR') {
-      width = body.readUInt32BE(0);
-      height = body.readUInt32BE(4);
-      expect({ depth: body[8], color: body[9], interlace: body[12] }).toMatchObject({ depth: 8, interlace: 0 });
-      channels = body[9] === 6 ? 4 : 3;
-      expect([2, 6]).toContain(body[9]);
-    } else if (type === 'IDAT') {
-      data.push(body);
-    }
-    at += 12 + length;
-  }
-
-  const raw = inflateSync(Buffer.concat(data));
-  const stride = width * channels;
-  const rows = new Uint8Array(stride * height);
-  for (let y = 0; y < height; y++) {
-    const filter = raw[y * (stride + 1)];
-    const line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
-    for (let x = 0; x < stride; x++) {
-      const left = x >= channels ? rows[y * stride + x - channels] : 0;
-      const up = y > 0 ? rows[(y - 1) * stride + x] : 0;
-      const corner = x >= channels && y > 0 ? rows[(y - 1) * stride + x - channels] : 0;
-      rows[y * stride + x] = (line[x] + predicted(filter, left, up, corner)) & 0xff;
-    }
-  }
-
-  const pixels = new Uint8Array(width * height * 4);
-  for (let pixel = 0; pixel < width * height; pixel++) {
-    for (let channel = 0; channel < 4; channel++) {
-      pixels[pixel * 4 + channel] = channel < channels ? rows[pixel * channels + channel] : 255;
-    }
-  }
-  return { width, height, data: pixels };
-}
-
-/** The byte that a PNG row's filter predicts from the bytes to its left, above it, and above and left of it. */
-function predicted(filter: number, left: number, up: number, corner: number): number {
-  switch (filter) {
-    case 0:
-      return 0;
-    case 1:
-      return left;
-    case 2:
-      return up;
-    case 3:
-      return (left + up) >> 1;
-    case 4: {
-      const estimate = left + up - corner;
-      const fromLeft = Math.abs(estimate - left);
-      const fromUp = Math.abs(estimate - up);
-      const fromCorner = Math.abs(estimate - corner);
-      if (fromLeft <= fromUp && fromLeft <= fromCorner) return left;
-      return fromUp <= fromCorner ? up : corner;
-    }
-    default:
-      throw new Error(`A PNG row has the filter ${filter}, which PNG doesn't define.`);
-  }
 }
 
 /** Each color the picture holds, as its red, green, blue and alpha joined by commas. */

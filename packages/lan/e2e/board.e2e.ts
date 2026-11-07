@@ -135,7 +135,17 @@ interface E2eWindow {
   chalklineE2e: {
     shown(expected: Expected[], creator: string, waitMs: number): Promise<Shown[]>;
     answered(id: string, shapeId: string, y: number, waitMs: number): Promise<ShownFeedback>;
+    picture(id: string, fileId: string, waitMs: number): Promise<ShownPicture>;
   };
+}
+
+/** An image as a page shows it: its type, its fileId, its file's MIME type, and the canvas's pixel at its center. */
+interface ShownPicture {
+  id: string;
+  type: string | null;
+  fileId: string | null;
+  mimeType: string | null;
+  color: number[] | null;
 }
 
 /** An element's place on the page, in CSS pixels. */
@@ -293,6 +303,20 @@ async function answeredIn(board: Board, id: string, shapeId: string, y: number):
   }
 }
 
+/** Waits until the page of `board` shows the image `id` of the file `fileId`, drawn red on its canvas, and keeps a screenshot either way. */
+async function pictureIn(board: Board, id: string, fileId: string): Promise<ShownPicture> {
+  try {
+    const shown = await board.page.evaluate(
+      (arg) => (window as unknown as E2eWindow).chalklineE2e.picture(arg.id, arg.fileId, arg.waitMs),
+      { id, fileId, waitMs: WAIT_MS },
+    );
+    console.log(`${board.name}: the board shows the picture as ${JSON.stringify(shown)}`);
+    return shown;
+  } finally {
+    await board.page.screenshot({ path: join(SCREENSHOTS, `e2e-${board.name}.png`) }).catch(() => undefined);
+  }
+}
+
 /** Calls one of the helper's tools, checks that it didn't refuse the call, and returns its structured answer. */
 async function call(client: Client, name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
   const result = (await client.callTool({ name, arguments: args })) as CallToolResult;
@@ -361,6 +385,32 @@ describe('the local-network mode, end to end', () => {
     // The browsers and the helper met through this machine's relay, the only one their links name.
     expect(lan.relay.getSubscriberCount()).toBeGreaterThan(0);
   }, 300_000);
+
+  it('shows in a browser the picture that the helper places with add_image', async () => {
+    const lan = server;
+    const chrome = browser;
+    if (lan === undefined || chrome === undefined) throw new Error('the server or the browser did not start');
+    const link = boardLink(lan.port);
+    const board = await openBoard(chrome, link, 'picture');
+    const helper = new Client({ name: CLIENT, version: '0.0.0' });
+    try {
+      await helper.connect(new StdioClientTransport({ command: process.execPath, args: [HELPER, link.href] }));
+      const svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="60"><rect width="120" height="60" fill="#ff0000"/></svg>';
+      const added = await call(helper, 'add_image', {
+        data_url: `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`,
+        x: 100,
+        y: 100,
+        width: 120,
+      });
+      expect(added).toMatchObject({ width: 120, height: 60 });
+      const shown = await pictureIn(board, added.id as string, added.file as string);
+      expect(shown).toMatchObject({ id: added.id, type: 'image', fileId: added.file, mimeType: 'image/svg+xml' });
+    } finally {
+      await helper.close();
+      await board.page.context().close();
+    }
+  }, 180_000);
 
   it("shows in both browsers the helper's answer to a feedback that one browser wrote over a shape", async () => {
     const lan = server;

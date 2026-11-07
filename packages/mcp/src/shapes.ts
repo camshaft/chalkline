@@ -371,6 +371,44 @@ export const scalingSchema = z.object({
     ),
 });
 
+/** The picture that add_image places on the board, and where it places it. */
+export const imageSchema = z.object({
+  path: z
+    .string()
+    .min(1)
+    .nullish()
+    .describe('The path of a PNG, JPEG or SVG file on the machine that runs chalkline-mcp; give path or data_url.'),
+  data_url: z
+    .string()
+    .min(1)
+    .nullish()
+    .describe('The picture as a data URL, such as data:image/png;base64,...; give path or data_url.'),
+  x: coordinate.describe("The x of the picture's top left corner, in the units get_board reads."),
+  y: coordinate.describe("The y of the picture's top left corner, in the units get_board reads."),
+  width: size.describe("The picture's width on the board, in the units get_board reads."),
+  height: size
+    .nullish()
+    .describe("The picture's height on the board; where it is left out, the height that keeps the picture's proportions."),
+  place: placeSchema.nullish(),
+});
+
+/** The shapes that flatten turns into one picture: by their ids, by their groups, by a region, or by the ids and the groups together. */
+export const flattenSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).nullish().describe('The ids of the shapes to turn into the picture, as get_board lists them.'),
+  groups: z
+    .array(z.string().min(1))
+    .min(1)
+    .nullish()
+    .describe("The ids of groups whose shapes turn into the picture, as get_board lists them in a shape's groups."),
+  region: z
+    .object({ x: coordinate, y: coordinate, width: size, height: size })
+    .nullish()
+    .describe('A part of the board, in the units get_board reads: each shape that lies wholly inside it turns into the picture.'),
+  scale: size
+    .nullish()
+    .describe("How many pixels the picture holds for each of the board's units, across and down; 2 where it is left out."),
+});
+
 export type Shape = z.infer<typeof shapeSchema>;
 export type BoardShape = z.infer<typeof boardShapeSchema>;
 export type BoardFrame = z.infer<typeof boardFrameSchema>;
@@ -378,3 +416,5 @@ export type Connection = z.infer<typeof connectionSchema>;
 export type ShapeChange = z.infer<typeof changeSchema>;
 export type Place = z.infer<typeof placeSchema>;
 export type Scaling = z.infer<typeof scalingSchema>;
+export type ImageRequest = z.infer<typeof imageSchema>;
+export type FlattenRequest = z.infer<typeof flattenSchema>;
