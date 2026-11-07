@@ -240,8 +240,9 @@ export function bindAsk(
   };
   doc.addEventListener('keydown', escape, true);
 
-  const stopCanvas = canvas.onChange(render);
-  const stopRoom = room.onChange(render);
+  // Diagnostic only: Ask an agent doesn't follow the canvas or the room.
+  const stopCanvas = (): void => undefined;
+  const stopRoom = (): void => undefined;
   render();
 
   return {
