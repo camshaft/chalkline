@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { feedbackKind, feedbackOf, listFeedback } from '@chalkline/sync';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { ASK_LABEL, bindAsk, QUICK_ASKS, type AskCanvas, type AskRoom, type Selection } from './ask';
 import type { CanvasView } from './feedback';
@@ -103,6 +103,12 @@ interface PageOptions {
   agent?: boolean;
 }
 
+/** Each page's stop, which `afterEach` calls, so that a box one test leaves open doesn't take a later test's keys. */
+const stops: (() => void)[] = [];
+afterEach(() => {
+  for (const stop of stops.splice(0)) stop();
+});
+
 function page({ view = PLAIN, selection = SELECTED, agent = true }: PageOptions = {}) {
   const layer = document.createElement('div');
   document.body.replaceChildren(layer);
@@ -115,6 +121,7 @@ function page({ view = PLAIN, selection = SELECTED, agent = true }: PageOptions 
     newId: () => `ask-${(made += 1)}`,
     now: () => new Date(AT),
   });
+  stops.push(bound.stop);
   return { layer, map, ...fake, ...presence, ...bound };
 }
 
