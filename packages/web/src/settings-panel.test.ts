@@ -8,7 +8,7 @@ import {
   type ConnectionSettings,
   type SettingsStorage,
 } from './connection';
-import { connectSettingsButton, settingsPanel } from './settings-panel';
+import { connectSettingsButton, settingsOpener, settingsPanel } from './settings-panel';
 
 class MemoryStorage implements SettingsStorage {
   readonly items = new Map<string, string>();
@@ -143,7 +143,7 @@ describe('the connection settings panel', () => {
   });
 });
 
-describe("the bar's Connection settings button", () => {
+describe('the Connection settings button', () => {
   function page(storage: SettingsStorage | null, settings: ConnectionSettings = defaultSettings()) {
     document.body.innerHTML = '<button id="settings-button">Connection settings</button><div id="settings" hidden></div>';
     const opener = document.getElementById('settings-button') as HTMLElement;
@@ -190,5 +190,28 @@ describe("the bar's Connection settings button", () => {
     const { opener, holder } = page(new MemoryStorage(), { turnServers: [{ urls: ['turn:turn.example.com:3478'] }], relays: [] });
     opener.click();
     expect(rows(holder).map((row) => input(row, 'urls').value)).toEqual(['turn:turn.example.com:3478']);
+  });
+});
+
+describe("the main menu's Connection settings item", () => {
+  it('opens the panel each time it is chosen, with the settings the page joined with, and closes it on Cancel', () => {
+    document.body.innerHTML = '<div id="settings" hidden></div>';
+    const holder = document.getElementById('settings') as HTMLElement;
+    const open = settingsOpener(holder, {
+      settings: { turnServers: [], relays: ['wss://relay.one.example'] },
+      storage: new MemoryStorage(),
+      reload: vi.fn<() => void>(),
+    });
+
+    open();
+    expect(holder.hidden).toBe(false);
+    expect(relays(holder).value).toBe('wss://relay.one.example');
+    button(holder, 'Cancel').click();
+    expect(holder.hidden).toBe(true);
+    expect(holder.childElementCount).toBe(0);
+
+    open();
+    expect(holder.hidden).toBe(false);
+    expect(holder.querySelectorAll('.settings-panel')).toHaveLength(1);
   });
 });

@@ -5,7 +5,7 @@ export interface StatusElement {
   textContent: string | null;
 }
 
-/** The page's status line, under its bar. */
+/** The page's status line, in the badge of the page's controls. */
 export interface StatusLine {
   /** Says how many other people are on the board. */
   showPeers(count: number): void;

@@ -162,10 +162,9 @@ function element<T extends HTMLElement>(id: string): T {
   return found as T;
 }
 
-/** The page's controls, connected to `actions`, with a canvas inside the drop target. */
+/** The board's file controls, connected to `actions`, with a canvas inside the drop target, and the menu's commands. */
 function connected(actions: Partial<FileActions> = {}) {
-  document.body.innerHTML =
-    '<button id="save"></button><button id="open"></button><input id="file" type="file" /><div id="app"><div id="canvas"></div></div>';
+  document.body.innerHTML = '<input id="file" type="file" /><div id="app"><div id="canvas"></div></div>';
   const urls = new FakeUrls();
   const all: FileActions = {
     save: () => '{"type":"excalidraw"}',
@@ -175,12 +174,8 @@ function connected(actions: Partial<FileActions> = {}) {
     ...actions,
   };
   const input = element<HTMLInputElement>('file');
-  connectFileControls(
-    { save: element('save'), open: element('open'), input, dropTarget: element('app') },
-    all,
-    urls,
-  );
-  return { actions: all, urls, input };
+  const commands = connectFileControls({ input, dropTarget: element('app') }, all, urls);
+  return { actions: all, urls, input, commands };
 }
 
 function choose(input: HTMLInputElement, file: File): void {
@@ -205,9 +200,9 @@ describe('connectFileControls', () => {
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
       clicked.push(this);
     });
-    const { urls } = connected({ save: () => '{"type":"excalidraw","elements":[]}' });
+    const { urls, commands } = connected({ save: () => '{"type":"excalidraw","elements":[]}' });
 
-    element('save').click();
+    commands.save();
 
     expect(clicked).toHaveLength(1);
     expect(clicked[0]?.download).toBe('chalkline-room.excalidraw');
@@ -220,21 +215,21 @@ describe('connectFileControls', () => {
 
   it('revokes the object URL of each save at the next one', () => {
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    const { urls } = connected();
+    const { urls, commands } = connected();
 
-    element('save').click();
+    commands.save();
     expect(urls.revoked).toEqual([]);
-    element('save').click();
+    commands.save();
 
     expect(urls.revoked).toEqual(['blob:test/1']);
   });
 
   it('asks for a file on Open, opens the file chosen, and clears the input for the next choice', () => {
-    const { actions, input } = connected();
+    const { actions, input, commands } = connected();
     const asked = vi.spyOn(input, 'click').mockImplementation(() => {});
     const file = new File(['{}'], 'board.excalidraw');
 
-    element('open').click();
+    commands.open();
     choose(input, file);
 
     expect(asked).toHaveBeenCalledTimes(1);

@@ -11,45 +11,189 @@
         height: 100%;
         font-family: system-ui, sans-serif;
       }
-      body {
-        display: flex;
-        flex-direction: column;
-      }
-      #bar {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        padding: 0.4rem 0.75rem;
-        font-size: 0.9rem;
-        border-bottom: 1px solid #ddd;
-      }
-      #status {
-        flex: 1;
-      }
-      #bar > label {
-        display: flex;
-        align-items: center;
-        gap: 0.4rem;
-      }
-      #name {
-        font: inherit;
-        width: 12rem;
-      }
       #board {
         position: relative;
         display: flex;
-        flex: 1;
-        min-height: 0;
+        height: 100%;
       }
       #app {
         flex: 1;
         min-width: 0;
       }
+      /*
+       * The page's controls: the status badge, the name field and the speech buttons. Until the board
+       * opens they sit at the page's top right. Once it opens, main.ts moves them into the element
+       * Excalidraw's renderTopRightUI shows, and they take Excalidraw's island style and theme from its
+       * variables, so they sit over the canvas and leave it the whole window.
+       */
+      .chalkline-controls {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        width: 16rem;
+        max-width: calc(100vw - 2rem);
+        box-sizing: border-box;
+        padding: 0.25rem;
+        font-family: var(--ui-font, system-ui, sans-serif);
+        font-size: 0.875rem;
+        color: var(--text-primary-color, #1b1b1f);
+        background: var(--island-bg-color, #fff);
+        border-radius: var(--border-radius-lg, 0.5rem);
+        box-shadow: var(
+          --shadow-island,
+          0 0 1px rgba(0, 0, 0, 0.17),
+          0 0 3px rgba(0, 0, 0, 0.08),
+          0 7px 14px rgba(0, 0, 0, 0.05)
+        );
+        pointer-events: var(--ui-pointerEvents, auto);
+      }
+      .chalkline-controls [hidden] {
+        display: none !important;
+      }
+      .chalkline-controls-row {
+        display: flex;
+        gap: 0.25rem;
+        min-width: 0;
+      }
+      .chalkline-controls-row > .chalkline-button {
+        flex: 1 1 auto;
+      }
+      .chalkline-controls-more {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+      .chalkline-button,
+      .chalkline-status {
+        height: var(--default-button-size, 2rem);
+        box-sizing: border-box;
+        padding: 0 0.6rem;
+        font: inherit;
+        color: inherit;
+        white-space: nowrap;
+        background: var(--color-surface-low, #ececf4);
+        border: 1px solid transparent;
+        border-radius: var(--border-radius-md, 0.375rem);
+        cursor: pointer;
+      }
+      .chalkline-button:hover,
+      .chalkline-status:hover {
+        background: var(--button-hover-bg, #f1f0ff);
+      }
+      .chalkline-button:focus-visible,
+      .chalkline-status:focus-visible,
+      .chalkline-name input:focus-visible {
+        outline: 2px solid var(--color-primary, #6965db);
+        outline-offset: 1px;
+      }
+      .chalkline-button[aria-pressed='true'] {
+        color: var(--color-on-primary-container, #030064);
+        background: var(--color-surface-primary-container, #e0dfff);
+        border-color: var(--color-brand-active, #4440bf);
+      }
+      .chalkline-button:disabled {
+        cursor: default;
+        opacity: 0.5;
+      }
+      .chalkline-status {
+        flex: 1 1 auto;
+        min-width: 0;
+        text-align: left;
+      }
+      /* The badge shows the start of the status; its title, and a click or a tap, show the whole of it. */
+      #status {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .chalkline-status[aria-expanded='true'] {
+        height: auto;
+        min-height: var(--default-button-size, 2rem);
+        padding-top: 0.4rem;
+        padding-bottom: 0.4rem;
+        white-space: normal;
+      }
+      .chalkline-name {
+        display: block;
+      }
+      .chalkline-name input {
+        width: 100%;
+        height: var(--default-button-size, 2rem);
+        box-sizing: border-box;
+        padding: 0 0.5rem;
+        font: inherit;
+        color: inherit;
+        background: var(--input-bg-color, #fff);
+        border: 1px solid var(--input-border-color, #ced4da);
+        border-radius: var(--border-radius-md, 0.375rem);
+      }
+      .chalkline-visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
+      /* The toggle shows only where the controls collapse to one button, on a phone's narrow screen. */
+      #controls-toggle {
+        display: none;
+      }
+      body > .chalkline-controls {
+        position: fixed;
+        top: 0.75rem;
+        right: 0.75rem;
+        z-index: 20;
+      }
+      /*
+       * On a desktop, the host is a flex item of zero width at the end of Excalidraw's top-right row, and
+       * the controls hang below the row's right end, so the row and the toolbar keep their place.
+       */
+      .chalkline-host {
+        position: relative;
+        order: 99;
+        align-self: stretch;
+        width: 0;
+        margin-left: -0.75rem;
+      }
+      .chalkline-host > .chalkline-controls {
+        position: absolute;
+        top: calc(100% + 0.5rem);
+        right: 0;
+      }
+      /* Excalidraw's main menu opens the connection settings once the board is open. */
+      .chalkline-host #settings-button {
+        display: none;
+      }
+      /*
+       * On a phone, the controls take the left edge below the toolbar, as Excalidraw's own pen, lock and
+       * hand buttons take the right edge, and collapse to the status and the More button.
+       */
+      .chalkline-host.chalkline-host--mobile {
+        position: static;
+        margin-left: 0;
+      }
+      .chalkline-host--mobile > .chalkline-controls {
+        top: calc(5rem - var(--editor-container-padding, 1rem));
+        right: auto;
+        left: calc(var(--editor-container-padding, 1rem) * -1);
+        width: 15rem;
+        border: 1px solid var(--sidebar-border-color, #f1f0ff);
+        border-left: 0;
+        border-radius: 0 var(--border-radius-lg, 0.5rem) var(--border-radius-lg, 0.5rem) 0;
+      }
+      .chalkline-host--mobile #controls-toggle {
+        display: block;
+        flex: 0 0 auto;
+      }
+      .chalkline-host--mobile .chalkline-controls:not(.chalkline-controls--open) .chalkline-controls-more {
+        display: none;
+      }
       #transcript {
         position: absolute;
-        top: 0.5rem;
-        right: 0.5rem;
-        bottom: 0.5rem;
+        top: 12rem;
+        right: 1rem;
+        bottom: 1rem;
         z-index: 10;
         display: flex;
         flex-direction: column;
@@ -59,13 +203,45 @@
         box-sizing: border-box;
         padding: 0.75rem;
         font-size: 0.9rem;
+        color: #1b1b1f;
         background: #fff;
         border: 1px solid #ddd;
         border-radius: 0.5rem;
         box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.15);
+        --chalkline-muted: #666;
+      }
+      /*
+       * On a phone, the chat opens as a sheet across the window's width, over the canvas, from the window's
+       * bottom, or from the top of the on-screen keyboard while it shows, so that its Message field stays in
+       * sight. main.ts sets the keyboard's height and the height left above it from the visual viewport.
+       */
+      #board:has(.chalkline-host--mobile) #transcript {
+        top: auto;
+        left: 0;
+        right: 0;
+        bottom: var(--chalkline-keyboard-inset, 0px);
+        width: auto;
+        max-width: none;
+        height: min(28rem, calc(var(--chalkline-visible-height, 100dvh) * 0.6));
+        border-width: 1px 0 0;
+        border-radius: 0.75rem 0.75rem 0 0;
+        box-shadow: 0 -0.5rem 2rem rgba(0, 0, 0, 0.15);
+      }
+      #board:has(.excalidraw.theme--dark) #transcript {
+        color: #e3e3e8;
+        background: #232329;
+        border-color: #46464f;
+        color-scheme: dark;
+        --chalkline-muted: #b8b8b8;
       }
       #transcript[hidden] {
         display: none;
+      }
+      .chat-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
       }
       #transcript h2 {
         margin: 0;
@@ -81,7 +257,7 @@
         margin-top: 0.5rem;
       }
       .speech-heard {
-        color: #666;
+        color: var(--chalkline-muted);
         font-style: italic;
       }
       .transcript-entries {
@@ -100,14 +276,14 @@
       }
       .transcript-time {
         margin-left: 0.4rem;
-        color: #666;
+        color: var(--chalkline-muted);
         font-size: 0.8rem;
       }
       .transcript-text {
         display: block;
       }
       .transcript-empty {
-        color: #666;
+        color: var(--chalkline-muted);
       }
       .chat-compose {
         display: flex;
@@ -121,6 +297,12 @@
         max-width: 34rem;
         margin: 3rem auto;
         padding: 0 1rem;
+      }
+      /* Where the window is too narrow for the join screen beside the controls, it starts below them. */
+      @media (max-width: 68rem) {
+        .join-screen {
+          margin-top: 9rem;
+        }
       }
       .join-screen form {
         display: flex;
@@ -195,19 +377,43 @@
     </style>
   </head>
   <body>
-    <div id="bar">
-      <span id="status">Joining the room...</span>
-      <label>Your name <input id="name" type="text" autocomplete="nickname" /></label>
-      <button id="new-board" type="button">New board</button>
-      <button id="save-button" type="button" hidden>Save file</button>
-      <button id="open-button" type="button" hidden>Open file</button>
-      <button id="mic" type="button" aria-pressed="false" hidden>Turn on speech</button>
-      <button id="transcript-button" type="button" aria-expanded="false" aria-controls="transcript" hidden>
-        Chat
-      </button>
-      <input id="open-file" type="file" accept=".excalidraw,application/json,application/vnd.excalidraw+json" hidden />
-      <button id="settings-button" type="button">Connection settings</button>
+    <div id="controls" class="chalkline-controls">
+      <div class="chalkline-controls-row">
+        <button id="status-badge" class="chalkline-status" type="button" aria-expanded="false">
+          <span id="status">Joining the room...</span>
+        </button>
+        <button
+          id="controls-toggle"
+          class="chalkline-button"
+          type="button"
+          aria-expanded="false"
+          aria-controls="controls-more"
+        >
+          More
+        </button>
+      </div>
+      <div id="controls-more" class="chalkline-controls-more">
+        <label class="chalkline-name">
+          <span class="chalkline-visually-hidden">Your name</span>
+          <input id="name" type="text" autocomplete="nickname" title="Your name, which the others see by your cursor" />
+        </label>
+        <div class="chalkline-controls-row">
+          <button id="mic" class="chalkline-button" type="button" aria-pressed="false" hidden>Turn on speech</button>
+          <button
+            id="transcript-button"
+            class="chalkline-button"
+            type="button"
+            aria-expanded="false"
+            aria-controls="transcript"
+            hidden
+          >
+            Chat
+          </button>
+          <button id="settings-button" class="chalkline-button" type="button">Connection settings</button>
+        </div>
+      </div>
     </div>
+    <input id="open-file" type="file" accept=".excalidraw,application/json,application/vnd.excalidraw+json" hidden />
     <div id="settings" hidden></div>
     <div id="board">
       <div id="app"></div>
