@@ -49,7 +49,8 @@
         position: absolute;
         top: 0.5rem;
         right: 0.5rem;
-        bottom: 0.5rem;
+        /* --keyboard-inset is the height of the page a phone's on-screen keyboard covers (followKeyboard). */
+        bottom: calc(0.5rem + var(--keyboard-inset, 0px));
         z-index: 10;
         display: flex;
         flex-direction: column;
@@ -105,17 +106,27 @@
       }
       .transcript-text {
         display: block;
+        white-space: pre-wrap;
       }
       .transcript-empty {
         color: #666;
       }
       .chat-compose {
         display: flex;
+        align-items: flex-end;
         gap: 0.5rem;
       }
-      .chat-compose input {
+      .chat-compose textarea {
         flex: 1;
         min-width: 0;
+        box-sizing: border-box;
+        padding: 0.25rem 0.4rem;
+        font: inherit;
+        /* 16px, so that a phone doesn't zoom in as the field takes the focus. */
+        font-size: 1rem;
+        line-height: 1.25rem;
+        resize: none;
+        overflow-y: hidden;
       }
       .join-screen {
         max-width: 34rem;
