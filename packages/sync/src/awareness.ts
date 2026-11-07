@@ -7,7 +7,7 @@ import {
 import { reachOf } from './reach';
 import { FromPeer, sender, type Transport } from './sync';
 
-/** The origin of the removal of the states that only a peer that no connected peer reaches had sent. */
+/** The origin of the removal of the states that a peer that no connected peer reaches had sent. */
 const UNREACHED = Symbol('chalkline.unreached');
 
 /** The clients an awareness `update` event lists, by their ids. */
@@ -96,9 +96,11 @@ export interface AwarenessOptions {
  * state goes to every connected peer, and a peer that joins gets this
  * participant's state with each state that a connected peer sent. A change
  * from a peer goes on to each connected peer that the sender's newest list of
- * peers leaves out. As a peer leaves, the states that only it sent are removed
- * once no connected peer's list holds it, and the removal goes to every
- * connected peer; they show again when it comes back.
+ * peers leaves out. As a peer leaves, the states that it sent are removed once
+ * no connected peer's list holds it, and the removal goes to every connected
+ * peer. A participant that is still connected through another peer answers the
+ * removal of its state with a newer one, and a peer's states show again when it
+ * comes back.
  *
  * Returns a function that stops carrying awareness.
  */
@@ -138,15 +140,17 @@ export function connectAwareness(
   };
 
   /**
-   * Removes the states that only a departed peer sent, once no connected
-   * peer's list holds that peer, and sends the removal to every connected peer.
+   * Removes the states that a departed peer sent, once no connected peer's list
+   * holds that peer, and sends the removal to every connected peer. A state that
+   * another peer sent too may belong to a participant that is still connected,
+   * which answers the removal with a newer state.
    */
   const forgetUnreached = () => {
     for (const [peerId, sent] of [...departed]) {
       if (reach.listed(peerId)) continue;
       departed.delete(peerId);
       const states = awareness.getStates();
-      const gone = [...sent].filter((client) => states.has(client) && !heardFrom(client));
+      const gone = [...sent].filter((client) => states.has(client));
       if (gone.length === 0) continue;
       removeAwarenessStates(awareness, gone, UNREACHED);
       send('awareness', encodeAwarenessUpdate(awareness, gone));
