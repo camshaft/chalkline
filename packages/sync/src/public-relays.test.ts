@@ -304,6 +304,8 @@ describe('createRelayPool', () => {
       if (announcement > 1) await announce(pool.relays[2]);
       await announce(pool.relays[0]);
       acceptEvent(first);
+      // An event of the board's subscription answers the subscription, a request older than the announcement.
+      first.receive(['EVENT', first.messages('REQ')[0][1], { content: 'hello', tags: [['x', 'topic']] }]);
       expect(pool.retired()).toEqual([]);
       await announce(pool.relays[1]);
       acceptEvent(second);
@@ -364,6 +366,30 @@ describe('createRelayPool', () => {
     expect(warn).not.toHaveBeenCalled();
     expect(pool.held()).toEqual(urls.slice(0, 2));
     expect(socketsOf(urls[2])).toHaveLength(0);
+  });
+
+  it("judges a silent relay from the other relays' answers to the board's subscriptions", async () => {
+    const urls = relays('stored', 4);
+    const pool = createRelayPool({ urls, count: 3, warn: null });
+    const [subscribed, reconnected, silent] = urls.slice(0, 3).map((url) => socketOf(url));
+    for (const socket of [subscribed, reconnected, silent]) socket.accept();
+    for (const relay of pool.relays.slice(0, 3)) relay.subscribe('topic', vi.fn());
+    endStored(subscribed);
+    endStored(reconnected);
+    for (let announcement = 0; announcement < 3; announcement += 1) await announce(pool.relays[2]);
+
+    // A subscription after the silent relay's third announcement, answered with an event, and a new connection's subscription.
+    pool.relays[0].subscribe('other', vi.fn());
+    const [, [, otherId]] = subscribed.messages('REQ');
+    subscribed.receive(['EVENT', otherId, { content: 'hello', tags: [['x', 'other']] }]);
+    expect(pool.retired()).toEqual([]);
+    reconnected.end();
+    const again = socketOf(urls[1]);
+    again.accept();
+    endStored(again);
+
+    expect(pool.retired()).toEqual([urls[2]]);
+    expect(pool.held()).toEqual([urls[0], urls[1], urls[3]]);
   });
 
   it('counts the announcements of a new connection, after a relay that answered loses its connection', async () => {
