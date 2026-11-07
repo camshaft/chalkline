@@ -111,7 +111,7 @@ describe('add_image', () => {
       await call(client, 'add_image', { data_url: dataUrl, x: 10, y: 20, width: 80 }),
     );
 
-    expect(added).toEqual({ id: expect.any(String), file: sha1(picture), width: 80, height: 40 });
+    expect(added).toEqual({ id: expect.any(String), file: sha1(picture), width: 80, height: 40, change: expect.any(String) });
     const element = doc.getMap<Element>(ELEMENTS).get(added.id);
     expect(element).toMatchObject({
       type: 'image',
@@ -247,8 +247,13 @@ describe('flatten', () => {
     ).ids[0];
     const before = [...live(doc).keys()];
     expect(before).toHaveLength(5);
+    const shared = doc.getMap(ELEMENTS);
     let updates = 0;
-    doc.on('update', () => updates++);
+    // Counts the transactions that change the board's elements: the flatten's own, and not the one
+    // after it that records the change on the list of the agent's changes.
+    doc.on('afterTransaction', (transaction: Y.Transaction) => {
+      if (transaction.changed.has(shared) || transaction.changedParentTypes.has(shared)) updates++;
+    });
 
     const flat = answered<{ id: string; file: string; ids: string[]; region: unknown; width: number; height: number }>(
       await call(client, 'flatten', { groups: [group.group] }),
@@ -262,6 +267,7 @@ describe('flatten', () => {
       region: { x: -10, y: -10, width: 120, height: 60 },
       width: 240,
       height: 120,
+      change: expect.any(String),
     });
     const elements = live(doc);
     expect([...elements.keys()].sort()).toEqual([under, flat.id, top].sort());

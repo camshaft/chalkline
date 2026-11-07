@@ -30,7 +30,7 @@ export interface ChangesPanel {
  * with the board: each change shows its summary, its time, and an Undo button, or, once someone undid
  * it, who undid it and when, and the elements of `elements` that the undo left as they are. The panel
  * starts closed, and puts the focus on its Close button as it opens; the Close button, as Escape in
- * the panel does, closes it. Where an undo can't run, as where someone undid the change already on
+ * the panel does, closes it. Its list renders as it opens and on each change while it is open. Where an undo can't run, as where someone undid the change already on
  * another page, the panel's status line says why.
  */
 export function bindChangesPanel(
@@ -51,7 +51,9 @@ export function bindChangesPanel(
   const open = (shown: boolean): void => {
     const opening = shown && panel.hidden;
     panel.hidden = !shown;
-    if (opening) closer.focus();
+    if (!opening) return;
+    if (stale) render();
+    closer.focus();
   };
   const closer = make('button', 'changes-close', 'Close');
   closer.type = 'button';
@@ -85,19 +87,26 @@ export function bindChangesPanel(
     }
   };
 
+  // While the panel is closed, a change of the board's list only marks the panel's list as stale, so
+  // that each of the agent's calls doesn't cost the page a render of the whole list.
+  let stale = true;
   const render = (): void => {
+    stale = false;
     const listed = listAgentChanges(changes);
     list.replaceChildren(...listed.map((change) => changeItem(doc, change, undo)));
     empty.hidden = listed.length > 0;
   };
-  changes.observe(render);
-  render();
+  const changed = (): void => {
+    if (panel.hidden) stale = true;
+    else render();
+  };
+  changes.observe(changed);
   open(false);
 
   return {
     open,
     toggle: () => open(panel.hidden),
-    stop: () => changes.unobserve(render),
+    stop: () => changes.unobserve(changed),
   };
 }
 

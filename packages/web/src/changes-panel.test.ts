@@ -71,6 +71,12 @@ describe("the panel of the agent's changes", () => {
       elements: [{ id: 'box', before: rectangle(), after: rectangle({ x: 40, version: 2 }) }],
       now: new Date('2026-11-07T10:05:00Z'),
     });
+    // While the panel is closed, a change doesn't render its list: the list renders as the panel opens.
+    expect(panel.querySelectorAll('li.changes-item')).toHaveLength(0);
+
+    bound.toggle();
+    expect(panel.hidden).toBe(false);
+    expect(document.activeElement?.textContent).toBe('Close');
     const items = [...panel.querySelectorAll<HTMLLIElement>('li.changes-item')];
     expect(items.map((listed) => listed.dataset.id)).toEqual([second, first]);
     expect(items.map((listed) => listed.querySelector('.changes-summary')?.textContent)).toEqual([
@@ -83,21 +89,32 @@ describe("the panel of the agent's changes", () => {
     ]);
     expect(items.every((listed) => listed.dataset.state === 'undoable')).toBe(true);
     expect(panel.querySelector<HTMLElement>('.changes-empty')?.hidden).toBe(true);
-
-    bound.toggle();
-    expect(panel.hidden).toBe(false);
-    expect(document.activeElement?.textContent).toBe('Close');
     panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(panel.hidden).toBe(true);
+
+    // A change made while the panel is closed shows once the panel opens again.
+    const third = recordAgentChange(changes, {
+      by: AGENT,
+      tool: 'delete_shapes',
+      summary: 'Claude deleted 1 shape',
+      elements: [{ id: 'box', before: rectangle({ x: 40, version: 2 }), after: rectangle({ x: 40, version: 3, isDeleted: true }) }],
+      now: new Date('2026-11-07T10:10:00Z'),
+    });
     bound.open(true);
+    expect([...panel.querySelectorAll<HTMLLIElement>('li.changes-item')].map((listed) => listed.dataset.id)).toEqual([
+      third,
+      second,
+      first,
+    ]);
     panel.querySelector<HTMLButtonElement>('.changes-close')?.click();
     expect(panel.hidden).toBe(true);
     bound.stop();
   });
 
   it('undoes an addition with Undo, which deletes the shape, and says who undid it', () => {
-    const { elements, changes, panel } = board();
+    const { elements, changes, panel, bound } = board();
     const id = added(elements, changes);
+    bound.open(true);
     undoButton(panel, id).click();
 
     expect(elements.get('box')).toMatchObject({ type: 'rectangle', isDeleted: true });
@@ -110,8 +127,9 @@ describe("the panel of the agent's changes", () => {
   });
 
   it('leaves a shape that someone changed after the change as it is, and names it', () => {
-    const { elements, changes, panel } = board();
+    const { elements, changes, panel, bound } = board();
     const id = added(elements, changes);
+    bound.open(true);
     elements.set('box', rectangle({ x: 300, version: 2, versionNonce: 7 }));
     undoButton(panel, id).click();
 
@@ -122,8 +140,9 @@ describe("the panel of the agent's changes", () => {
   });
 
   it('says why an Undo pressed after someone else undid the change does nothing', () => {
-    const { elements, changes, panel } = board();
+    const { elements, changes, panel, bound } = board();
     const id = added(elements, changes);
+    bound.open(true);
     const stale = undoButton(panel, id);
     undoAgentChange(elements, changes, id, { by: 'Bo' });
     expect(elements.get('box')).toMatchObject({ isDeleted: true });
