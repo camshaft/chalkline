@@ -1,3 +1,4 @@
+import { withCreator } from '@chalkline/mcp/creator';
 import { indicesAbove } from '@chalkline/mcp/order';
 import {
   CONVERTS,
@@ -184,7 +185,11 @@ export function bindRequests(doc: Y.Doc, awareness: Awareness, convert: Convert)
       }
       const placed = moveTo(outcome.elements, request.at ?? placeBelow(elements.values()));
       const indices = indicesAbove(elements.values(), placed.length);
-      placed.forEach((element, place) => elements.set(element.id, { ...element, index: indices[place] }));
+      // Each shape of the diagram records the agent that asked for it as its creator.
+      const creator = { kind: 'agent', name: request.by } as const;
+      placed.forEach((element, place) =>
+        elements.set(element.id, withCreator({ ...element, index: indices[place] }, creator)),
+      );
       requests.set(id, { ...request, status: 'done', error: null, ids: shapeIds(placed) });
     }, CONVERTED);
   };
