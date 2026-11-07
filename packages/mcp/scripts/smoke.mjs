@@ -4,7 +4,8 @@
 // ellipse with update_shape, and asks for a Mermaid diagram with add_mermaid, which answers pending
 // since no page is in the new room. It reads the request back with get_request, and the shapes,
 // their order, their creator and the pending request with get_board, then deletes the arrow with
-// delete_shapes, adds a freehand stroke, and draws the board as a PNG with render_board, and checks
+// delete_shapes, brings it back with undo_change, which then refuses the same change, deletes it
+// again, adds a freehand stroke, and draws the board as a PNG with render_board, and checks
 // that the helper's log doesn't hold the error of a stroke left out. It reads the board's changes from
 // the start with read_changes, then reads the empty transcript as the resource
 // chalkline://transcript, subscribes to it, and checks that read_transcript refuses a cursor past
@@ -58,6 +59,7 @@ assert.deepEqual(tools.map((tool) => tool.name).sort(), [
   'render_board',
   'reorder_shapes',
   'scale_shapes',
+  'undo_change',
   'update_shape',
 ]);
 
@@ -97,6 +99,15 @@ assert.deepEqual(board.pending, [{ id: asked.id, kind: 'mermaid' }]);
 
 const deleted = await call('delete_shapes', { ids: [arrow] });
 assert.deepEqual(deleted.ids, [arrow]);
+assert.equal(typeof deleted.change, 'string');
+// undo_change brings the arrow back, refuses the same change once someone undid it, and
+// delete_shapes then deletes the arrow again.
+const undone = await call('undo_change', { id: deleted.change });
+assert.ok(undone.restored.includes(arrow), JSON.stringify(undone));
+assert.equal(byId((await call('get_board', {})).shapes, arrow)?.kind, 'arrow');
+const again = await client.callTool({ name: 'undo_change', arguments: { id: deleted.change } });
+assert.equal(again.isError, true, JSON.stringify(again.content));
+assert.deepEqual((await call('delete_shapes', { ids: [arrow] })).ids, [arrow]);
 const after = await call('get_board', {});
 assert.equal(byId(after.shapes, arrow), undefined);
 assert.equal(after.shapes.some((candidate) => candidate.label === 'then'), false);
