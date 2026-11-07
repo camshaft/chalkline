@@ -137,11 +137,11 @@ export function connectAwareness(
   const self = awareness.clientID;
   const own = () => encodeAwarenessUpdate(awareness, [self]);
   // The number of the last awareness message this participant sent.
-  let sequence = 0;
+  let lastNumber = 0;
   /** Sends `update` to `target`, or to every peer, with the next number after its entries. */
   const sendUpdate = (update: Uint8Array, target?: string) => {
-    sequence += 1;
-    send('awareness', withSequence(update, sequence), target);
+    lastNumber += 1;
+    send('awareness', withSequence(update, lastNumber), target);
   };
   // The other clients whose states each connected peer sent and still holds.
   const clients = new Map<string, Set<number>>();
