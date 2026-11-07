@@ -43,13 +43,16 @@ Options:
                            (default: 3)
   --after <time>           leave out what was said, written or drawn at or before this ISO 8601
                            time, in place of the time the listener starts, such as the "at" of
-                           the last line an earlier listener printed
+                           the last line an earlier listener printed. A text whose copy doesn't
+                           record when its words last changed, as a text written before
+                           Chalkline's pages recorded it, is left out where its last change came
+                           before the listener started
   --help                   print this text`;
 
 /** What the arguments after `chalkline-mcp listen` ask for. */
 export type ListenArgs =
   | { help: true }
-  | { help: false; room: RoomSecrets; relays: string[]; pauseMs: number; boardPauseMs: number; after: number };
+  | { help: false; room: RoomSecrets; relays: string[]; pauseMs: number; boardPauseMs: number; after: number; start: number };
 
 function roomOf(link: string): RoomSecrets {
   let address: URL;
@@ -109,6 +112,7 @@ export function parseListenArgs(args: string[], now: number): ListenArgs {
     pauseMs: pauseOf('pause', values.pause, PAUSE_MS),
     boardPauseMs: pauseOf('board-pause', values['board-pause'], BOARD_PAUSE_MS),
     after: afterOf(values.after, now),
+    start: now,
   };
 }
 
@@ -130,11 +134,12 @@ export async function runListen(args: string[]): Promise<void> {
     await new Promise<void>((resolve) => process.stdout.write(`${LISTEN_USAGE}\n`, () => resolve()));
     return;
   }
-  const { room: secrets, relays, pauseMs, boardPauseMs, after } = parsed;
+  const { room: secrets, relays, pauseMs, boardPauseMs, after, start } = parsed;
 
   const doc = new Y.Doc();
   const listener = listenToBoard(doc, {
     after,
+    start,
     pauseMs,
     boardPauseMs,
     print: (line) => {

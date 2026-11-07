@@ -128,10 +128,19 @@ export const BOARD_PAUSE_MS = 3000;
 
 export interface BoardListenOptions<T> {
   /**
-   * When the listener started, in milliseconds since the epoch: a text or a stroke that a person
+   * The time a person's change has to come after, in milliseconds since the epoch: when the
+   * listener started, or the earlier time that `--after` sets. A text or a stroke that a person
    * last changed at or before this time is left out.
    */
   after: number;
+  /**
+   * When the listener started, in milliseconds since the epoch, where `after` is an earlier time;
+   * `after` where it is left out. A text whose copy doesn't record when its words last changed, as
+   * a text that a page wrote before the pages recorded the words mark, is left out where the
+   * listener first receives it with a change at or before this time, since a page may change such
+   * a text without changing its words, as where it saves the text again.
+   */
+  start?: number;
   /** How long a text or the strokes stay unchanged before their line, in milliseconds. */
   pauseMs: number;
   /** Called with each line. */
@@ -151,18 +160,20 @@ function liveElement(value: unknown): (Record<string, unknown> & { updated: numb
 
 /**
  * The words of the text that `value` holds, when they last changed, as its words mark records it,
- * else when its page last changed the text, whether an agent's helper made that change, as the
- * element's change mark records it, and whether the words are the ones the mark records an agent
- * wrote, where it holds a text with words.
+ * else when its page last changed the text, whether its words mark records that time, whether an
+ * agent's helper made that change, as the element's change mark records it, and whether the words
+ * are the ones the mark records an agent wrote, where it holds a text with words.
  */
-function writtenOf(value: unknown): { words: string; updated: number; byAgent: boolean; agentWrote: boolean } | undefined {
+function writtenOf(value: unknown): { words: string; updated: number; marked: boolean; byAgent: boolean; agentWrote: boolean } | undefined {
   const fields = liveElement(value);
   if (fields === undefined || fields.type !== 'text') return undefined;
   const words = stringOf(fields.originalText) ?? stringOf(fields.text);
   if (words === undefined || words.trim() === '') return undefined;
+  const changed = wordsChangedOf(value);
   return {
     words,
-    updated: wordsChangedOf(value) ?? fields.updated,
+    updated: changed ?? fields.updated,
+    marked: changed !== undefined,
     byAgent: changerOf(value) !== undefined,
     agentWrote: words === agentWordsOf(value),
   };
@@ -247,11 +258,20 @@ function watchElements(elements: Y.Map<unknown>, seen: (id: string) => void): ()
  * receives the text after that move, as a peer's copy of the board brings it. A deleted text and a
  * text without words are left out, and so is a text whose words a person last changed at or before
  * `options.after`, as its words mark records it where the text holds one, though the listener
- * receives it later, after a move.
+ * receives it later, after a move. A text whose copy doesn't record when its words last changed,
+ * as a text that a page wrote before the pages recorded the words mark, is left out too where the
+ * listener first receives it with a change at or before `options.start`, since a page may change
+ * such a text without changing its words, as where it saves the text again; a later change of its
+ * words makes a line.
  */
 export function listenTexts(doc: Y.Doc, options: BoardListenOptions<Written>): Listener {
   const elements = doc.getMap<unknown>(ELEMENTS);
-  /** The words of each text the listener told of, that a person wrote before the listener started, or that an agent wrote, as its change mark records them. */
+  const start = options.start ?? options.after;
+  /**
+   * The words of each text the listener told of, that a person wrote before the listener started,
+   * that an agent wrote, as its change mark records them, or that the listener first received
+   * without a record of when they changed, with a change at or before `start`.
+   */
   const told = new Map<string, string>();
   /** The pause after each text's last change, where a line may follow it. */
   const pauses = new Map<string, ReturnType<typeof setTimeout>>();
@@ -273,7 +293,8 @@ export function listenTexts(doc: Y.Doc, options: BoardListenOptions<Written>): L
     const written = writtenOf(elements.get(id));
     settle(id);
     if (written === undefined) return;
-    if (written.byAgent || written.updated <= options.after || (written.agentWrote && !told.has(id))) {
+    const unrecordedBeforeStart = !written.marked && written.updated <= start;
+    if (written.byAgent || written.updated <= options.after || (!told.has(id) && (written.agentWrote || unrecordedBeforeStart))) {
       told.set(id, written.words);
       return;
     }
@@ -344,8 +365,13 @@ export function listenSketches(doc: Y.Doc, options: BoardListenOptions<Sketched>
 }
 
 export interface BoardListenerOptions {
-  /** When the listener started, in milliseconds since the epoch: what was said, written or drawn at or before it is left out. */
+  /**
+   * The time what was said, written or drawn has to come after, in milliseconds since the epoch:
+   * when the listener started, or the earlier time that `--after` sets.
+   */
   after: number;
+  /** When the listener started, in milliseconds since the epoch, which `listenTexts` reads as its `start`. */
+  start: number;
   /** How long a pause after words ends their group, in milliseconds. */
   pauseMs: number;
   /** How long a text or a sketch stays unchanged before its line, in milliseconds. */
@@ -360,10 +386,10 @@ export interface BoardListenerOptions {
  * sketches that `listenSketches` makes, each line to `options.print`.
  */
 export function listenToBoard(doc: Y.Doc, options: BoardListenerOptions): Listener {
-  const { after, pauseMs, boardPauseMs, print } = options;
+  const { after, start, pauseMs, boardPauseMs, print } = options;
   const listeners = [
     listen(new TranscriptLog(doc), { after, pauseMs, onHeard: print }),
-    listenTexts(doc, { after, pauseMs: boardPauseMs, onLine: print }),
+    listenTexts(doc, { after, start, pauseMs: boardPauseMs, onLine: print }),
     listenSketches(doc, { after, pauseMs: boardPauseMs, onLine: print }),
   ];
   return {
