@@ -35,11 +35,33 @@ export function agentName(server: McpServer): string {
 }
 
 /**
+ * Each entry of `entries` once, in the order of its first version: an id that comes more than once,
+ * as a speech entry that its page replaced while the speaker's browser went on extending its words,
+ * holds its last version, where its first stood.
+ */
+export function latestOf(entries: readonly TranscriptEntry[]): TranscriptEntry[] {
+  const places = new Map<string, number>();
+  const latest: TranscriptEntry[] = [];
+  for (const entry of entries) {
+    const place = places.get(entry.id);
+    if (place === undefined) {
+      places.set(entry.id, latest.length);
+      latest.push(entry);
+    } else {
+      latest[place] = entry;
+    }
+  }
+  return latest;
+}
+
+/**
  * The board's transcript as this run of the helper received it: each entry that reads as one, in
  * the order the helper's copy of the board first held it. A cursor counts these entries. The
  * transcript's own order can put an entry that a peer appended at the same time as another before
  * an entry that the agent has read already; this log puts it after, so that a read from the
- * agent's cursor answers it.
+ * agent's cursor answers it. An entry that a page replaced comes again with its id and its new
+ * words, and counts again; a read answers each id once, with its last version, where its first
+ * stood.
  */
 export class TranscriptLog {
   readonly #entries: TranscriptEntry[] = [];
@@ -65,9 +87,12 @@ export class TranscriptLog {
     return this.#waiting.size;
   }
 
-  /** The entries after `cursor`, and the cursor after the last of them. */
+  /**
+   * The entries after `cursor`, each id once with its last version, as `latestOf` answers them, and
+   * the cursor after the last of them.
+   */
   after(cursor: number): TranscriptRead {
-    return { entries: this.#entries.slice(cursor), cursor: this.#entries.length };
+    return { entries: latestOf(this.#entries.slice(cursor)), cursor: this.#entries.length };
   }
 
   /**
@@ -126,6 +151,7 @@ export function registerTranscript(server: McpServer, doc: Y.Doc): TranscriptLog
         'Where no entry follows the cursor, it answers once someone on the board says, types or posts one, or with no entries once the client cancels the call.',
         "Left out, the cursor is 0, the transcript's start.",
         'A cursor counts the entries this run of the helper has received, in the order it received them, so it holds within one run of the helper.',
+        "An entry that a page replaced, as a speech entry whose words the speaker's browser went on extending, comes again with the same id and its new words; where one answer holds an entry more than once, it holds the last version alone, where the first stood.",
         `The resource ${TRANSCRIPT_URI} holds the same entries, and a client that subscribes to it is notified after each change that adds an entry.`,
       ].join(' '),
       inputSchema: { cursor: z.number().int().min(0).optional() },

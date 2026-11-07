@@ -3,6 +3,7 @@ import {
   connectDoc,
   feedbackOf,
   MemoryNetwork,
+  replaceLastEntry,
   transcriptOf,
   writeFeedback,
   type Feedback,
@@ -163,6 +164,24 @@ describe('listen', () => {
     });
     vi.advanceTimersByTime(PAUSE_MS);
     expect(heard).toEqual([{ at: at(40), speakers: ['Ada', 'Grace'], text: 'draw a box and label it start' }]);
+  });
+
+  it('prints a sentence once, with its last words, where its page replaced its entry as the words grew', () => {
+    const { transcript, heard } = listening();
+    // As a phone's browser does, which marks each longer guess at the sentence final.
+    appendEntry(transcript, said('one', 1, 'draw'));
+    replaceLastEntry(transcript, said('one', 2, 'draw a picture'));
+    replaceLastEntry(transcript, said('one', 3, 'draw a picture of a cute little kitty cat'));
+    vi.advanceTimersByTime(PAUSE_MS);
+    expect(heard).toEqual([{ at: at(3), speakers: ['Ada'], text: 'draw a picture of a cute little kitty cat' }]);
+
+    // Once the group is printed, a later version makes a line of its own.
+    replaceLastEntry(transcript, said('one', 5, 'draw a picture of a cute little kitty cat in a hat'));
+    vi.advanceTimersByTime(PAUSE_MS);
+    expect(heard).toEqual([
+      { at: at(3), speakers: ['Ada'], text: 'draw a picture of a cute little kitty cat' },
+      { at: at(5), speakers: ['Ada'], text: 'draw a picture of a cute little kitty cat in a hat' },
+    ]);
   });
 
   it('prints the group that waits for its pause at once on flush, and drops it on stop', () => {

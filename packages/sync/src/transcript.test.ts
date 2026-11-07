@@ -7,6 +7,7 @@ import {
   newEntryId,
   readEntry,
   readTranscript,
+  replaceLastEntry,
   transcriptOf,
   type TranscriptEntry,
   type TranscriptVia,
@@ -80,6 +81,49 @@ describe('newEntryId', () => {
     const ids = new Set(Array.from({ length: 50 }, () => newEntryId()));
     expect(ids.size).toBe(50);
     for (const id of ids) expect(id).toMatch(/^[0-9a-f]{16}$/);
+  });
+});
+
+describe('replaceLastEntry', () => {
+  it('replaces the last entry where it has the id, and keeps its place', () => {
+    const doc = new Y.Doc();
+    const transcript = transcriptOf(doc);
+    appendEntry(transcript, entry('one', 'Grace', 'a box'));
+    appendEntry(transcript, entry('two', 'Ada', 'draw'));
+
+    expect(replaceLastEntry(transcript, entry('two', 'Ada', 'draw a picture'))).toBe(true);
+    expect(readTranscript(transcript)).toEqual([entry('one', 'Grace', 'a box'), entry('two', 'Ada', 'draw a picture')]);
+    expect(transcript.length).toBe(2);
+  });
+
+  it("changes nothing where the last entry has another id, the transcript is empty, or it isn't in a document", () => {
+    const doc = new Y.Doc();
+    const transcript = transcriptOf(doc);
+    expect(replaceLastEntry(transcript, entry('one'))).toBe(false);
+    expect(transcript.length).toBe(0);
+
+    appendEntry(transcript, entry('one', 'Ada', 'draw'));
+    appendEntry(transcript, entry('two', 'Grace', 'a box'));
+    expect(replaceLastEntry(transcript, entry('one', 'Ada', 'draw a picture'))).toBe(false);
+    expect(readTranscript(transcript)).toEqual([entry('one', 'Ada', 'draw'), entry('two', 'Grace', 'a box')]);
+
+    expect(replaceLastEntry(new Y.Array<unknown>(), entry('one'))).toBe(false);
+  });
+
+  it('reaches every peer as one change', () => {
+    const network = new MemoryNetwork();
+    const [page, helper] = ['page', 'helper'].map((id) => join(network, id));
+    network.flush();
+    appendEntry(transcriptOf(page), entry('one', 'Ada', 'draw'));
+    network.flush();
+
+    const lengths: number[] = [];
+    transcriptOf(helper).observe(() => lengths.push(transcriptOf(helper).length));
+    expect(replaceLastEntry(transcriptOf(page), entry('one', 'Ada', 'draw a picture'))).toBe(true);
+    network.flush();
+
+    expect(readTranscript(transcriptOf(helper))).toEqual([entry('one', 'Ada', 'draw a picture')]);
+    expect(lengths).toEqual([1]);
   });
 });
 
