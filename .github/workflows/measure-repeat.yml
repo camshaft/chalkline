@@ -1,0 +1,39 @@
+name: Board size measurement, repeated
+
+# Runs the Board size measurement ten times at once on each push to a measure/ branch, so that the
+# zoomed-out change's cost can be compared between commits across runners. Each job first prints its
+# runner's CPU, so that a job's numbers can be read beside the machine that ran it.
+on:
+  push:
+    branches: ['measure/**']
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    name: Board size measurement ${{ matrix.attempt }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - name: Runner CPU
+        run: |
+          echo "cpu: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs), $(nproc) cores"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: npm ci
+      - name: Install Chromium
+        working-directory: packages/lan
+        timeout-minutes: 8
+        run: npx playwright install chromium
+      - name: Build
+        run: npm run build
+      - name: Measure the page on boards of 100 and 4,000 shapes
+        run: npm run measure --workspace @chalkline/lan
