@@ -1,5 +1,6 @@
 import {
   appendEntry,
+  feedbackKind,
   listFeedback,
   newEntryId,
   readTranscript,
@@ -225,18 +226,21 @@ function answerPart(doc: Document, { by, at, text }: FeedbackAnswer, reopened: b
 }
 
 /**
- * A feedback in the chat's list: its writer, its time, its text, how many shapes it covers and Show; Reopen
- * while it is answered; and under them the agent's answer, where the feedback holds one.
+ * A feedback in the chat's list: its writer, its time, its tag, its text, how many shapes it covers and
+ * Show; Reopen while it is answered; and under them the agent's answer, where the feedback holds one. The
+ * tag says Ask for an ask that a person sent with Ask an agent, and Feedback for any other feedback.
  */
 function feedbackItem(doc: Document, record: Feedback, buttons: FeedbackButtons): HTMLLIElement {
   const item = doc.createElement('li');
   item.className = 'transcript-feedback';
   item.dataset.id = record.id;
   item.dataset.status = record.status;
+  const kind = feedbackKind(record);
+  item.dataset.kind = kind;
   const [who, when, words] = itemParts(doc, record.by, record.at, record.text);
   const tag = doc.createElement('span');
   tag.className = 'transcript-feedback-tag';
-  tag.textContent = 'Feedback';
+  tag.textContent = kind === 'ask' ? 'Ask' : 'Feedback';
   const covers = doc.createElement('span');
   covers.className = 'transcript-feedback-shapes';
   covers.textContent = shapesText(record.shapes.length);
