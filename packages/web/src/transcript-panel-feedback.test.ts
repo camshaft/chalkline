@@ -16,6 +16,9 @@ import { bindTranscriptPanel, chatItems, shapesText, type ChatItem } from './tra
 /** A time on 2026-11-07, `second` seconds after 01:02:00 UTC. */
 const at = (second: number): string => new Date(Date.UTC(2026, 10, 7, 1, 2, second)).toISOString();
 
+/** The time a person presses Reopen in these tests. */
+const REOPENED = at(30);
+
 const entry = (id: string, second: number): TranscriptEntry => ({
   id,
   speaker: 'Ada',
@@ -33,6 +36,7 @@ const note = (id: string, second: number, shapes: string[] = [], answered = fals
   shapes,
   status: answered ? 'answered' : 'open',
   answer: answered ? { by: 'agent', at: at(second), text: 'Moved it' } : null,
+  reopened: null,
 });
 
 /** Each item of `items` as its kind and its id. */
@@ -48,7 +52,7 @@ function page(doc = new Y.Doc()) {
   const onShow = vi.fn<(record: Feedback) => void>();
   const transcript = transcriptOf(doc);
   const map = feedbackOf(doc);
-  const bound = bindTranscriptPanel({ mic, opener, panel }, transcript, actions, { speaker: () => 'Ada' }, { map, show: onShow });
+  const bound = bindTranscriptPanel({ mic, opener, panel }, transcript, actions, { speaker: () => 'Ada', now: () => new Date(REOPENED) }, { map, show: onShow });
   return { opener, panel, transcript, map, onShow, ...bound };
 }
 
@@ -237,7 +241,7 @@ describe('answers in the transcript panel', () => {
     expect(reopenButton(panel, 'n1')).not.toBeNull();
   });
 
-  it('sets an answered feedback open again on Reopen, keeps its answer, and then shows it as its earlier answer', () => {
+  it('sets an answered feedback open again on Reopen with the time of the press, keeps its answer, and then shows it as its earlier answer', () => {
     const doc = new Y.Doc();
     const answered = note('n1', 1, ['shape-1'], true);
     writeFeedback(feedbackOf(doc), answered);
@@ -245,7 +249,7 @@ describe('answers in the transcript panel', () => {
     const reopen = reopenButton(panel, 'n1');
     expect(reopen).not.toBeNull();
     reopen?.click();
-    expect(getFeedback(map, 'n1')).toEqual({ ...answered, status: 'open' });
+    expect(getFeedback(map, 'n1')).toEqual({ ...answered, status: 'open', reopened: REOPENED });
     expect(feedbackItem(panel, 'n1').dataset.status).toBe('open');
     expect(reopenButton(panel, 'n1')).toBeNull();
     expect(answerOf(panel, 'n1')?.querySelector('.transcript-feedback-answer-tag')?.textContent).toBe('Earlier answer');
@@ -270,7 +274,7 @@ describe('answers in the transcript panel', () => {
     answerFeedback(feedbackOf(peer), 'n1', again);
     Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer));
     earlier?.click();
-    expect(getFeedback(map, 'n1')).toEqual({ ...answered, status: 'open', answer: again });
+    expect(getFeedback(map, 'n1')).toEqual({ ...answered, status: 'open', answer: again, reopened: REOPENED });
   });
 
   it("doesn't write anything on a Reopen of a feedback that the board holds open already", () => {
