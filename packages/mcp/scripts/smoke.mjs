@@ -42,11 +42,13 @@ async function call(name, args) {
 
 const { tools } = await client.listTools();
 assert.deepEqual(tools.map((tool) => tool.name).sort(), [
+  'add_image',
   'add_mermaid',
   'add_shapes',
   'answer_feedback',
   'connect',
   'delete_shapes',
+  'flatten',
   'get_board',
   'get_request',
   'post_message',
