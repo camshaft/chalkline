@@ -13,6 +13,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { Resvg } from '@resvg/resvg-js';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import { ELEMENTS } from './board';
@@ -233,6 +234,27 @@ describe("the helper's presence", () => {
     const ids = (moved.shapes as { id: string }[]).map((shape) => shape.id);
     expect(ids).toEqual(expect.arrayContaining(grouped.ids as string[]));
     expect(stateOf(helperAwareness)).toMatchObject({ shapes: ids, pointer: { x: 650, y: 600, tool: 'pointer' } });
+  });
+
+  it('shows working while add_image and flatten run, then points at the picture each places', async () => {
+    const { client, helperAwareness, statuses } = await board();
+    // A red picture of 40 by 20 pixels, which add_image places 80 wide and so 40 high, from 10, 20 to 90, 60.
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="#ff0000"/></svg>';
+    const picture = new Resvg(svg).render().asPng();
+    const dataUrl = `data:image/png;base64,${picture.toString('base64')}`;
+    const image = await call(client, 'add_image', { data_url: dataUrl, x: 10, y: 20, width: 80 });
+    expect(stateOf(helperAwareness)).toMatchObject({ status: 'idle', shapes: [image.id], pointer: { x: 50, y: 40, tool: 'pointer' } });
+
+    // flatten deletes the two boxes and places its picture over the region it drew, so the pointer goes to that region's center.
+    const added = await call(client, 'add_shapes', { shapes: TWO_BOXES });
+    const flat = await call(client, 'flatten', { ids: added.ids });
+    const region = flat.region as { x: number; y: number; width: number; height: number };
+    expect(stateOf(helperAwareness)).toMatchObject({
+      status: 'idle',
+      shapes: [flat.id],
+      pointer: { x: region.x + region.width / 2, y: region.y + region.height / 2, tool: 'pointer' },
+    });
+    expect(statuses).toEqual(['idle', 'working', 'idle', 'working', 'idle', 'working', 'idle']);
   });
 
   it.each(['read_transcript', 'read_changes', 'read_feedback'])(
