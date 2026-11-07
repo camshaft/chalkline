@@ -1,4 +1,4 @@
-import { appendEntry, newEntryId, readTranscript, type TranscriptEntry } from '@chalkline/sync';
+import { appendEntry, listFeedback, newEntryId, readTranscript, type Feedback, type TranscriptEntry } from '@chalkline/sync';
 import type * as Y from 'yjs';
 import type { SpeechState } from './speech';
 
@@ -30,6 +30,42 @@ export interface ChatOptions {
   newId?: () => string;
   /** The time now; the clock where left out. */
   now?: () => Date;
+}
+
+/** The board's feedback, which the panel lists among the chat's entries, and what its Show button does. */
+export interface PanelFeedback {
+  /** The board's `feedback` map. */
+  map: Y.Map<unknown>;
+  /** Scrolls and zooms the canvas to a feedback's area, and outlines that area. */
+  show(record: Feedback): void;
+}
+
+/** An item of the chat's list: an entry of the transcript, or a feedback. */
+export type ChatItem = { kind: 'entry'; entry: TranscriptEntry } | { kind: 'feedback'; feedback: Feedback };
+
+/**
+ * The chat's list: `entries` in their order, with each feedback of `notes`, which `listFeedback` sorts by
+ * `at`, before the first entry whose time is later than its own, so that the list follows the times. A
+ * feedback goes after an entry of the same time.
+ */
+export function chatItems(entries: readonly TranscriptEntry[], notes: readonly Feedback[]): ChatItem[] {
+  const items: ChatItem[] = [];
+  let next = 0;
+  for (const entry of entries) {
+    const at = Date.parse(entry.at);
+    for (let note = notes[next]; note !== undefined && Date.parse(note.at) < at; note = notes[next]) {
+      items.push({ kind: 'feedback', feedback: note });
+      next += 1;
+    }
+    items.push({ kind: 'entry', entry });
+  }
+  for (const note of notes.slice(next)) items.push({ kind: 'feedback', feedback: note });
+  return items;
+}
+
+/** How many shapes a feedback's area covers, as the chat says it. */
+export function shapesText(count: number): string {
+  return `Covers ${count} ${count === 1 ? 'shape' : 'shapes'}`;
 }
 
 /** The most lines the message field grows to; past them, its text scrolls inside the field. */
@@ -133,10 +169,8 @@ export function followKeyboard(panel: HTMLElement, viewport: KeyboardViewport, l
   };
 }
 
-function entryItem(doc: Document, { id, speaker, at, text, via }: TranscriptEntry): HTMLLIElement {
-  const item = doc.createElement('li');
-  item.dataset.id = id;
-  item.dataset.via = via;
+/** A list item's speaker, its time and its words, as the chat shows each entry and each feedback. */
+function itemParts(doc: Document, speaker: string, at: string, text: string): [HTMLSpanElement, HTMLTimeElement, HTMLSpanElement] {
   const who = doc.createElement('span');
   who.className = 'transcript-speaker';
   who.textContent = speaker;
@@ -147,7 +181,37 @@ function entryItem(doc: Document, { id, speaker, at, text, via }: TranscriptEntr
   const words = doc.createElement('span');
   words.className = 'transcript-text';
   words.textContent = text;
-  item.append(who, when, words);
+  return [who, when, words];
+}
+
+function entryItem(doc: Document, { id, speaker, at, text, via }: TranscriptEntry): HTMLLIElement {
+  const item = doc.createElement('li');
+  item.dataset.id = id;
+  item.dataset.via = via;
+  item.append(...itemParts(doc, speaker, at, text));
+  return item;
+}
+
+/** A feedback in the chat's list: its writer, its time, its text, how many shapes it covers, and Show. */
+function feedbackItem(doc: Document, record: Feedback, show: (record: Feedback) => void): HTMLLIElement {
+  const item = doc.createElement('li');
+  item.className = 'transcript-feedback';
+  item.dataset.id = record.id;
+  item.dataset.status = record.status;
+  const [who, when, words] = itemParts(doc, record.by, record.at, record.text);
+  const tag = doc.createElement('span');
+  tag.className = 'transcript-feedback-tag';
+  tag.textContent = 'Feedback';
+  const covers = doc.createElement('span');
+  covers.className = 'transcript-feedback-shapes';
+  covers.textContent = shapesText(record.shapes.length);
+  const showButton = doc.createElement('button');
+  showButton.type = 'button';
+  showButton.className = 'transcript-feedback-show';
+  showButton.textContent = 'Show';
+  showButton.title = 'Scroll and zoom the board to the area of this feedback';
+  showButton.addEventListener('click', () => show(record));
+  item.append(who, when, tag, words, covers, showButton);
   return item;
 }
 
@@ -164,19 +228,24 @@ function entryItem(doc: Document, { id, speaker, at, text, via }: TranscriptEntr
  * while the person reads its end; where they scrolled up to read earlier
  * ones, a new entry leaves the list where it is and shows a New messages
  * button, which scrolls to the end, as sending a message does.
- * `opener` opens and closes the panel, and counts the entries; the panel's
- * Close button, as Escape in the panel does, closes it with one press and puts
- * the focus back on `opener`. The panel opens as speech starts to turn on, so
- * that the person reads the question.
+ * Where `feedback` is given, the list shows each feedback of its map among
+ * the entries, in the order of their times, with its writer, its time, its
+ * text, how many shapes its area covers and a Show button, which calls
+ * `feedback.show`; and the panel opens when a feedback arrives.
+ * `opener` opens and closes the panel, and counts the entries and the
+ * feedback; the panel's Close button, as Escape in the panel does, closes it
+ * with one press and puts the focus back on `opener`. The panel opens as
+ * speech starts to turn on, so that the person reads the question.
  *
  * Returns `show`, which shows a state of the speech, and `stop`, which stops
- * following the transcript.
+ * following the transcript and the feedback.
  */
 export function bindTranscriptPanel(
   { mic, opener, panel }: PanelElements,
   transcript: Y.Array<unknown>,
   actions: SpeechActions,
   chat: ChatOptions,
+  feedback?: PanelFeedback,
 ): { show(state: SpeechState): void; stop(): void } {
   const doc = panel.ownerDocument;
   const newId = chat.newId ?? newEntryId;
@@ -273,19 +342,31 @@ export function bindTranscriptPanel(
   mic.addEventListener('click', () => actions.toggle());
   open(false);
 
+  const showFeedback = (record: Feedback): void => feedback?.show(record);
   let entryCount = 0;
+  // The ids of the feedback the list showed, so that the panel opens for each one that arrives after.
+  let known: ReadonlySet<string> | null = null;
   const render = () => {
-    const read = readTranscript(transcript);
-    const arrived = read.length > entryCount;
-    entryCount = read.length;
-    entries.replaceChildren(...read.map((entry) => entryItem(doc, entry)));
-    empty.hidden = read.length > 0;
-    opener.textContent = read.length === 0 ? 'Chat' : `Chat (${read.length})`;
+    const notes: Feedback[] = feedback === undefined ? [] : listFeedback(feedback.map);
+    const items = chatItems(readTranscript(transcript), notes);
+    const arrived = items.length > entryCount;
+    entryCount = items.length;
+    entries.replaceChildren(
+      ...items.map((item) => (item.kind === 'entry' ? entryItem(doc, item.entry) : feedbackItem(doc, item.feedback, showFeedback))),
+    );
+    empty.hidden = items.length > 0;
+    opener.textContent = items.length === 0 ? 'Chat' : `Chat (${items.length})`;
     // Follow new entries, unless the person scrolled up to read earlier ones: then say that new ones came.
     if (following) entries.scrollTop = entries.scrollHeight;
     else if (arrived) newer.hidden = false;
+    // The panel opens when a feedback arrives, the person's own among them; the feedback that the board
+    // holds as the panel starts doesn't open it.
+    const before = known;
+    known = new Set(notes.map((note) => note.id));
+    if (before !== null && notes.some((note) => !before.has(note.id))) open(true);
   };
   transcript.observe(render);
+  feedback?.map.observe(render);
   render();
 
   return {
@@ -305,6 +386,7 @@ export function bindTranscriptPanel(
     },
     stop() {
       transcript.unobserve(render);
+      feedback?.map.unobserve(render);
     },
   };
 }

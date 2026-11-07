@@ -391,6 +391,123 @@
         gap: 0.5rem;
         margin-top: 1rem;
       }
+      /*
+       * The controls' second row holds the microphone, Chat and Feedback buttons, and goes on to a second
+       * line where the controls lack the room for the three.
+       */
+      #controls-more > .chalkline-controls-row {
+        flex-wrap: wrap;
+      }
+      /*
+       * Feedback (designs/chalkline A13): the layer over the canvas, which feedback.ts fills with the
+       * outline of each open feedback, and with the rectangle a person drags in feedback mode and its text
+       * box. Outside feedback mode it lets each pointer event through to the canvas; in feedback mode a drag
+       * on it marks an area. It sits over the canvas and under the chat.
+       */
+      #feedback-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      #feedback-layer.feedback-active {
+        pointer-events: auto;
+        cursor: crosshair;
+        touch-action: none;
+      }
+      #feedback-layer [hidden] {
+        display: none;
+      }
+      .feedback-outline,
+      .feedback-draft {
+        position: absolute;
+        box-sizing: border-box;
+        border: 2px dashed #e8590c;
+        border-radius: 0.25rem;
+      }
+      .feedback-draft {
+        border-color: #1971c2;
+        background: rgba(25, 113, 194, 0.08);
+      }
+      .feedback-outline.feedback-shown {
+        border: 3px solid #1971c2;
+      }
+      .feedback-outline-name {
+        position: absolute;
+        bottom: 100%;
+        left: -2px;
+        padding: 0 0.3rem;
+        font-size: 0.75rem;
+        line-height: 1.4;
+        color: #fff;
+        white-space: nowrap;
+        background: #e8590c;
+        border-radius: 0.25rem 0.25rem 0 0;
+      }
+      .feedback-shown .feedback-outline-name {
+        background: #1971c2;
+      }
+      .feedback-hint,
+      .feedback-box {
+        position: absolute;
+        display: flex;
+        gap: 0.5rem;
+        box-sizing: border-box;
+        padding: 0.5rem;
+        font-size: 0.875rem;
+        color: #1b1b1f;
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 0.5rem;
+        box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.15);
+        cursor: auto;
+      }
+      .feedback-hint {
+        top: 1rem;
+        left: 50%;
+        align-items: center;
+        max-width: calc(100% - 2rem);
+        transform: translateX(-50%);
+      }
+      .feedback-box {
+        flex-direction: column;
+        width: 18rem;
+        max-width: calc(100% - 1rem);
+      }
+      .feedback-field {
+        box-sizing: border-box;
+        width: 100%;
+        font: inherit;
+        resize: vertical;
+      }
+      .feedback-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+      }
+      #board:has(.excalidraw.theme--dark) .feedback-hint,
+      #board:has(.excalidraw.theme--dark) .feedback-box {
+        color: #e3e3e8;
+        background: #232329;
+        border-color: #46464f;
+        color-scheme: dark;
+      }
+      /* A feedback in the chat's list, with its tag, how many shapes it covers, and Show. */
+      .transcript-feedback {
+        padding-left: 0.5rem;
+        border-left: 3px solid #e8590c;
+      }
+      .transcript-feedback-tag {
+        margin-left: 0.4rem;
+        font-size: 0.8rem;
+        color: #e8590c;
+      }
+      .transcript-feedback-shapes {
+        margin-right: 0.5rem;
+        font-size: 0.8rem;
+        color: var(--chalkline-muted);
+      }
     </style>
   </head>
   <body>
@@ -426,6 +543,7 @@
           >
             Chat
           </button>
+          <button id="feedback-button" class="chalkline-button" type="button" aria-pressed="false" hidden>Feedback</button>
           <button id="settings-button" class="chalkline-button" type="button">Connection settings</button>
         </div>
       </div>
@@ -434,6 +552,7 @@
     <div id="settings" hidden></div>
     <div id="board">
       <div id="app"></div>
+      <div id="feedback-layer"></div>
       <aside id="transcript" aria-label="Chat" hidden></aside>
     </div>
     <script type="module" src="./src/main.ts"></script>
