@@ -6,10 +6,10 @@ import type * as Y from 'yjs';
 import { answer, refusal } from './answer';
 import { addShapes, ELEMENTS, readBoard, ShapeError } from './board';
 import type { Creator } from './creator';
-import { connect, deleteShapes, updateShape } from './edit';
+import { connect, deleteShapes, reorderShapes, updateShape } from './edit';
 import { renderBoard, RenderError } from './render';
 import { pendingRequests, RequestError, waitForRequest, writeMermaidRequest } from './requests';
-import { boardShapeSchema, changeSchema, connectionSchema, deletionSchema, LISTED_POINTS, shapeSchema } from './shapes';
+import { boardShapeSchema, changeSchema, connectionSchema, deletionSchema, LISTED_POINTS, placeSchema, reorderSchema, shapeSchema } from './shapes';
 import { registerTranscript } from './transcript';
 
 /** A Mermaid request's state, as add_mermaid and get_request answer it. */
@@ -107,7 +107,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
     {
       title: 'Add shapes to the board',
       description: [
-        "Adds shapes to the board in Excalidraw's skeleton format, above the shapes on it, and answers each new shape's id, in the order of the call's shapes.",
+        "Adds shapes to the board in Excalidraw's skeleton format, and answers each new shape's id, in the order of the call's shapes.",
         'Each shape sets its type (rectangle, ellipse, diamond, text, arrow, line or freedraw), its x and its y, and may set an id.',
         'A rectangle, an ellipse or a diamond takes a width, a height and a label, and a text its text.',
         "A line's or an arrow's width and height say where it ends, from its x and y; or its points, each [x, y] from its x and y, say where it goes, so that one line or arrow draws a curve or a zigzag.",
@@ -118,11 +118,15 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         'Every shape may set strokeColor, strokeWidth (1, 2 or 4), strokeStyle (solid, dashed or dotted), fillStyle (solid, hachure, cross-hatch or zigzag), roughness (0, 1 or 2) and opacity (0 to 100), and a rectangle, an ellipse, a diamond or a line its backgroundColor.',
         "A text and a label may set fontFamily (Excalifont, Nunito, Comic Shanns or another of Excalidraw's fonts) and textAlign (left, center or right).",
         'Each new shape records the agent as its creator, which get_board lists.',
+        'The new shapes go in front of every shape on the board, each in front of the shapes before it in the call; place puts them at the back of the board instead, or just below or just above a shape that get_board lists, as {"below": id} or {"above": id}.',
+        'To draw a background behind shapes on the board, set place to {"below": id}, with id the first of those shapes that get_board lists, since it lists the board from back to front.',
+        'reorder_shapes moves shapes forward or back once they are on the board.',
       ].join(' '),
-      inputSchema: { shapes: z.array(shapeSchema).min(1) },
+      inputSchema: { shapes: z.array(shapeSchema).min(1), place: placeSchema.nullish() },
       outputSchema: { ids: z.array(z.string()) },
     },
-    ({ shapes }) => refusing(async () => answer({ ids: await addShapes(doc, shapes, creator()) })),
+    ({ shapes, place }) =>
+      refusing(async () => answer({ ids: await addShapes(doc, shapes, creator(), place ?? undefined) })),
   );
 
   server.registerTool(
@@ -170,6 +174,22 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       outputSchema: { ids: z.array(z.string()) },
     },
     ({ ids }) => refusing(async () => answer({ ids: deleteShapes(doc, ids) })),
+  );
+
+  server.registerTool(
+    'reorder_shapes',
+    {
+      title: 'Move shapes forward or back',
+      description: [
+        "Moves shapes forward or back in the board's stacking order, the order get_board lists the board in, from back to front, and answers their ids in their new order, back to front.",
+        'ids are the shapes to move, as get_board lists them.',
+        'place is where they go: "front", in front of every other shape; "back", behind every other shape; {"below": id}, just below the shape with that id; or {"above": id}, just above that shape and its label.',
+        "The moved shapes keep their order among themselves, whatever order ids lists them in, and a shape's label moves with it.",
+      ].join(' '),
+      inputSchema: reorderSchema.shape,
+      outputSchema: { ids: z.array(z.string()) },
+    },
+    ({ ids, place }) => refusing(async () => answer({ ids: reorderShapes(doc, ids, place) })),
   );
 
   server.registerTool(

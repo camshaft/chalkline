@@ -1,12 +1,12 @@
 // Runs the built chalkline-mcp as an agent client runs it: starts it over stdio on a new room's
 // link and checks the tools it lists. It adds a labelled rectangle and an ellipse with add_shapes,
-// connects them with a labelled arrow, moves the ellipse with update_shape, and asks for a Mermaid
-// diagram with add_mermaid, which answers pending since no page is in the new room. It reads the
-// request back with get_request, and the shapes, their creator and the pending request with
-// get_board, then deletes the arrow with delete_shapes and draws the board as a PNG with
-// render_board. It then reads the empty transcript as the resource chalkline://transcript,
-// subscribes to it, and checks that read_transcript refuses a cursor past the transcript's end. CI
-// runs it after the build.
+// moves the ellipse to the back with reorder_shapes, connects them with a labelled arrow, moves the
+// ellipse with update_shape, and asks for a Mermaid diagram with add_mermaid, which answers pending
+// since no page is in the new room. It reads the request back with get_request, and the shapes,
+// their order, their creator and the pending request with get_board, then deletes the arrow with
+// delete_shapes and draws the board as a PNG with render_board. It then reads the empty transcript
+// as the resource chalkline://transcript, subscribes to it, and checks that read_transcript refuses
+// a cursor past the transcript's end. CI runs it after the build.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -38,6 +38,7 @@ assert.deepEqual(tools.map((tool) => tool.name).sort(), [
   'get_request',
   'read_transcript',
   'render_board',
+  'reorder_shapes',
   'update_shape',
 ]);
 
@@ -48,6 +49,8 @@ const added = await call('add_shapes', {
   ],
 });
 const [id, next] = added.ids;
+const back = await call('reorder_shapes', { ids: [next], place: 'back' });
+assert.deepEqual(back.ids, [next]);
 
 const { id: arrow } = await call('connect', { start: id, end: next, label: { text: 'then' } });
 const moved = await call('update_shape', { id: next, y: 200 });
@@ -60,6 +63,7 @@ assert.equal(request.status, 'pending');
 
 const board = await call('get_board', {});
 const byId = (shapes, wanted) => shapes.find((candidate) => candidate.id === wanted);
+assert.deepEqual(board.shapes.map((candidate) => candidate.id), [next, id, arrow]);
 const shape = byId(board.shapes, id);
 assert.equal(shape?.kind, 'rectangle');
 assert.equal(shape?.label, 'Smoke test');
