@@ -337,6 +337,101 @@ describe('lines and arrows of add_shapes', () => {
     });
   });
 
+  it('draws an arrow that sets start and end and none of width, height and points from the edge of one shape to the edge of the other', async () => {
+    const { network, elements, client } = await board();
+    const [between, curved] = ids(
+      await call(client, 'add_shapes', {
+        shapes: [
+          { type: 'arrow', x: 120, y: 30, start: 'ask', end: 'answer', label: { text: 'yes' } },
+          { type: 'arrow', x: 100, y: 25, points: [[0, 0], [100, -40], [200, 0]], start: 'ask', end: 'answer' },
+          { type: 'rectangle', id: 'ask', x: 0, y: 0, width: 100, height: 50 },
+          { type: 'rectangle', id: 'answer', x: 300, y: 0, width: 100, height: 50 },
+        ],
+      }),
+    );
+
+    network.flush();
+    // It runs from 5 right of the right edge of ask to 5 left of the left edge of answer, along the
+    // line between their centers, whatever its x and y; the converter moves each end of an arrow
+    // bound at both ends 0.5 toward the other end.
+    expect(elements.get(between)).toMatchObject({
+      type: 'arrow',
+      x: 105,
+      y: 25,
+      width: 190,
+      height: 0,
+      points: [
+        [0.5, 0],
+        [189.5, 0],
+      ],
+      startBinding: { elementId: 'ask' },
+      endBinding: { elementId: 'answer' },
+    });
+    const label = [...elements.values()].find((element) => element.containerId === between);
+    expect(label).toMatchObject({ type: 'text', originalText: 'yes' });
+    expect(Number(label?.x) + Number(label?.width) / 2).toBeCloseTo(200, 0);
+    expect(Number(label?.y) + Number(label?.height) / 2).toBeCloseTo(25, 0);
+    expect(elements.get(between)?.boundElements).toContainEqual({ id: label?.id, type: 'text' });
+    // An arrow through its points keeps them.
+    expect(elements.get(curved)).toMatchObject({
+      type: 'arrow',
+      x: 100,
+      y: 25,
+      points: [
+        [0.5, 0.5],
+        [100, -40],
+        [199.5, -0.5],
+      ],
+      startBinding: { elementId: 'ask' },
+      endBinding: { elementId: 'answer' },
+    });
+    for (const shape of ['ask', 'answer']) {
+      expect(elements.get(shape)?.boundElements).toEqual(
+        expect.arrayContaining([
+          { id: between, type: 'arrow' },
+          { id: curved, type: 'arrow' },
+        ]),
+      );
+    }
+    expect(shapes(await call(client, 'get_board')).find((shape) => shape.id === between)).toMatchObject({
+      kind: 'arrow',
+      x: 105,
+      y: 25,
+      width: 189,
+      height: 0,
+      points: [
+        [0.5, 0],
+        [189.5, 0],
+      ],
+      label: 'yes',
+      start: 'ask',
+      end: 'answer',
+    });
+  });
+
+  it('draws an arrow that leaves out its x and y between a text and an ellipse as connect draws one, and leaves the text where it is', async () => {
+    const note = { type: 'text', id: 'note', x: 0, y: 0, text: 'Note' };
+    const oval = { type: 'ellipse', id: 'oval', x: 300, y: 200, width: 100, height: 80 };
+    const added = await board();
+    const [arrow] = ids(await call(added.client, 'add_shapes', { shapes: [{ type: 'arrow', start: 'note', end: 'oval' }, note, oval] }));
+    const connected = await board();
+    ids(await call(connected.client, 'add_shapes', { shapes: [note, oval] }));
+    const connection = await call(connected.client, 'connect', { start: 'note', end: 'oval' });
+    expect(connection.isError, JSON.stringify(connection.content)).not.toBe(true);
+    const { id } = connection.structuredContent as { id: string };
+
+    added.network.flush();
+    connected.network.flush();
+    const fields = ['x', 'y', 'width', 'height', 'points', 'startBinding', 'endBinding'];
+    const geometry = (element: Element | undefined) => Object.fromEntries(fields.map((field) => [field, element?.[field]]));
+    expect(geometry(added.elements.get(arrow))).toEqual(geometry(connected.elements.get(id)));
+    expect(added.elements.get(arrow)).toMatchObject({ startBinding: { elementId: 'note' }, endBinding: { elementId: 'oval' } });
+    expect(added.elements.get('note')).toMatchObject({ x: 0, y: 0 });
+    for (const shape of ['note', 'oval']) {
+      expect(added.elements.get(shape)?.boundElements).toContainEqual({ id: arrow, type: 'arrow' });
+    }
+  });
+
   it("draws a line of height 0 straight across, and a line that leaves out its width or its height at Excalidraw's default", async () => {
     const { network, elements, client } = await board();
     const [across, unsized, left] = ids(
@@ -546,6 +641,43 @@ describe('add_shapes refusals', () => {
         'shapes[0].closed is true, and the line has fewer than three points: a closed line needs points, three or more, that enclose the shape it fills.',
       );
     }
+    network.flush();
+    expect(elements.size).toBe(0);
+  });
+
+  it("refuses an arrow that leaves out its x or its y and doesn't run between two shapes, and adds nothing", async () => {
+    const { network, elements, client } = await board();
+    const cases: [Record<string, unknown>, string][] = [
+      [{ type: 'arrow', y: 0, width: 10, height: 10 }, 'x'],
+      [{ type: 'arrow', x: 0, start: 'a' }, 'y'],
+      [{ type: 'arrow', x: 0, start: 'a', end: 'b', width: 50 }, 'y'],
+    ];
+    for (const [arrow, field] of cases) {
+      const result = await call(client, 'add_shapes', {
+        shapes: [arrow, { type: 'rectangle', id: 'a', x: 0, y: 0 }, { type: 'rectangle', id: 'b', x: 200, y: 0 }],
+      });
+      expect(result.isError).toBe(true);
+      expect(text(result)).toBe(
+        `shapes[0] leaves out ${field}: an arrow needs its x and y, unless it sets start and end and none of width, height and points, so that it runs between those two shapes.`,
+      );
+    }
+    network.flush();
+    expect(elements.size).toBe(0);
+  });
+
+  it('refuses an arrow between two shapes of one center, and adds nothing', async () => {
+    const { network, elements, client } = await board();
+    const result = await call(client, 'add_shapes', {
+      shapes: [
+        { type: 'arrow', start: 'a', end: 'b' },
+        { type: 'rectangle', id: 'a', x: 0, y: 0, width: 100, height: 50 },
+        { type: 'ellipse', id: 'b', x: 25, y: 5, width: 50, height: 40 },
+      ],
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toBe(
+      'shapes[0] starts at "a" and ends at "b", which have one center, so an arrow between them has no direction: give the arrow its x and y, and a width and a height or points.',
+    );
     network.flush();
     expect(elements.size).toBe(0);
   });

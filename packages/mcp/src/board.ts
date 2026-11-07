@@ -2,9 +2,10 @@ import { randomBytes, randomInt } from 'node:crypto';
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type * as Y from 'yjs';
 import { creatorOf, withCreator, type Creator } from './creator';
+import { arrowPoints, outlineOf } from './geometry';
 import { fractionalIndex, indicesOver, indicesUnder } from './order';
 import { DEFAULT_FONT, DEFAULT_STYLE, FONT_FAMILY, LISTED_POINTS, type BoardShape, type FontName, type Place, type Shape } from './shapes';
-import { convertSkeletons, loadExcalidraw, type Excalidraw, type Skeleton } from './skeleton';
+import { convertSkeletons, loadExcalidraw, type ConvertedElement, type Excalidraw, type Skeleton } from './skeleton';
 
 /** The shared map that holds the board's elements by id, as the page keeps them. */
 export const ELEMENTS = 'elements';
@@ -19,6 +20,7 @@ const STROKES: ReadonlySet<string> = new Set(['line', 'arrow', 'freedraw']);
 type Point = [number, number];
 
 type Freedraw = Extract<Shape, { type: 'freedraw' }>;
+type Arrow = Extract<Shape, { type: 'arrow' }>;
 
 /** A refusal of a tool's call on the board's shapes, whose message says what to change. */
 export class ShapeError extends Error {
@@ -139,11 +141,13 @@ export function newId(): string {
  * shapes before it in `shapes`, as indicesAt places them. A shape keeps the id it sets, and a shape
  * that leaves it out gets a random one. Each element it adds, a shape's label among them, records
  * `creator`, where given, as its creator, and goes into the group `group`, where given, as
- * Excalidraw groups elements. Throws a ShapeError, and adds nothing, where two shapes set one id,
- * a shape sets an id the board holds already, an arrow's start or end isn't a rectangle, an
- * ellipse, a diamond or a text of the same call, a line or an arrow sets both points and a width
- * or a height, a closed line has fewer than three points, or `where` names a shape that indicesAt
- * refuses.
+ * Excalidraw groups elements. An arrow that sets start and end and none of width, height and points
+ * runs between those two shapes, as laidBetween lays it out, whatever its x and y. Throws a
+ * ShapeError, and adds nothing, where two shapes set one id, a shape sets an id the board holds
+ * already, an arrow's start or end isn't a rectangle, an ellipse, a diamond or a text of the same
+ * call, a line or an arrow sets both points and a width or a height, a closed line has fewer than
+ * three points, an arrow leaves out its x or its y and doesn't run between two shapes, the two
+ * shapes an arrow runs between have one center, or `where` names a shape that indicesAt refuses.
  */
 export async function addShapes(
   doc: Y.Doc,
@@ -188,6 +192,11 @@ export async function addShapes(
         `shapes[${place}] sets both points and ${shape.width === undefined ? 'height' : 'width'}: a line or an arrow through points gets its size from them, so leave out its width and height.`,
       );
     }
+    if (shape.type === 'arrow' && !between(shape) && (shape.x === undefined || shape.y === undefined)) {
+      throw new ShapeError(
+        `shapes[${place}] leaves out ${shape.x === undefined ? 'x' : 'y'}: an arrow needs its x and y, unless it sets start and end and none of width, height and points, so that it runs between those two shapes.`,
+      );
+    }
     if (shape.type === 'line' && shape.closed === true && (shape.points?.length ?? 0) < 3) {
       throw new ShapeError(
         `shapes[${place}].closed is true, and the line has fewer than three points: a closed line needs points, three or more, that enclose the shape it fills.`,
@@ -196,15 +205,14 @@ export async function addShapes(
   });
 
   const excalidraw = await loadExcalidraw();
-  const elements = await convertSkeletons(
-    shapes.map((shape, place) => skeleton(shape, ids[place], excalidraw)),
-    { regenerateIds: false },
-  );
+  const skeletons = shapes.map((shape, place) => skeleton(shape, ids[place], excalidraw));
+  const converted = await convertSkeletons(skeletons, { regenerateIds: false });
   for (const id of ids) {
-    if (!elements.some((element) => element.id === id)) {
-      throw new Error(`convertToExcalidrawElements didn't make the shape ${id}: ${JSON.stringify(elements)}`);
+    if (!converted.some((element) => element.id === id)) {
+      throw new Error(`convertToExcalidrawElements didn't make the shape ${id}: ${JSON.stringify(converted)}`);
     }
   }
+  const elements = await laidBetween(shapes, ids, skeletons, converted);
   const indices = indicesAt(shared, where, elements.length);
   doc.transact(() => {
     elements.forEach((element, place) => {
@@ -219,7 +227,10 @@ export async function addShapes(
 /**
  * The skeleton that `convertToExcalidrawElements` reads for `shape`, with the id `id`. A freehand
  * stroke's skeleton is the whole element, which convertToExcalidrawElements adds as it is. A text's
- * and a label's font is the number Excalidraw's element holds instead of the font's name.
+ * and a label's font is the number Excalidraw's element holds instead of the font's name. An arrow
+ * that runs between its start and end, as `between` says, binds to neither here, at its x and y or
+ * at 0 where it leaves them out: laidBetween lays it out and binds it once its shapes are
+ * converted, since convertToExcalidrawElements moves a text that an arrow binds to by its id.
  */
 function skeleton(shape: Shape, id: string, excalidraw: Excalidraw): Skeleton {
   if (shape.type === 'freedraw') return freedraw(shape, id, excalidraw) as unknown as Skeleton;
@@ -231,14 +242,92 @@ function skeleton(shape: Shape, id: string, excalidraw: Excalidraw): Skeleton {
   const label = 'label' in shape && shape.label !== undefined ? { label: { ...shape.label, ...fontNumber(shape.label) } } : {};
   if (shape.type !== 'arrow') return { ...shape, ...font, ...label, id } as unknown as Skeleton;
   const { start, end, points, ...arrow } = shape;
+  const ends = between(shape)
+    ? {}
+    : { ...(start === undefined ? {} : { start: { id: start } }), ...(end === undefined ? {} : { end: { id: end } }) };
   return {
     ...arrow,
     ...label,
-    ...linear(arrow, points, false),
+    ...linear({ ...arrow, x: arrow.x ?? 0, y: arrow.y ?? 0 }, points, false),
     id,
-    ...(start === undefined ? {} : { start: { id: start } }),
-    ...(end === undefined ? {} : { end: { id: end } }),
+    ...ends,
   } as unknown as Skeleton;
+}
+
+/**
+ * Whether the arrow `shape` runs between the shapes its start and end name, from the edge of one
+ * to the edge of the other, as connect draws an arrow: where it sets start and end and none of
+ * width, height and points.
+ */
+function between(shape: Shape): shape is Arrow & { start: string; end: string } {
+  return (
+    shape.type === 'arrow' &&
+    shape.start !== undefined &&
+    shape.end !== undefined &&
+    shape.width === undefined &&
+    shape.height === undefined &&
+    shape.points === undefined
+  );
+}
+
+/**
+ * `elements`, which convertToExcalidrawElements made of `skeletons`, the skeletons of `shapes` with
+ * the ids `ids`, with each arrow that runs between its start and end, as `between` says, laid out
+ * as connect lays out its arrow: along the line between the centers of its two shapes, from GAP
+ * beyond the outline of its start to GAP short of the outline of its end, bound to both, with its
+ * label in its middle. The arrow and its label take the places of the ones `elements` holds, and
+ * each of the two shapes lists the arrow among its bound elements. Throws a ShapeError where the
+ * two shapes have one center, so that the arrow has no direction.
+ */
+async function laidBetween(
+  shapes: readonly Shape[],
+  ids: readonly string[],
+  skeletons: readonly Skeleton[],
+  elements: readonly ConvertedElement[],
+): Promise<ConvertedElement[]> {
+  let laid = [...elements];
+  for (const [place, shape] of shapes.entries()) {
+    if (!between(shape)) continue;
+    const id = ids[place];
+    const start = laid.find((element) => element.id === shape.start);
+    const end = laid.find((element) => element.id === shape.end);
+    if (start === undefined || end === undefined) continue;
+    const segment = arrowPoints(outlineOf(start), outlineOf(end));
+    if (segment === null) {
+      throw new ShapeError(
+        `shapes[${place}] starts at "${shape.start}" and ends at "${shape.end}", which have one center, so an arrow between them has no direction: give the arrow its x and y, and a width and a height or points.`,
+      );
+    }
+    const { from, to } = segment;
+    const arrow = {
+      ...skeletons[place],
+      x: from.x,
+      y: from.y,
+      width: Math.abs(to.x - from.x),
+      height: Math.abs(to.y - from.y),
+      points: [
+        [0, 0],
+        [to.x - from.x, to.y - from.y],
+      ],
+      start: { id: start.id },
+      end: { id: end.id },
+    };
+    // Copies of the two shapes' outlines, which the converter binds the arrow to, as connect's are.
+    const copies = [start, end].map((bound) => ({ ...outlineOf(bound), id: bound.id }));
+    const relaid = await convertSkeletons([arrow, ...copies] as unknown as Skeleton[], { regenerateIds: false });
+    laid = laid.flatMap((element): ConvertedElement[] => {
+      if (element.id === id) return relaid.filter((drawn) => drawn.id === id);
+      if (isLabelOf(element, id)) return relaid.filter((drawn) => isLabelOf(drawn, id));
+      if (element.id !== start.id && element.id !== end.id) return [element];
+      return [{ ...element, boundElements: [...(element.boundElements ?? []), { id, type: 'arrow' as const }] } as ConvertedElement];
+    });
+  }
+  return laid;
+}
+
+/** Whether `element` is the label of the element with the id `id`. */
+function isLabelOf(element: ConvertedElement, id: string): boolean {
+  return element.type === 'text' && 'containerId' in element && element.containerId === id;
 }
 
 /** The width and height that convertToExcalidrawElements uses for a line or an arrow that leaves either out. */
