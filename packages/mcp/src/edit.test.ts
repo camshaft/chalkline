@@ -367,19 +367,19 @@ describe('update_shape', () => {
       ],
       [
         { id: 'scribble', x: 1 },
-        `"scribble" is a freedraw, which update_shape doesn't change: it changes rectangles, ellipses, diamonds, texts, arrows, lines and frames.`,
+        `"scribble" is a freedraw, of which update_shape changes only the link: it changes rectangles, ellipses, diamonds, texts, arrows, lines and frames, and the link of any shape.`,
       ],
       [
         { id: 'box' },
-        `The call doesn't change "box": give a rectangle's x, y, width, height, label, strokeColor and backgroundColor, or some of them.`,
+        `The call doesn't change "box": give a rectangle's x, y, width, height, label, strokeColor, backgroundColor and link, or some of them.`,
       ],
       [
         { id: 'box', x: null },
-        `The call doesn't change "box": give a rectangle's x, y, width, height, label, strokeColor and backgroundColor, or some of them.`,
+        `The call doesn't change "box": give a rectangle's x, y, width, height, label, strokeColor, backgroundColor and link, or some of them.`,
       ],
       [
         { id: 'note', backgroundColor: '#ffffff' },
-        `backgroundColor doesn't apply to a text, such as "note": update_shape changes its x, y, text, fontSize and strokeColor.`,
+        `backgroundColor doesn't apply to a text, such as "note": update_shape changes its x, y, text, fontSize, strokeColor and link.`,
       ],
       [{ id: 'box', width: 0 }, `width is 0: a rectangle's width is above 0.`],
       [
