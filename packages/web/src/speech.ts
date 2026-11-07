@@ -179,6 +179,13 @@ export interface Speech {
   agree(): Promise<void>;
   /** The person declines the question: speech stays off. */
   decline(): void;
+  /**
+   * The page starts to speak: recognition stops, so that it doesn't hear the page's voice, and doesn't start
+   * again until `resume`. Speech stays on, in its state.
+   */
+  pause(): void;
+  /** The page stops speaking: the recognition `pause` stopped starts again, where speech is still on. */
+  resume(): void;
 }
 
 /** The one error after which the browser goes on listening once it starts again: a silence. */
@@ -203,6 +210,10 @@ export function speechControl(options: SpeechOptions): Speech {
   // after the person turned speech off again doesn't go on.
   let turn = 0;
   let recognition: Recognition | null = null;
+  // While the page speaks, recognition doesn't start again, and the recognition the browser ended meanwhile
+  // waits here for `resume` to start it.
+  let paused = false;
+  let waiting: Recognition | null = null;
 
   const set = (next: SpeechState) => {
     state = next;
@@ -240,6 +251,11 @@ export function speechControl(options: SpeechOptions): Speech {
     };
     listener.onend = () => {
       if (recognition !== listener) return;
+      if (failure === null && paused) {
+        started = false;
+        waiting = listener;
+        return;
+      }
       if (failure === null && started) {
         started = false;
         try {
@@ -317,6 +333,24 @@ export function speechControl(options: SpeechOptions): Speech {
       if (state.kind !== 'asking') return;
       turn += 1;
       set({ kind: 'off' });
+    },
+    pause() {
+      if (paused) return;
+      paused = true;
+      recognition?.stop();
+    },
+    resume() {
+      paused = false;
+      const listener = waiting;
+      waiting = null;
+      // Where the browser hasn't ended the stopped recognition yet, its end starts it again, as after a silence.
+      if (listener === null || recognition !== listener) return;
+      try {
+        listener.start();
+      } catch (error) {
+        recognition = null;
+        set({ kind: 'off', error: errorText(error instanceof Error ? error.message : String(error), lang) });
+      }
     },
   };
 }

@@ -332,6 +332,114 @@ describe('speechControl', () => {
     expect(made).toHaveLength(1);
   });
 
+  it('stops while the page speaks, keeps its state, and starts again only once the page resumes it', async () => {
+    const { Class, made } = fakeClass();
+    const { speech, transcript } = control(Class);
+    await listening(speech);
+    const [listener] = made;
+    listener.begin();
+
+    speech.pause();
+    speech.pause();
+    expect(listener.stops).toBe(1);
+    // The words the browser heard before the pause still go on the transcript.
+    listener.hear(0, ['draw a box', true]);
+    listener.end();
+    expect(listener.starts).toBe(1);
+    expect(speech.state()).toMatchObject({ kind: 'listening' });
+
+    speech.resume();
+    expect(listener.starts).toBe(2);
+    expect(made).toHaveLength(1);
+    expect(readTranscript(transcript).map(({ text }) => text)).toEqual(['draw a box']);
+    speech.resume();
+    expect(listener.starts).toBe(2);
+  });
+
+  it("starts again at the browser's end where the page resumes before the browser ends the paused recognition", async () => {
+    const { Class, made } = fakeClass();
+    const { speech } = control(Class);
+    await listening(speech);
+    const [listener] = made;
+    listener.begin();
+
+    speech.pause();
+    speech.resume();
+    expect(listener.starts).toBe(1);
+    listener.end();
+
+    expect(listener.starts).toBe(2);
+    expect(speech.state()).toMatchObject({ kind: 'listening' });
+  });
+
+  it('turns off where the browser ends the recognition the page started again before it starts', async () => {
+    const { Class, made } = fakeClass();
+    const { speech } = control(Class);
+    await listening(speech);
+    const [listener] = made;
+    listener.begin();
+
+    speech.pause();
+    listener.end();
+    speech.resume();
+    expect(listener.starts).toBe(2);
+    listener.end();
+
+    expect(listener.starts).toBe(2);
+    expect(speech.state()).toEqual({
+      kind: 'off',
+      error: 'Speech stopped: the browser ended recognition before it started.',
+    });
+  });
+
+  it('turns off and says why where an error ends recognition while the page speaks', async () => {
+    const { Class, made } = fakeClass();
+    const { speech } = control(Class);
+    await listening(speech);
+    const [listener] = made;
+    listener.begin();
+
+    speech.pause();
+    listener.fail('network');
+    listener.end();
+    expect(speech.state()).toEqual({ kind: 'off', error: "Speech stopped: the browser couldn't reach its speech service." });
+
+    speech.resume();
+    expect(listener.starts).toBe(1);
+  });
+
+  it("doesn't start again where the person turns speech off while the page speaks", async () => {
+    const { Class, made } = fakeClass();
+    const { speech } = control(Class);
+    await listening(speech);
+    const [listener] = made;
+    listener.begin();
+
+    speech.pause();
+    listener.end();
+    await speech.toggle();
+    speech.resume();
+
+    expect(listener.starts).toBe(1);
+    expect(speech.state()).toEqual({ kind: 'off' });
+  });
+
+  it('turns off and says why where the browser refuses to start again after the page speaks', async () => {
+    const { Class, made } = fakeClass();
+    const { speech } = control(Class);
+    await listening(speech);
+    const [listener] = made;
+    listener.begin();
+
+    speech.pause();
+    listener.end();
+    listener.refusal = new Error('already started');
+    speech.resume();
+
+    expect(listener.starts).toBe(1);
+    expect(speech.state()).toEqual({ kind: 'off', error: 'Speech stopped: the browser reported "already started".' });
+  });
+
   it('turns off and says why after any other error', async () => {
     const { Class, made } = fakeClass();
     const { speech } = control(Class);
