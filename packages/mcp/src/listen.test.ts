@@ -2,7 +2,7 @@ import { appendEntry, connectDoc, MemoryNetwork, transcriptOf, type TranscriptEn
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { ELEMENTS } from './board';
-import { withChange, withCreator, type Creator } from './creator';
+import { withChange, withCreator, withWordsChanged, type Creator } from './creator';
 import {
   BOARD_PAUSE_MS,
   listen,
@@ -420,6 +420,27 @@ describe('listenTexts', () => {
       { at: at(6), kind: 'text', text: 'Begin' },
       { at: at(10), kind: 'text', text: 'The box is green' },
       { at: at(20), kind: 'text', text: 'The box is blue' },
+    ]);
+  });
+
+  it("leaves out a person's text that a page moved before the listener first receives it, by its words mark, and prints a later change of its words", () => {
+    const { elements, lines } = watching<Written>(listenTexts);
+    // A person writes a note before the start and another after it, and moves each after the start;
+    // the page's binding keeps on the board's copy of each the time its words last changed.
+    const note = withWordsChanged(text('note', 'draw a box', -5), undefined);
+    const moved = withWordsChanged(edited(note, { x: 40 }, 5), note);
+    const label = withWordsChanged(text('label', 'label the box', 3), undefined);
+    // A peer's copy of the board brings only the moved copy of each.
+    elements.set('note', moved);
+    elements.set('label', withWordsChanged(edited(label, { x: 40 }, 4), label));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(3), kind: 'text', text: 'label the box' }]);
+
+    elements.set('note', withWordsChanged(edited(moved, words('draw a circle'), 10), moved));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([
+      { at: at(3), kind: 'text', text: 'label the box' },
+      { at: at(10), kind: 'text', text: 'draw a circle' },
     ]);
   });
 
