@@ -15,6 +15,7 @@
     "@chalkline/mcp": "*",
     "@chalkline/sync": "*",
     "@excalidraw/excalidraw": "^0.18.1",
+    "@excalidraw/mermaid-to-excalidraw": "^2.2.2",
     "@trystero-p2p/nostr": "0.26.0",
     "global-jsdom": "^30.0.0",
     "jsdom": "^30.0.1",
