@@ -6,6 +6,7 @@ import {
   getFeedback,
   listFeedback,
   readFeedback,
+  reopenFeedback,
   writeFeedback,
   type Feedback,
   type FeedbackAnswer,
@@ -22,6 +23,7 @@ const feedback = (id: string, at = '2026-11-07T01:02:03.000Z'): Feedback => ({
   shapes: ['box-1', 'arrow-2'],
   status: 'open',
   answer: null,
+  reopened: null,
 });
 
 const answer = (text = 'moved the two boxes left'): FeedbackAnswer => ({
@@ -29,6 +31,9 @@ const answer = (text = 'moved the two boxes left'): FeedbackAnswer => ({
   at: '2026-11-07T01:05:00.000Z',
   text,
 });
+
+/** When a person reopens the feedback in these tests. */
+const REOPENED = '2026-11-07T01:07:00.000Z';
 
 function join(network: MemoryNetwork, id: string): Y.Doc {
   const doc = new Y.Doc();
@@ -40,7 +45,7 @@ describe('readFeedback', () => {
   it('reads an open feedback, an answered one and a reopened one that keeps its answer', () => {
     const open = feedback('one');
     const answered: Feedback = { ...open, status: 'answered', answer: answer() };
-    const reopened: Feedback = { ...answered, status: 'open' };
+    const reopened: Feedback = { ...answered, status: 'open', reopened: REOPENED };
 
     expect(readFeedback(open)).toEqual(open);
     expect(readFeedback(answered)).toEqual(answered);
@@ -51,7 +56,7 @@ describe('readFeedback', () => {
     expect(readFeedback({ ...feedback('one'), shapes: [] })?.shapes).toEqual([]);
   });
 
-  it('reads the eight fields, and leaves out the others, in the region and the answer too', () => {
+  it('reads the nine fields, and leaves out the others, in the region and the answer too', () => {
     const value = {
       ...feedback('one'),
       status: 'answered',
@@ -72,7 +77,7 @@ describe('readFeedback', () => {
     expect(value).toEqual(feedback('one'));
   });
 
-  it('reads a value that lacks one of the eight fields as null', () => {
+  it('reads a value that lacks one of the eight fields other than `reopened` as null', () => {
     for (const field of ['id', 'by', 'at', 'text', 'region', 'shapes', 'status', 'answer']) {
       const value: Record<string, unknown> = { ...feedback('one') };
       delete value[field];
@@ -116,6 +121,26 @@ describe('readFeedback', () => {
   it("reads a value whose time, or whose answer's time, doesn't parse as null", () => {
     expect(readFeedback({ ...feedback('one'), at: 'yesterday' })).toBeNull();
     expect(readFeedback({ ...feedback('one'), status: 'answered', answer: { ...answer(), at: 'just now' } })).toBeNull();
+  });
+
+  it("reads a value that lacks `reopened`, as a page that doesn't record when a person reopens a feedback writes it, with `reopened` null", () => {
+    const answered: Feedback = { ...feedback('one'), status: 'answered', answer: answer() };
+    const value: Record<string, unknown> = { ...answered, status: 'open' };
+    delete value.reopened;
+    const reopened: Feedback = { ...answered, status: 'open', reopened: null };
+
+    expect(readFeedback(value)).toEqual(reopened);
+    expect(readFeedback({ ...answered, reopened: undefined })).toEqual(answered);
+    const map = feedbackOf(new Y.Doc());
+    map.set('one', value);
+    expect(getFeedback(map, 'one')).toEqual(reopened);
+    expect(listFeedback(map)).toEqual([reopened]);
+  });
+
+  it("reads a value whose `reopened` isn't null or a time that parses as null", () => {
+    for (const reopened of [1762477620000, '', '  ', 'just now', { at: REOPENED }, [REOPENED]]) {
+      expect(readFeedback({ ...feedback('one'), reopened }), JSON.stringify(reopened)).toBeNull();
+    }
   });
 
   it("reads a value that isn't an object as null", () => {
@@ -251,6 +276,74 @@ describe('answerFeedback', () => {
   });
 });
 
+describe('reopenFeedback', () => {
+  it('sets an answered feedback open with the time of the reopen, keeps its answer, and returns the record as it then stands', () => {
+    const doc = new Y.Doc();
+    const map = feedbackOf(doc);
+    writeFeedback(map, { ...feedback('one'), status: 'answered', answer: answer() });
+
+    const reopened: Feedback = { ...feedback('one'), status: 'open', answer: answer(), reopened: REOPENED };
+    expect(reopenFeedback(map, 'one', REOPENED)).toEqual(reopened);
+    expect(map.toJSON()).toEqual({ one: reopened });
+  });
+
+  it('sets the time again at each reopen, and an answer keeps it', () => {
+    const doc = new Y.Doc();
+    const map = feedbackOf(doc);
+    writeFeedback(map, { ...feedback('one'), status: 'answered', answer: answer('first') });
+    reopenFeedback(map, 'one', REOPENED);
+
+    expect(answerFeedback(map, 'one', answer('second'))?.reopened).toBe(REOPENED);
+    const later = '2026-11-07T01:09:00.000Z';
+    expect(reopenFeedback(map, 'one', later)).toEqual({
+      ...feedback('one'),
+      status: 'open',
+      answer: answer('second'),
+      reopened: later,
+    });
+    expect(getFeedback(map, 'one')?.reopened).toBe(later);
+  });
+
+  it("returns the record of a feedback open already as it stands, and doesn't change it", () => {
+    const doc = new Y.Doc();
+    const map = feedbackOf(doc);
+    const open: Feedback = { ...feedback('one'), answer: answer(), reopened: REOPENED };
+    writeFeedback(map, open);
+    const updates: Uint8Array[] = [];
+    doc.on('update', (update: Uint8Array) => updates.push(update));
+
+    expect(reopenFeedback(map, 'one', '2026-11-07T01:09:00.000Z')).toEqual(open);
+    expect(updates).toEqual([]);
+    expect(getFeedback(map, 'one')).toEqual(open);
+  });
+
+  it("returns null for an id the map doesn't hold, a malformed value or a value under another id, and doesn't write anything", () => {
+    const doc = new Y.Doc();
+    const map = feedbackOf(doc);
+    map.set('broken', { id: 'broken', status: 'answered' });
+    map.set('moved', { ...feedback('elsewhere'), status: 'answered', answer: answer() });
+    const before = map.toJSON();
+    const updates: Uint8Array[] = [];
+    doc.on('update', (update: Uint8Array) => updates.push(update));
+
+    for (const id of ['missing', 'broken', 'moved']) expect(reopenFeedback(map, id, REOPENED), id).toBeNull();
+    expect(updates).toEqual([]);
+    expect(map.toJSON()).toEqual(before);
+  });
+
+  it("throws on a time that doesn't parse, and leaves the feedback answered", () => {
+    const doc = new Y.Doc();
+    const map = feedbackOf(doc);
+    const answered: Feedback = { ...feedback('one'), status: 'answered', answer: answer() };
+    writeFeedback(map, answered);
+
+    for (const bad of ['', '  ', 'soon']) {
+      expect(() => reopenFeedback(map, 'one', bad), JSON.stringify(bad)).toThrow(TypeError);
+    }
+    expect(getFeedback(map, 'one')).toEqual(answered);
+  });
+});
+
 describe('feedback between peers', () => {
   it("reaches every peer, and a peer's answer reaches the writer", () => {
     const network = new MemoryNetwork();
@@ -266,6 +359,20 @@ describe('feedback between peers', () => {
     const answered: Feedback = { ...feedback('one'), status: 'answered', answer: answer() };
     expect(getFeedback(feedbackOf(page), 'one')).toEqual(answered);
     expect(getFeedback(feedbackOf(helper), 'one')).toEqual(answered);
+  });
+
+  it('sends a reopen and its time to every peer', () => {
+    const network = new MemoryNetwork();
+    const [page, helper] = ['page', 'helper'].map((id) => join(network, id));
+    network.flush();
+    writeFeedback(feedbackOf(helper), { ...feedback('one'), status: 'answered', answer: answer() });
+    network.flush();
+
+    reopenFeedback(feedbackOf(page), 'one', REOPENED);
+    network.flush();
+    const reopened: Feedback = { ...feedback('one'), status: 'open', answer: answer(), reopened: REOPENED };
+    expect(getFeedback(feedbackOf(page), 'one')).toEqual(reopened);
+    expect(getFeedback(feedbackOf(helper), 'one')).toEqual(reopened);
   });
 
   it('ends two writes of one feedback at the same time in the one Yjs orders last, in every copy', () => {
