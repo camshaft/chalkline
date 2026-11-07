@@ -1,14 +1,9 @@
 import { appendEntry, newEntryId, readEntry, transcriptOf, type TranscriptEntry } from '@chalkline/sync';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import {
-  ErrorCode,
-  McpError,
-  SubscribeRequestSchema,
-  UnsubscribeRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type * as Y from 'yjs';
 import { answer, refusal } from './answer';
+import { subscriptionsOf } from './subscriptions';
 
 /** The address of the transcript's MCP resource. */
 export const TRANSCRIPT_URI = 'chalkline://transcript';
@@ -29,8 +24,11 @@ const entrySchema = z.object({
   via: z.enum(['speech', 'typed', 'agent']),
 });
 
-/** The speaker of the agent's posts: its client, by the name it gave as it connected. */
-function agentName(server: McpServer): string {
+/**
+ * The agent's name: its client's, by the name it gave as it connected, which the agent's posts list
+ * as their speaker and its answers to feedback as their writer.
+ */
+export function agentName(server: McpServer): string {
   const name = server.server.getClientVersion()?.name;
   return name !== undefined && name.trim() !== '' ? name : 'chalkline-mcp';
 }
@@ -181,28 +179,10 @@ export function registerTranscript(server: McpServer, doc: Y.Doc): TranscriptLog
     (uri) => ({ contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(log.after(0)) }] }),
   );
 
-  let subscribed = false;
-  const offered = (uri: string): void => {
-    if (uri !== TRANSCRIPT_URI) {
-      throw new McpError(ErrorCode.InvalidParams, `${uri} isn't a resource of the helper's: subscribe to ${TRANSCRIPT_URI}.`);
-    }
-  };
-  server.server.registerCapabilities({ resources: { subscribe: true } });
-  server.server.setRequestHandler(SubscribeRequestSchema, ({ params }) => {
-    offered(params.uri);
-    subscribed = true;
-    return {};
-  });
-  server.server.setRequestHandler(UnsubscribeRequestSchema, ({ params }) => {
-    offered(params.uri);
-    subscribed = false;
-    return {};
-  });
+  const subscriptions = subscriptionsOf(server);
+  subscriptions.offer(TRANSCRIPT_URI);
   log.onAppend(() => {
-    if (!subscribed) return;
-    server.server.sendResourceUpdated({ uri: TRANSCRIPT_URI }).catch((error: unknown) => {
-      console.error("the transcript's notification failed:", error);
-    });
+    subscriptions.updated(TRANSCRIPT_URI, "the transcript's notification");
   });
 
   return log;
