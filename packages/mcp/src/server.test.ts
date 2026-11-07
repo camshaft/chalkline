@@ -16,7 +16,7 @@ import * as Y from 'yjs';
 import { ELEMENTS } from './board';
 import { RequestError, waitForRequest, writeMermaidRequest, type RequestAnswer } from './requests';
 import { createServer } from './server';
-import type { BoardShape } from './shapes';
+import { FONT_FAMILY, type BoardShape } from './shapes';
 
 type Element = Record<string, unknown>;
 
@@ -264,6 +264,8 @@ describe('lines and arrows of add_shapes', () => {
   // The agent the tests' client is, by the name it gives as it connects, which get_board lists as
   // the creator of each shape add_shapes adds.
   const creator = { kind: 'agent', name: 'chalkline-test' };
+  // The colors Excalidraw sets on a shape that leaves them out, which get_board lists.
+  const colors = { strokeColor: '#1e1e1e', backgroundColor: 'transparent' };
 
   it('draws a line of width 0 straight down or up, and get_board reads it so', async () => {
     const { network, elements, client } = await board();
@@ -280,8 +282,8 @@ describe('lines and arrows of add_shapes', () => {
     expect(elements.get(down)).toMatchObject({ type: 'line', x: 10, y: 20, width: 0, height: 50, points: [[0, 0], [0, 50]] });
     expect(elements.get(up)).toMatchObject({ type: 'line', x: 40, y: 70, width: 0, height: 50, points: [[0, 0], [0, -50]] });
     expect(shapes(await call(client, 'get_board'))).toEqual([
-      { id: down, kind: 'line', x: 10, y: 20, width: 0, height: 50, creator },
-      { id: up, kind: 'line', x: 40, y: 70, width: 0, height: -50, creator },
+      { id: down, kind: 'line', x: 10, y: 20, width: 0, height: 50, creator, ...colors },
+      { id: up, kind: 'line', x: 40, y: 70, width: 0, height: -50, creator, ...colors },
     ]);
   });
 
@@ -322,6 +324,7 @@ describe('lines and arrows of add_shapes', () => {
       start: 'top',
       end: 'bottom',
       creator,
+      ...colors,
     });
   });
 
@@ -504,5 +507,134 @@ describe('Mermaid requests', () => {
 
     await expect(waiting).rejects.toThrow('cancelled');
     await expect(waitForRequest(page.helper, page.helperAwareness, 'nope')).rejects.toBeInstanceOf(RequestError);
+  });
+});
+
+describe('add_shapes styles', () => {
+  const creator = { kind: 'agent', name: 'chalkline-test' };
+
+  it('stores each style, font and alignment that a shape sets, and get_board reports them', async () => {
+    const { network, elements, client } = await board();
+    const added = ids(
+      await call(client, 'add_shapes', {
+        shapes: [
+          {
+            type: 'rectangle',
+            id: 'wash',
+            x: 0,
+            y: 0,
+            width: 200,
+            height: 80,
+            strokeColor: '#1971c2',
+            backgroundColor: '#a5d8ff',
+            strokeWidth: 1,
+            strokeStyle: 'dashed',
+            fillStyle: 'hachure',
+            roughness: 0,
+            opacity: 40,
+            label: { text: 'Wash', fontFamily: 'Comic Shanns', textAlign: 'left' },
+          },
+          {
+            type: 'text',
+            id: 'note',
+            x: 0,
+            y: 120,
+            text: 'Note',
+            fontFamily: 'Nunito',
+            textAlign: 'right',
+            strokeWidth: 4,
+            strokeStyle: 'dotted',
+            fillStyle: 'zigzag',
+            roughness: 2,
+            opacity: 100,
+          },
+          { type: 'arrow', id: 'arrow', x: 200, y: 40, width: 100, height: 0, strokeWidth: 4, strokeStyle: 'dotted', roughness: 2, opacity: 0 },
+          { type: 'line', id: 'line', x: 0, y: 200, width: 300, height: 0, strokeWidth: 1, fillStyle: 'cross-hatch', roughness: 0, opacity: 25 },
+        ],
+      }),
+    );
+    expect(added).toEqual(['wash', 'note', 'arrow', 'line']);
+
+    network.flush();
+    const wash = { strokeColor: '#1971c2', backgroundColor: '#a5d8ff', strokeWidth: 1, strokeStyle: 'dashed', fillStyle: 'hachure', roughness: 0, opacity: 40 };
+    expect(elements.get('wash')).toMatchObject({ type: 'rectangle', ...wash });
+    const label = [...elements.values()].find((element) => element.containerId === 'wash');
+    expect(label).toMatchObject({ type: 'text', originalText: 'Wash', fontFamily: FONT_FAMILY['Comic Shanns'], textAlign: 'left' });
+    const note = { strokeWidth: 4, strokeStyle: 'dotted', fillStyle: 'zigzag', roughness: 2 };
+    expect(elements.get('note')).toMatchObject({ type: 'text', fontFamily: FONT_FAMILY.Nunito, textAlign: 'right', ...note, opacity: 100 });
+    // A text that aligns right ends at its x.
+    expect(Number(elements.get('note')?.x) + Number(elements.get('note')?.width)).toBeCloseTo(0);
+    const arrow = { strokeWidth: 4, strokeStyle: 'dotted', roughness: 2, opacity: 0 };
+    expect(elements.get('arrow')).toMatchObject({ type: 'arrow', ...arrow });
+    const line = { strokeWidth: 1, fillStyle: 'cross-hatch', roughness: 0, opacity: 25 };
+    expect(elements.get('line')).toMatchObject({ type: 'line', ...line });
+
+    const listed = shapes(await call(client, 'get_board'));
+    const read = (id: string) => listed.find((shape) => shape.id === id);
+    expect(read('wash')).toEqual({
+      id: 'wash',
+      kind: 'rectangle',
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 80,
+      label: 'Wash',
+      ...wash,
+      fontFamily: 'Comic Shanns',
+      textAlign: 'left',
+      creator,
+    });
+    expect(read('note')).toMatchObject({ kind: 'text', label: 'Note', fontFamily: 'Nunito', textAlign: 'right', ...note });
+    // 100 is Excalidraw's default opacity, which get_board leaves out.
+    expect(read('note')).not.toHaveProperty('opacity');
+    expect(read('arrow')).toMatchObject({ kind: 'arrow', ...arrow });
+    expect(read('line')).toMatchObject({ kind: 'line', ...line });
+  });
+
+  it("leaves out of get_board each style field that is Excalidraw's default", async () => {
+    const { client } = await board();
+    ids(
+      await call(client, 'add_shapes', {
+        shapes: [{ type: 'rectangle', id: 'plain', x: 0, y: 0, width: 100, height: 50, label: { text: 'Plain' } }],
+      }),
+    );
+    expect(shapes(await call(client, 'get_board'))).toEqual([
+      { id: 'plain', kind: 'rectangle', x: 0, y: 0, width: 100, height: 50, label: 'Plain', strokeColor: '#1e1e1e', backgroundColor: 'transparent', creator },
+    ]);
+  });
+
+  it.each([
+    ['strokeWidth', { type: 'rectangle', x: 0, y: 0, strokeWidth: 3 }, 'shapes[0].strokeWidth'],
+    ['strokeStyle', { type: 'line', x: 0, y: 0, strokeStyle: 'wavy' }, 'shapes[0].strokeStyle'],
+    ['fillStyle', { type: 'ellipse', x: 0, y: 0, fillStyle: 'dots' }, 'shapes[0].fillStyle'],
+    ['roughness', { type: 'arrow', x: 0, y: 0, roughness: 3 }, 'shapes[0].roughness'],
+    ['an opacity above 100', { type: 'diamond', x: 0, y: 0, opacity: 101 }, 'shapes[0].opacity'],
+    ['an opacity below 0', { type: 'text', x: 0, y: 0, text: 'Note', opacity: -1 }, 'shapes[0].opacity'],
+    ['an opacity between whole numbers', { type: 'rectangle', x: 0, y: 0, opacity: 50.5 }, 'shapes[0].opacity'],
+    ['fontFamily', { type: 'text', x: 0, y: 0, text: 'Note', fontFamily: 'Comic Sans' }, 'shapes[0].fontFamily'],
+    ['textAlign', { type: 'text', x: 0, y: 0, text: 'Note', textAlign: 'justify' }, 'shapes[0].textAlign'],
+    ["a label's fontFamily", { type: 'rectangle', x: 0, y: 0, label: { text: 'Box', fontFamily: 'Comic Sans' } }, 'shapes[0].label.fontFamily'],
+    ["a label's textAlign", { type: 'arrow', x: 0, y: 0, label: { text: 'yes', textAlign: 'justify' } }, 'shapes[0].label.textAlign'],
+  ])("refuses %s outside Excalidraw's values, names the field, and adds nothing", async (_case, shape, field) => {
+    const { network, elements, client } = await board();
+    const result = await call(client, 'add_shapes', { shapes: [shape] });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain(` at ${field}`);
+    network.flush();
+    expect(elements.size).toBe(0);
+  });
+
+  it("lists each style field in add_shapes's description and in get_board's shapes", async () => {
+    const { client } = await board();
+    const { tools } = await client.listTools();
+    const fields = ['strokeWidth', 'strokeStyle', 'fillStyle', 'roughness', 'opacity', 'fontFamily', 'textAlign'];
+    const description = tools.find((tool) => tool.name === 'add_shapes')?.description ?? '';
+    for (const field of fields) expect(description).toContain(field);
+    const answer = tools.find((tool) => tool.name === 'get_board')?.outputSchema as unknown as {
+      properties: { shapes: { items: { properties: Record<string, unknown> } } };
+    };
+    expect(Object.keys(answer.properties.shapes.items.properties)).toEqual(
+      expect.arrayContaining(['strokeColor', 'backgroundColor', ...fields]),
+    );
   });
 });

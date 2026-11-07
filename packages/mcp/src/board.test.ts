@@ -84,4 +84,51 @@ describe('readBoard', () => {
       { id: 'box', width: 100, height: 50 },
     ]);
   });
+
+  it("answers each shape's colors, and each style, font and alignment that isn't Excalidraw's default", () => {
+    const plain = { strokeColor: '#1e1e1e', backgroundColor: 'transparent', strokeWidth: 2, strokeStyle: 'solid', fillStyle: 'solid', roughness: 1, opacity: 100 };
+    const shapes = readBoard([
+      element({ id: 'plain', type: 'rectangle', index: 'a0', ...plain }),
+      element({ id: 'plain-label', type: 'text', index: 'a1', containerId: 'plain', text: 'Plain', originalText: 'Plain', fontFamily: 5, textAlign: 'center' }),
+      element({
+        id: 'wash',
+        type: 'ellipse',
+        index: 'a2',
+        strokeColor: '#1971c2',
+        backgroundColor: '#a5d8ff',
+        strokeWidth: 1,
+        strokeStyle: 'dashed',
+        fillStyle: 'hachure',
+        roughness: 0,
+        opacity: 40,
+      }),
+      element({ id: 'wash-label', type: 'text', index: 'a3', containerId: 'wash', text: 'Wash', originalText: 'Wash', fontFamily: 8, textAlign: 'left' }),
+      element({ id: 'note', type: 'text', index: 'a4', ...plain, text: 'Note', originalText: 'Note', fontFamily: 5, textAlign: 'left' }),
+      element({ id: 'code', type: 'text', index: 'a5', ...plain, text: 'Code', originalText: 'Code', fontFamily: 8, textAlign: 'right' }),
+    ]);
+    const colors = { strokeColor: '#1e1e1e', backgroundColor: 'transparent' };
+    expect(shapes).toEqual([
+      { id: 'plain', kind: 'rectangle', x: 0, y: 0, width: 100, height: 50, label: 'Plain', ...colors },
+      {
+        id: 'wash',
+        kind: 'ellipse',
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 50,
+        label: 'Wash',
+        strokeColor: '#1971c2',
+        backgroundColor: '#a5d8ff',
+        strokeWidth: 1,
+        strokeStyle: 'dashed',
+        fillStyle: 'hachure',
+        roughness: 0,
+        opacity: 40,
+        fontFamily: 'Comic Shanns',
+        textAlign: 'left',
+      },
+      { id: 'note', kind: 'text', x: 0, y: 0, width: 100, height: 50, label: 'Note', ...colors },
+      { id: 'code', kind: 'text', x: 0, y: 0, width: 100, height: 50, label: 'Code', ...colors, fontFamily: 'Comic Shanns', textAlign: 'right' },
+    ]);
+  });
 });

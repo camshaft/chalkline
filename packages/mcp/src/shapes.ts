@@ -8,6 +8,71 @@ const coordinate = z.number().finite();
 const size = z.number().finite().positive();
 const color = z.string().min(1).describe('A CSS color, such as #1971c2 or transparent.');
 const label = z.object({ text: z.string().min(1) }).describe('The text inside the shape.');
+
+/** Excalidraw's stroke widths: thin, bold and extra bold. */
+export const STROKE_WIDTH = { thin: 1, bold: 2, extraBold: 4 } as const;
+/** Excalidraw's roughness: architect (clean lines), artist and cartoonist. */
+export const ROUGHNESS = { architect: 0, artist: 1, cartoonist: 2 } as const;
+/** Excalidraw's stroke styles. */
+export const STROKE_STYLES = ['solid', 'dashed', 'dotted'] as const;
+/** Excalidraw's fill styles, which say how a background color fills a shape. */
+export const FILL_STYLES = ['solid', 'hachure', 'cross-hatch', 'zigzag'] as const;
+/** Excalidraw's text alignments. */
+export const TEXT_ALIGNS = ['left', 'center', 'right'] as const;
+/** Excalidraw's fonts by name, each with the number an element's fontFamily holds, as Excalidraw's FONT_FAMILY lists them. */
+export const FONT_FAMILY = {
+  Virgil: 1,
+  Helvetica: 2,
+  Cascadia: 3,
+  Excalifont: 5,
+  Nunito: 6,
+  'Lilita One': 7,
+  'Comic Shanns': 8,
+  'Liberation Sans': 9,
+} as const;
+export type FontName = keyof typeof FONT_FAMILY;
+
+/** The value Excalidraw sets for each style field that a shape leaves out, which get_board doesn't report. */
+export const DEFAULT_STYLE = { strokeWidth: 2, strokeStyle: 'solid', fillStyle: 'solid', roughness: 1, opacity: 100 } as const;
+/** The font Excalidraw sets for a text or a label that doesn't set one. */
+export const DEFAULT_FONT: FontName = 'Excalifont';
+
+/** The style fields that every shape add_shapes adds may set, each to one of the values Excalidraw offers. */
+const style = {
+  strokeWidth: z
+    .nativeEnum(STROKE_WIDTH)
+    .optional()
+    .describe('The width of its strokes: 1 (thin), 2 (bold, the default) or 4 (extra bold).'),
+  strokeStyle: z.enum(STROKE_STYLES).optional().describe('Its strokes: solid (the default), dashed or dotted.'),
+  fillStyle: z
+    .enum(FILL_STYLES)
+    .optional()
+    .describe('How its background color fills it: solid (the default), hachure, cross-hatch or zigzag.'),
+  roughness: z
+    .nativeEnum(ROUGHNESS)
+    .optional()
+    .describe('How hand-drawn its strokes look: 0 (clean lines), 1 (the default) or 2 (rough).'),
+  opacity: z
+    .number()
+    .int()
+    .min(0)
+    .max(100)
+    .optional()
+    .describe('How opaque it is, from 0 (invisible) to 100 (opaque, the default).'),
+};
+const fontFamily = z
+  .enum(Object.keys(FONT_FAMILY) as [FontName, ...FontName[]])
+  .optional()
+  .describe("Its font: Excalifont (hand-drawn, the default), Nunito (plain), Comic Shanns (code), or another of Excalidraw's fonts.");
+const textAlign = (fallback: (typeof TEXT_ALIGNS)[number]) =>
+  z
+    .enum(TEXT_ALIGNS)
+    .optional()
+    .describe(`How its lines align: left, center or right, and ${fallback} where it is left out.`);
+/** The label of a shape that add_shapes adds, which may set its font and alignment. */
+const shapeLabel = z
+  .object({ text: z.string().min(1), fontFamily, textAlign: textAlign('center') })
+  .describe('The text inside the shape.');
 const endpoint = (which: string) =>
   z
     .string()
@@ -20,9 +85,10 @@ const box = {
   y: coordinate.describe("The shape's top edge."),
   width: size.optional(),
   height: size.optional(),
-  label: label.optional(),
+  label: shapeLabel.optional(),
   strokeColor: color.optional(),
   backgroundColor: color.optional(),
+  ...style,
 };
 
 /** One shape that add_shapes adds, in Excalidraw's skeleton format. */
@@ -33,11 +99,14 @@ export const shapeSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('text'),
     id: id.optional(),
-    x: coordinate.describe("The text's left edge."),
+    x: coordinate.describe("The text's left edge, or its center or right edge where textAlign is center or right."),
     y: coordinate.describe("The text's top edge."),
     text: z.string().min(1),
     fontSize: size.optional(),
+    fontFamily,
+    textAlign: textAlign('left'),
     strokeColor: color.optional(),
+    ...style,
   }),
   z.object({
     type: z.literal('arrow'),
@@ -46,10 +115,11 @@ export const shapeSchema = z.discriminatedUnion('type', [
     y: coordinate.describe("The y of the arrow's first point."),
     width: coordinate.optional().describe('How far right of its first point the arrow ends, or left where negative.'),
     height: coordinate.optional().describe('How far below its first point the arrow ends, or above where negative.'),
-    label: label.optional(),
+    label: shapeLabel.optional(),
     start: endpoint('starts at').optional(),
     end: endpoint('ends at').optional(),
     strokeColor: color.optional(),
+    ...style,
   }),
   z.object({
     type: z.literal('line'),
@@ -59,6 +129,7 @@ export const shapeSchema = z.discriminatedUnion('type', [
     width: coordinate.optional().describe('How far right of its first point the line ends, or left where negative.'),
     height: coordinate.optional().describe('How far below its first point the line ends, or above where negative.'),
     strokeColor: color.optional(),
+    ...style,
   }),
 ]);
 
@@ -83,6 +154,21 @@ export const boardShapeSchema = z.object({
   label: z.string().optional().describe("A text's text, or the text inside a shape or on an arrow."),
   start: z.string().optional().describe("The id of the shape an arrow's start is bound to."),
   end: z.string().optional().describe("The id of the shape an arrow's end is bound to."),
+  strokeColor: z.string().optional().describe("The shape's stroke color."),
+  backgroundColor: z.string().optional().describe("The shape's background color, transparent where it has none."),
+  strokeWidth: z.number().optional().describe('Its stroke width, where it is not 2, the default.'),
+  strokeStyle: z.string().optional().describe('Its stroke style, where it is not solid, the default.'),
+  fillStyle: z.string().optional().describe('Its fill style, where it is not solid, the default.'),
+  roughness: z.number().optional().describe('Its roughness, where it is not 1, the default.'),
+  opacity: z.number().optional().describe('Its opacity, where it is not 100, the default.'),
+  fontFamily: z
+    .string()
+    .optional()
+    .describe('The font of a text, or of the label inside a shape or on an arrow, where it is not Excalifont, the default.'),
+  textAlign: z
+    .string()
+    .optional()
+    .describe('How the lines of a text or a label align, where it is not the default: left for a text, and center for a label.'),
   creator: creatorSchema
     .optional()
     .describe('The agent that added the shape; a shape that a person drew, or a page added for them, has none.'),

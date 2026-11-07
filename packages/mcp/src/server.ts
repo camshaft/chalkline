@@ -39,7 +39,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
     {
       title: 'Read the board',
       description:
-        "Reads the board: every shape on it, from back to front, with its id, kind, position, size and label, for an arrow the ids of the shapes it starts and ends at, and for a shape an agent added, its creator; and, in pending, each Mermaid request that no page has converted yet. An arrow's or a line's width and height say how far its last point lies right of and below its first, as add_shapes reads them.",
+        "Reads the board: every shape on it, from back to front, with its id, kind, position, size and label, its stroke and background colors, each style field, font and alignment that isn't Excalidraw's default, for an arrow the ids of the shapes it starts and ends at, and for a shape an agent added, its creator; and, in pending, each Mermaid request that no page has converted yet. An arrow's or a line's width and height say how far its last point lies right of and below its first, as add_shapes reads them.",
       outputSchema: {
         shapes: z.array(boardShapeSchema),
         pending: z.array(z.object({ id: z.string(), kind: z.literal('mermaid') })),
@@ -57,6 +57,8 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         'Each shape sets its type (rectangle, ellipse, diamond, text, arrow or line), its x and its y, and may set an id.',
         'A rectangle, an ellipse or a diamond takes a width, a height and a label, and a text its text.',
         "An arrow's width and height say where it ends, from its x and y, and its start and end name shapes of the same call, which it binds to.",
+        'Every shape may set strokeColor, strokeWidth (1, 2 or 4), strokeStyle (solid, dashed or dotted), fillStyle (solid, hachure, cross-hatch or zigzag), roughness (0, 1 or 2) and opacity (0 to 100), and a rectangle, an ellipse or a diamond its backgroundColor.',
+        "A text and a label may set fontFamily (Excalifont, Nunito, Comic Shanns or another of Excalidraw's fonts) and textAlign (left, center or right).",
         'Each new shape records the agent as its creator, which get_board lists.',
       ].join(' '),
       inputSchema: { shapes: z.array(shapeSchema).min(1) },
