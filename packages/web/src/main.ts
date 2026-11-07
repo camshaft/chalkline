@@ -1,4 +1,5 @@
 import '@excalidraw/excalidraw/index.css';
+import { agentChangesOf } from '@chalkline/mcp/agent-changes';
 import {
   agentInRoom,
   Awareness,
@@ -32,6 +33,7 @@ import * as Y from 'yjs';
 import { bindAsk, type AskCanvas } from './ask';
 import { bindElements } from './binding';
 import { addOpened, boardFileName, connectFileControls, OPENED, restoreElements } from './board-file';
+import { bindChangesPanel } from './changes-panel';
 import {
   boardTurnServers,
   linkOnlyServers,
@@ -266,6 +268,11 @@ async function start(): Promise<ChalklineHandle> {
   // browser keeps.
   const sideButton = sideButtonSetting(storage ?? undefined);
   let mounted: ExcalidrawImperativeAPI | null = null;
+  // The list of the agent's changes, each with an Undo button, which the main menu's Agent's changes opens.
+  // An undo goes on the board under the name the others see.
+  const changesPanel = bindChangesPanel(pageElement('changes'), doc.getMap<unknown>('elements'), agentChangesOf(doc), {
+    undoer: () => readPresence(awareness.getLocalState())?.name ?? 'Someone',
+  });
   const attachControls = controlsAttacher(pageElement('controls'));
   const api = await new Promise<ExcalidrawImperativeAPI>((resolve) => {
     createRoot(pageElement('app')).render(
@@ -303,6 +310,7 @@ async function start(): Promise<ChalklineHandle> {
               copy: (text) => navigator.clipboard.writeText(text),
             })),
             connectionSettings: openSettings,
+            agentChanges: () => changesPanel.toggle(),
             files: fileCommands,
             history: openHistory,
             grid: () => mounted?.getAppState().gridModeEnabled ?? false,
