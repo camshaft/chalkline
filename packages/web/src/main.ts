@@ -4,7 +4,9 @@ import {
   connectAwareness,
   connectDoc,
   feedbackOf,
+  getSnapshotMark,
   relaysFromAddress,
+  snapshotsOf,
   transcriptOf,
   trysteroTransport,
 } from '@chalkline/sync';
@@ -14,6 +16,7 @@ import {
   convertToExcalidrawElements,
   elementPartiallyOverlapsWithOrContainsBBox,
   Excalidraw,
+  exportToSvg,
   loadFromBlob,
   serializeAsJSON,
   zoomToFitBounds,
@@ -25,13 +28,14 @@ import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as Y from 'yjs';
 import { bindElements } from './binding';
-import { addOpened, boardFileName, connectFileControls, OPENED } from './board-file';
+import { addOpened, boardFileName, connectFileControls, OPENED, restoreElements } from './board-file';
 import { loadSettings, roomOptions, type ConnectionSettings, type SettingsStorage } from './connection';
 import { bindStatusBadge, connectControlsToggle, controlsAttacher } from './controls';
 import { keepDrawingSpaceChanges, keptDrawingSpace } from './drawing-space';
 import { bindFeedback, type FeedbackCanvas } from './feedback';
 import { bindFiles, writeFiles } from './files';
 import { bindFramesList, framesOf } from './frames';
+import { historyOpener } from './history-panel';
 import { keepBoard, storeName, type KeptBoard } from './keep';
 import { Followed } from './followed';
 import { ChalklineMenu, type FileCommands } from './menu';
@@ -60,6 +64,7 @@ import {
   type PageAddress,
 } from './room-links';
 import { connectSettingsButton, settingsOpener } from './settings-panel';
+import { keepSnapshots, openSnapshotStore, snapshotStoreName, type SnapshotStore } from './snapshots';
 import { recognitionClass, recognitionLanguage, speechControl, type Speech } from './speech';
 import { statusLine, watchedPeerConnection } from './status';
 import { bindTranscriptPanel, followKeyboard } from './transcript-panel';
@@ -147,6 +152,16 @@ async function keepInBrowser(doc: Y.Doc, secrets: RoomSecrets): Promise<KeptBoar
   }
 }
 
+/** Opens this browser's store of the room's snapshots, or returns null where the browser doesn't let the page. */
+async function snapshotsInBrowser(secrets: RoomSecrets): Promise<SnapshotStore<OrderedExcalidrawElement> | null> {
+  try {
+    return await openSnapshotStore<OrderedExcalidrawElement>(await snapshotStoreName(secrets));
+  } catch (error) {
+    console.warn("chalkline: this browser doesn't keep snapshots of the board", error);
+    return null;
+  }
+}
+
 /**
  * Shows this participant's name in the name field, and shares each name typed
  * there. A field left empty keeps the last name, and shows it again once the
@@ -210,6 +225,9 @@ async function start(): Promise<ChalklineHandle> {
   // The copy this browser kept goes into the document as it loads, and the sync adapter sends the
   // peers each of its changes they lack, such as the shapes drawn while offline.
   const kept = await keepInBrowser(doc, secrets);
+  // This browser's store of the board's snapshots (designs/chalkline A14) opens while the page goes on, and the
+  // keeper that writes them starts once it is open, below.
+  const snapshotStore = snapshotsInBrowser(secrets);
 
   const showPeers = () => line.showPeers(transport.peers().length);
   transport.onPeerJoin(showPeers);
@@ -219,6 +237,8 @@ async function start(): Promise<ChalklineHandle> {
   const pointerHandlers = new Set<(pointer: Pointer, button: Button) => void>();
   // The menu's Save file and Open file items show once the board's file controls are connected, below.
   const fileCommands = new Followed<FileCommands | null>(null);
+  // The menu's History item shows once this browser's store of the board's snapshots is open, below.
+  const openHistory = new Followed<(() => void) | null>(null);
   // What a press of the pen's side button does, which the main menu's Pen side button items choose and this
   // browser keeps.
   const sideButton = sideButtonSetting(storage ?? undefined);
@@ -254,6 +274,7 @@ async function start(): Promise<ChalklineHandle> {
             },
             connectionSettings: openSettings,
             files: fileCommands,
+            history: openHistory,
             grid: () => mounted?.getAppState().gridModeEnabled ?? false,
             setGrid: (shown) =>
               mounted?.updateScene({
@@ -353,6 +374,29 @@ async function start(): Promise<ChalklineHandle> {
       },
     ),
   );
+  // This browser keeps snapshots of the board in its own storage: each 10 minutes while the board changes, before
+  // a change that deletes more than 50 shapes, and for each mark the agent saves. The main menu's History item
+  // lists them, previews one, and restores it for everyone.
+  void snapshotStore.then((store) => {
+    if (store === null) return;
+    const marks = snapshotsOf(doc);
+    const snapshots = keepSnapshots(shared, marks, store, {
+      onError: (error) => console.warn("chalkline: a snapshot of the board couldn't be kept", error),
+    });
+    openHistory.set(
+      historyOpener(pageElement('history'), {
+        snapshots,
+        mark: (id) => getSnapshotMark(marks, id),
+        preview: (elements) =>
+          exportToSvg({
+            elements: elements as Parameters<typeof exportToSvg>[0]['elements'],
+            appState: { exportBackground: true, viewBackgroundColor: api.getAppState().viewBackgroundColor },
+            files: api.getFiles(),
+          }),
+        restore: (elements) => restoreElements(shared, elements),
+      }),
+    );
+  });
   // The board's transcript, which the page shows as its chat, holds each participant's final speech results and
   // typed messages, and the agent's posts. Speech stays off until the person presses the microphone button, and
   // each final result, as each typed message, goes on the transcript under the name the others see.

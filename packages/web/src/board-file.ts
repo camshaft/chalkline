@@ -5,26 +5,34 @@ import type { FileCommands } from './menu';
 /** The transaction origin of the elements that an opened file adds to the shared map. */
 export const OPENED = Symbol('chalkline.opened');
 
+/** The transaction origin of the elements that the History panel's Restore writes into the shared map. */
+export const RESTORED = Symbol('chalkline.restored');
+
 /** The type of an `.excalidraw` file, as Excalidraw writes it. */
 export const EXCALIDRAW_TYPE = 'application/vnd.excalidraw+json';
 
-/** The fields of an opened file's element that `addOpened` reads. */
+/** The fields of an element that `addOpened` and `restoreElements` read. */
 export interface FileElement extends VersionedElement {
   readonly isDeleted?: boolean;
 }
 
 /**
- * Adds the elements of an opened file to the board's shared map, in one
- * transaction. An element that the map lacks goes in as the file holds it. An
- * element that the map holds already takes the file's copy: where the map's
- * copy would win, the file's copy goes in with the version after the map's, so
- * that every copy of the board shows the file's. The board's other elements
- * stay as they are. An element that the file marks as deleted, and one whose
- * copy the map holds already, are left out. Returns the elements written.
+ * Writes `elements` into the board's shared map, in one transaction whose
+ * origin is `origin`. An element that the map lacks goes in as `elements`
+ * holds it. An element that the map holds already takes the given copy: where
+ * the map's copy would win, the given copy goes in with the version after the
+ * map's, so that every copy of the board shows it. The board's other elements
+ * stay as they are. An element marked as deleted, and one whose copy the map
+ * holds already, are left out. Returns the elements written.
  */
-export function addOpened<T extends FileElement>(shared: Y.Map<T>, elements: readonly T[]): T[] {
+function writeElements<T extends FileElement>(
+  shared: Y.Map<T>,
+  elements: readonly T[],
+  origin: symbol,
+  caller: string,
+): T[] {
   const doc = shared.doc;
-  if (doc === null) throw new Error('addOpened needs a map that belongs to a Y.Doc');
+  if (doc === null) throw new Error(`${caller} needs a map that belongs to a Y.Doc`);
   const written = new Map<string, T>();
   for (const element of elements) {
     if (element.isDeleted === true) continue;
@@ -38,9 +46,31 @@ export function addOpened<T extends FileElement>(shared: Y.Map<T>, elements: rea
   if (written.size > 0) {
     doc.transact(() => {
       for (const element of written.values()) shared.set(element.id, element);
-    }, OPENED);
+    }, origin);
   }
   return [...written.values()];
+}
+
+/**
+ * Adds the elements of an opened file to the board's shared map, in one
+ * transaction whose origin is `OPENED`, as `writeElements` writes them: an
+ * element of the board takes the file's copy, and the board's other elements
+ * stay as they are. Returns the elements written.
+ */
+export function addOpened<T extends FileElement>(shared: Y.Map<T>, elements: readonly T[]): T[] {
+  return writeElements(shared, elements, OPENED, 'addOpened');
+}
+
+/**
+ * Writes the elements of a snapshot into the board's shared map for everyone,
+ * in one transaction whose origin is `RESTORED` (designs/chalkline A14), as
+ * `writeElements` writes them: each element of the snapshot comes back as the
+ * snapshot holds it, a deleted one among them, and an element added since the
+ * snapshot stays. Returns the elements written, none where the board already
+ * holds each element as the snapshot holds it.
+ */
+export function restoreElements<T extends FileElement>(shared: Y.Map<T>, elements: readonly T[]): T[] {
+  return writeElements(shared, elements, RESTORED, 'restoreElements');
 }
 
 /**

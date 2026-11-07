@@ -33,6 +33,17 @@ export {
   type RequestStatus,
 } from './requests';
 export { APP_ID, newRoomSecrets, parseRoomFragment, roomFragment, type RoomSecrets } from './room';
+export {
+  getSnapshotMark,
+  isShape,
+  listSnapshotMarks,
+  readSnapshotMark,
+  shapeCount,
+  SNAPSHOTS,
+  snapshotsOf,
+  writeSnapshotMark,
+  type SnapshotMark,
+} from './snapshots';
 export { connectDoc, FromPeer, type Channel, type ConnectOptions, type Transport } from './sync';
 export {
   appendEntry,
