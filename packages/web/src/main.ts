@@ -26,7 +26,15 @@ import { createRoot } from 'react-dom/client';
 import * as Y from 'yjs';
 import { bindElements } from './binding';
 import { addOpened, boardFileName, connectFileControls, OPENED } from './board-file';
-import { loadSettings, roomOptions, type ConnectionSettings, type SettingsStorage } from './connection';
+import {
+  boardTurnServers,
+  linkOnlyServers,
+  loadSettings,
+  roomOptions,
+  type ConnectionSettings,
+  type FromLink,
+  type SettingsStorage,
+} from './connection';
 import { bindStatusBadge, connectControlsToggle, controlsAttacher } from './controls';
 import { keepDrawingSpaceChanges, keptDrawingSpace } from './drawing-space';
 import { bindFeedback, type FeedbackCanvas } from './feedback';
@@ -49,7 +57,7 @@ import {
 } from './presence';
 import { offerReadAloud, voiceOf } from './read-aloud';
 import { connectionReport, type ConnectionReport } from './report';
-import type { RoomSecrets } from './room';
+import { linkTurnServers, type RoomSecrets } from './room';
 import {
   boardInAddress,
   chooseRoom,
@@ -59,6 +67,7 @@ import {
   type PageAddress,
 } from './room-links';
 import { connectSettingsButton, settingsOpener } from './settings-panel';
+import { shareOpener } from './share-panel';
 import { recognitionClass, recognitionLanguage, speechControl, type Speech } from './speech';
 import { statusLine, watchedPeerConnection } from './status';
 import { bindTranscriptPanel, followKeyboard } from './transcript-panel';
@@ -173,8 +182,9 @@ async function start(): Promise<ChalklineHandle> {
   connectControlsToggle(pageButton('controls-toggle'), pageElement('controls'));
   const storage = browserStorage();
   const settings = loadSettings(storage);
-  const line = statusLine(status, settings);
-  const settingsOptions = { settings, storage, reload: () => window.location.reload() };
+  // The servers of the board's link that the settings don't hold, which the page reads once it has its board.
+  let fromLink: FromLink = { servers: [], error: null };
+  const settingsOptions = { settings, storage, reload: () => window.location.reload(), fromLink: () => fromLink };
   // The controls' Connection settings button opens the settings on the join screen, and the main menu's
   // item opens them once the board is open.
   connectSettingsButton(pageElement('settings-button'), pageElement('settings'), settingsOptions);
@@ -186,6 +196,15 @@ async function start(): Promise<ChalklineHandle> {
   const secrets = boardInAddress(address) ?? (await boardFromJoinScreen(address, status));
   // The page joins its board only as it loads, so an address that names another board, or none, loads it again.
   reloadOnRoomChange(address, secrets, () => window.location.reload());
+  // A board's link may carry TURN servers in its fragment, which the page uses for this board alone, beside the
+  // browser's own, and doesn't keep. The page joins without a turn parameter it can't read, and says why.
+  const linkServers = linkTurnServers(new URL(address.href()).hash);
+  if ('error' in linkServers) console.warn(`chalkline: ${linkServers.error}`);
+  fromLink =
+    'error' in linkServers
+      ? { servers: [], error: linkServers.error }
+      : { servers: linkOnlyServers(settings, linkServers.turnServers), error: null };
+  const line = statusLine(status, settings, fromLink);
   // A page that the local-network mode serves names that machine's relay in its address, and finds
   // the other participants through it in place of the Nostr relays.
   const relays = relaysFromAddress(window.location.href);
@@ -195,7 +214,7 @@ async function start(): Promise<ChalklineHandle> {
     console.warn("chalkline: a connection to a peer can't open", failure);
     line.showFailure();
   });
-  const room = joinBoardRoom({ ...roomOptions(secrets, settings), rtcPolyfill }, secrets.room, relays, {
+  const room = joinBoardRoom({ ...roomOptions(secrets, settings, fromLink.servers), rtcPolyfill }, secrets.room, relays, {
     onJoinError: ({ peerId, error }) => {
       console.warn(`chalkline: peer ${peerId} couldn't connect: ${error}`);
       line.showFailure();
@@ -251,6 +270,13 @@ async function start(): Promise<ChalklineHandle> {
             newBoard: () => {
               window.location.hash = newBoardFragment();
             },
+            // The Share link panel opens where the settings panel does.
+            share: shareOpener(pageElement('settings'), () => ({
+              address: address.href(),
+              secrets,
+              turnServers: boardTurnServers(settings, fromLink.servers),
+              copy: (text) => navigator.clipboard.writeText(text),
+            })),
             connectionSettings: openSettings,
             files: fileCommands,
             grid: () => mounted?.getAppState().gridModeEnabled ?? false,
