@@ -9,7 +9,7 @@ Browsers find each other through public Nostr relays with [Trystero](https://git
 
 Each participant's cursor, name and selection travel beside the document as Yjs awareness state, which the board doesn't store: every other page draws your cursor with your name by it, and outlines the shapes you selected. Type the name the others see in the name field, in the page's controls at the board's top right; the browser keeps it for your next visit, and until you type one, it picks a name such as "Guest 4f2a".
 
-The page's controls sit over the canvas in Excalidraw's own style and theme, so the canvas fills the window: the status, the name field, and the microphone and Chat buttons at the board's top right, and New board, Save file, Open file and Connection settings in Excalidraw's main menu. The status shows its start in a badge, and its whole message on hover, or once you click or tap the badge. On a phone, the controls take the screen's left edge, and show the status and More, which unfolds the rest. The canvas's background color and its grid, which the main menu sets, stay with your browser for your next visit, as your name does; they are yours, and don't change the others' pages.
+The page's controls sit over the canvas in Excalidraw's own style and theme, so the canvas fills the window: the status, the name field, and the microphone and Chat buttons at the board's top right, and New board, Save file, Open file and Connection settings in Excalidraw's main menu. The status shows its start in a badge, and its whole message on hover, or once you click or tap the badge. On a phone, the controls take the screen's left edge, and show the status and More, which unfolds the rest. The canvas's background color, its grid and the Pen side button setting, which the main menu sets, stay with your browser for your next visit, as your name does; they are yours, and don't change the others' pages.
 
 ## Saving
 
@@ -58,6 +58,32 @@ The browsers the change ran in, in those jobs on 2026-11-07 (the fake microphone
 | Headless Chromium 149.0.7827.0, Linux, on cameron's desktop, on the live page before this change | `SpeechRecognition`, `processLocally`, `available` and `install` | A direct call of `SpeechRecognition.available({ langs: ['en-US'], processLocally: true })` didn't answer, and the page stopped answering, in each of three tries. |
 
 So the page asks the browser where recognition runs only once you press the microphone button, and shows Cancel speech while the browser answers.
+
+## Pen tablets
+
+With a pen tablet, such as a Wacom tablet, the pen's side button switches tools, so that you can change tools without the keyboard. The main menu's Pen side button items choose what a press of the side button does:
+
+| Choice | A press of the side button |
+| --- | --- |
+| Switch between the last two tools, the default | Goes back to the tool you used before the current one, such as from the selection tool to free draw and back. Until you change tools, it picks free draw, or the selection tool from free draw. |
+| Toggle the eraser | Picks the eraser, and the next press goes back to the tool before it. |
+| Toggle the selection tool | Picks the selection tool, and the next press goes back to the tool before it. |
+| Open the menu | Opens Excalidraw's menu, as a right click does. |
+
+Your browser keeps the choice for your next visit, as it keeps your name. The page acts on a press that the browser reports as the pen's secondary button, a pointer event whose `pointerType` is `pen` and whose `button` is 2, and a mouse's right click still opens Excalidraw's menu. The side button doesn't pick Excalidraw's image tool, which asks for a file.
+
+The page sees the tablet's buttons and the pen's other side button only as the keys or clicks that the tablet's driver sends for them, so set each one in the driver. This mapping to Chalkline's shortcuts hasn't been tried on a tablet yet:
+
+| Button | Set the driver to send | What it does in Chalkline |
+| --- | --- | --- |
+| One of the pen's side buttons | A right click | What the Pen side button setting chooses |
+| The pen's other side button | A middle click | Pans the canvas, as a mouse's middle button does |
+| Tablet button 1 | The key `P` | Free draw |
+| Tablet button 2 | The key `E` | The eraser |
+| Tablet button 3 | The key `V` | The selection tool |
+| Tablet button 4 | `Ctrl+Z`, or `Cmd+Z` on a Mac | Undo |
+
+Excalidraw's other shortcuts suit more buttons: `R` for a rectangle, `D` for a diamond, `O` for an ellipse, `A` for an arrow, `L` for a line, `T` for a text and `H` for the hand, which pans. The main menu's Help lists every shortcut.
 
 ## Add a box from a script
 
@@ -110,7 +136,7 @@ The repository is one npm workspace. `packages/sync` holds the board's shared st
 
 CI runs `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` on each pull request and on `main`, then starts the built `chalkline-mcp` on a new board and calls its tools, runs `chalkline-mcp listen --help` and starts `chalkline-mcp listen` on a new board, and the Pages workflow publishes `main` to GitHub Pages.
 
-CI's End-to-end test job builds the page and `chalkline-mcp` and runs `npm run test:e2e --workspace @chalkline/lan`. The test serves the built page and the relay from one machine, as `chalkline-lan` does, opens the board in two Chromium contexts with Playwright, and starts the built `chalkline-mcp` on the same board through that relay. The helper adds a labelled rectangle and a labelled ellipse and connects them with a labelled arrow, and the test waits until both browsers show each of them with its label, its creator and the arrow's two ends. A second test opens a board in a desktop's window and in a phone's, 390 px wide, and checks that the canvas fills the window and that the page's controls lie within it, clear of Excalidraw's toolbar and buttons. It uses each control in its place: the status badge, the name field, the microphone button, the chat with its Close button, which on a phone opens as a sheet across the screen's width, and the main menu's Connection settings, Save file, Open file, Show grid, dark mode and New board. On the desktop it checks that the grid and the canvas's background stay across a reload. The test presses the microphone button with a stand-in for the browser's speech recognition that doesn't ask whether recognition is available, since the tab of Playwright's Chromium crashes where the page asks that. Each browser's screenshot, and each layout's, light and dark and at 390 px wide, is kept as an artifact; for a pull request from a branch of this repository, the screenshots job copies them to the `screenshots` branch, in a directory named after the pull request's branch, where the pull request's description shows them.
+CI's End-to-end test job builds the page and `chalkline-mcp` and runs `npm run test:e2e --workspace @chalkline/lan`. The test serves the built page and the relay from one machine, as `chalkline-lan` does, opens the board in two Chromium contexts with Playwright, and starts the built `chalkline-mcp` on the same board through that relay. The helper adds a labelled rectangle and a labelled ellipse and connects them with a labelled arrow, and the test waits until both browsers show each of them with its label, its creator and the arrow's two ends. A second test opens a board in a desktop's window and in a phone's, 390 px wide, and checks that the canvas fills the window and that the page's controls lie within it, clear of Excalidraw's toolbar and buttons. It uses each control in its place: the status badge, the name field, the microphone button, the chat with its Close button, which on a phone opens as a sheet across the screen's width, and the main menu's Connection settings, Save file, Open file, Show grid, dark mode and New board. On the desktop it checks that the grid and the canvas's background stay across a reload, and it presses the pen's side button through Chromium's DevTools protocol: it checks that each press switches tools without Excalidraw's menu, that a mouse's right click still opens that menu, and that the Pen side button choice stays across a reload. The test presses the microphone button with a stand-in for the browser's speech recognition that doesn't ask whether recognition is available, since the tab of Playwright's Chromium crashes where the page asks that. Each browser's screenshot, and each layout's, light and dark and at 390 px wide, is kept as an artifact; for a pull request from a branch of this repository, the screenshots job copies them to the `screenshots` branch, in a directory named after the pull request's branch, where the pull request's description shows them.
 
 CI's Board size measurement job builds the page and `chalkline-mcp` and runs `npm run measure --workspace @chalkline/lan`, the measurement in `packages/lan/e2e/board-size.measure.ts`. It serves the built page and the relay from one machine, as `chalkline-lan` does, opens a board in Chromium, and fills it with 100 shapes through the built `chalkline-mcp`, then a new board with 4,000: small rectangles, ellipses and lines, the shapes an agent's pictures are made of. For each board it prints, in one table, how long the page takes to load the board again, to draw it zoomed in and zoomed out, to show a shape that one `update_shape` call moves, and to show the shapes that 100 `update_shape` calls move one after another, as an agent's calls do. It counts each as the main thread's busy time from Chromium's metrics and as the time the page spends in the transactions that apply the helper's changes. It then checks that one `update_shape` call costs the page's main thread no more on the board of 4,000 shapes than on the board of 100 zoomed in, and no more than one frame of a pan zoomed out, where the window shows every shape and Excalidraw draws each of them again for a change as for a frame, each within one frame at 60 Hz, 16.7 ms, and fails where it costs more. To run it on your own machine, run `npm run build`, then `npm run measure --workspace @chalkline/lan`.
 
