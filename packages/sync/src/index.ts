@@ -19,7 +19,7 @@ export {
   type RequestStatus,
 } from './requests';
 export { APP_ID, newRoomSecrets, parseRoomFragment, roomFragment, type RoomSecrets } from './room';
-export { connectDoc, REMOTE, type Channel, type ConnectOptions, type Transport } from './sync';
+export { connectDoc, FromPeer, type Channel, type ConnectOptions, type Transport } from './sync';
 export {
   appendEntry,
   newEntryId,
