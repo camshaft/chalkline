@@ -1,3 +1,4 @@
+import { withWordsChanged } from '@chalkline/mcp/creator';
 import * as Y from 'yjs';
 
 /** The fields of an Excalidraw element that decide which copy of it wins. */
@@ -83,7 +84,9 @@ export interface Canvas<T> {
  * Keeps `canvas` and the shared map of elements in step: each local edit goes
  * to the map, and each change from a peer goes to the canvas. Each side gets a
  * copy, so neither holds an object that the other changes. Returns a function
- * that stops the binding.
+ * that stops the binding. The map's copy of each text records its words and
+ * when they last changed, as `withWordsChanged` writes them, which the canvas's
+ * own object of the text doesn't hold.
  */
 export function bindElements<T extends VersionedElement>(shared: Y.Map<T>, canvas: Canvas<T>): () => void {
   const doc = shared.doc;
@@ -92,7 +95,11 @@ export function bindElements<T extends VersionedElement>(shared: Y.Map<T>, canva
   const write = (elements: readonly T[]) => {
     if (elements.length === 0) return;
     doc.transact(() => {
-      for (const element of elements) shared.set(element.id, structuredClone(element));
+      // A listener that receives only the newest copy of a text, as a peer's copy of the board holds
+      // it, tells a move of the text from new words by the time the copy records for its words.
+      for (const element of elements) {
+        shared.set(element.id, structuredClone(withWordsChanged(element, shared.get(element.id))));
+      }
     }, LOCAL);
   };
   const pull = () => {
