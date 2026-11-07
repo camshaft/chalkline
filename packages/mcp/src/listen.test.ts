@@ -444,6 +444,93 @@ describe('listenTexts', () => {
     ]);
   });
 
+  it('leaves out a text without a words mark that a page changed before the start, keeping its words, and prints a later change of its words', () => {
+    const doc = new Y.Doc();
+    const elements = doc.getMap<unknown>(ELEMENTS);
+    const lines: Written[] = [];
+    // A listener that starts a minute after the time `--after` sets.
+    listenTexts(doc, { after: START, start: START + 60_000, pauseMs: BOARD_PAUSE_MS, onLine: (line) => lines.push(line) });
+    // A person's note from an hour before, which a page wrote before the pages recorded the words
+    // mark, and which a page measured again 30 seconds after `--after`, with a new width, height
+    // and version and the same words.
+    const note = text('note', 'draw a box', -3600);
+    const measured = edited(note, { width: 140, height: 30 }, 30);
+    // A person's note that a page wrote with its words mark 20 seconds after `--after`.
+    const typed = withWordsChanged(text('typed', 'and a label', 20), undefined);
+    // A peer's copy of the board brings only the newest copy of each.
+    elements.set('note', measured);
+    elements.set('typed', typed);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(20), kind: 'text', text: 'and a label' }]);
+
+    // A page that doesn't record the words mark brings a person's change of the note's words from
+    // 50 seconds after `--after`.
+    const reworded = edited(measured, words('draw two boxes'), 50);
+    elements.set('note', reworded);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([
+      { at: at(20), kind: 'text', text: 'and a label' },
+      { at: at(50), kind: 'text', text: 'draw two boxes' },
+    ]);
+
+    // A page measures the note again after the start, and keeps its words.
+    const again = withWordsChanged(edited(reworded, { width: 150, height: 32 }, 70), reworded);
+    elements.set('note', again);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toHaveLength(2);
+
+    // A person changes the note's words, and another person types a note on a page that doesn't
+    // record the words mark.
+    elements.set('note', withWordsChanged(edited(again, words('draw a circle'), 80), again));
+    elements.set('fresh', text('fresh', 'and an arrow', 90));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([
+      { at: at(20), kind: 'text', text: 'and a label' },
+      { at: at(50), kind: 'text', text: 'draw two boxes' },
+      { at: at(80), kind: 'text', text: 'draw a circle' },
+      { at: at(90), kind: 'text', text: 'and an arrow' },
+    ]);
+  });
+
+  it("leaves out the texts a board held before the listener started, through the board's network, and their copies a page saves again unchanged", () => {
+    const network = new MemoryNetwork();
+    const page = new Y.Doc();
+    const board = page.getMap<unknown>(ELEMENTS);
+    // The board holds an agent's text from before the creator mark and an arrow's label from a
+    // Mermaid diagram, each of which a page saved again after `--after` without changing its words
+    // or recording the words mark, a person's note with its words mark, and an agent's text with
+    // its creator mark.
+    const answer = edited(text('answer', 'an answer from before the creator mark', -7200), { width: 300 }, 30);
+    const arrow = element({ id: 'arrow', type: 'arrow' }, -7200);
+    const label = edited(text('label', 'read_transcript', -7200, { containerId: 'arrow' }), { height: 25 }, 40);
+    const note = withWordsChanged(text('note', 'draw a box', -60), undefined);
+    const mine = withCreator(text('mine', 'how the crates fit together', -7200), claude);
+    for (const value of [answer, arrow, label, note, mine]) board.set(String(value.id), value);
+    connectDoc(page, network.join('page'));
+
+    const helper = new Y.Doc();
+    const lines: Written[] = [];
+    listenTexts(helper, { after: START, start: START + 60_000, pauseMs: BOARD_PAUSE_MS, onLine: (line) => lines.push(line) });
+    connectDoc(helper, network.join('listener'));
+    network.flush();
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([]);
+
+    // The page saves each text again with its words as they were, as where it measures them again.
+    const savedAnswer = withWordsChanged(edited(answer, { width: 320 }, 90), answer);
+    board.set('answer', savedAnswer);
+    for (const value of [label, note, mine]) board.set(String(value.id), withWordsChanged(edited(value, { width: 320 }, 90), value));
+    network.flush();
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([]);
+
+    // A person changes the agent's old answer, which a line tells of.
+    board.set('answer', withWordsChanged(edited(savedAnswer, words('a corrected answer'), 100), savedAnswer));
+    network.flush();
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(100), kind: 'text', text: 'a corrected answer' }]);
+  });
+
   it('prints the text that waits for its pause at once on flush, and drops it on stop', () => {
     const { elements, lines, listener } = watching<Written>(listenTexts);
     elements.set('note', text('note', 'draw a box', 1));
@@ -536,6 +623,7 @@ describe('listenToBoard', () => {
     const lines: Line[] = [];
     const listener = listenToBoard(doc, {
       after: START,
+      start: START,
       pauseMs: PAUSE_MS,
       boardPauseMs: BOARD_PAUSE_MS,
       print: (line) => lines.push(line),
@@ -562,6 +650,25 @@ describe('listenToBoard', () => {
       { at: at(5), kind: 'text', text: 'a circle here' },
     ]);
     listener.stop();
+  });
+
+  it("passes the listener's start to the texts, where --after sets an earlier time", () => {
+    const doc = new Y.Doc();
+    const elements = doc.getMap<unknown>(ELEMENTS);
+    const lines: Line[] = [];
+    listenToBoard(doc, {
+      after: START,
+      start: START + 60_000,
+      pauseMs: PAUSE_MS,
+      boardPauseMs: BOARD_PAUSE_MS,
+      print: (line) => lines.push(line),
+    });
+    // A text without a words mark that a page saved again before the start, and a person's text
+    // after the start.
+    elements.set('old', edited(text('old', 'an old note', -3600), { width: 140 }, 30));
+    elements.set('note', text('note', 'a box here', 70));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(70), kind: 'text', text: 'a box here' }]);
   });
 });
 
@@ -607,6 +714,7 @@ describe('parseListenArgs', () => {
       pauseMs: 1000,
       boardPauseMs: 3000,
       after: START,
+      start: START,
     });
   });
 
@@ -627,6 +735,7 @@ describe('parseListenArgs', () => {
       pauseMs: 500,
       boardPauseMs: 5000,
       after: Date.parse('2026-11-07T02:59:00.000Z'),
+      start: START,
     });
   });
 
