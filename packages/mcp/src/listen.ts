@@ -1,7 +1,7 @@
 import type { TranscriptEntry, Transport } from '@chalkline/sync';
 import type * as Y from 'yjs';
 import { ELEMENTS, finite, stringOf } from './board';
-import { agentWordsOf, changerOf, creatorOf, wordsChangedOf } from './creator';
+import { agentWordsOf, changerOf, creatorOf, drawingChangedOf, drawingOf, wordsChangedOf } from './creator';
 import { TranscriptLog } from './transcript';
 
 /**
@@ -138,7 +138,10 @@ export interface BoardListenOptions<T> {
    * `after` where it is left out. A text whose copy doesn't record when its words last changed, as
    * a text that a page wrote before the pages recorded the words mark, is left out where the
    * listener first receives it with a change at or before this time, since a page may change such
-   * a text without changing its words, as where it saves the text again.
+   * a text without changing its words, as where it saves the text again. So is a freehand stroke
+   * whose copy doesn't record when its place and points last changed, as a stroke that a page drew
+   * before the pages recorded the drawing mark, since a page may save such a stroke again with the
+   * same place and points.
    */
   start?: number;
   /** How long a text or the strokes stay unchanged before their line, in milliseconds. */
@@ -214,24 +217,28 @@ function corners({ x, y, width, height }: Box): [number, number][] {
 }
 
 /**
- * The part of the board that the person's freehand stroke `value` covers, and when they last
- * changed it, where it holds one: the bounds of its points, or its x, y, width and height where
- * its points don't read as points. A stroke that an agent drew, which holds its creator mark, and
- * a stroke whose last change an agent's helper made, as its change mark records it, aren't a
- * person's.
+ * The part of the board that the person's freehand stroke `value` covers, when they last changed
+ * its place or its points, as its drawing mark records it, else when its page last changed the
+ * stroke, whether its drawing mark records that time, and the digest of its place and points, where
+ * it holds one: the bounds of its points, or its x, y, width and height where its points don't read
+ * as points. A stroke that an agent drew, which holds its creator mark, and a stroke whose last
+ * change an agent's helper made, as its change mark records it, aren't a person's.
  */
-function strokeOf(value: unknown): { box: Box; updated: number } | undefined {
+function strokeOf(value: unknown): { box: Box; updated: number; marked: boolean; drawing: string } | undefined {
   const fields = liveElement(value);
-  if (fields === undefined || fields.type !== 'freedraw') return undefined;
+  const drawing = drawingOf(value);
+  if (fields === undefined || drawing === undefined) return undefined;
   if (creatorOf(value) !== undefined || changerOf(value) !== undefined) return undefined;
   const { x, y, width, height } = fields;
   if (!finite(x) || !finite(y)) return undefined;
+  const changed = drawingChangedOf(value);
+  const drawn = { updated: changed ?? fields.updated, marked: changed !== undefined, drawing };
   const points = pointsOf(fields.points);
   if (points !== undefined) {
-    return { box: around(points.map(([px, py]): [number, number] => [x + px, y + py])), updated: fields.updated };
+    return { box: around(points.map(([px, py]): [number, number] => [x + px, y + py])), ...drawn };
   }
   if (!finite(width) || !finite(height)) return undefined;
-  return { box: { x, y, width, height }, updated: fields.updated };
+  return { box: { x, y, width, height }, ...drawn };
 }
 
 /**
@@ -318,11 +325,26 @@ export function listenTexts(doc: Y.Doc, options: BoardListenOptions<Written>): L
  * a person drew or changed since the last line stays unchanged for `options.pauseMs`, one line
  * goes to `options.onLine` with those strokes and the part of the board they cover, so that a
  * sketch of several strokes makes one line. A stroke that holds an agent's creator mark, a stroke
- * whose last change an agent's helper made, a deleted stroke, and a stroke that a person last
- * changed at or before `options.after` are left out.
+ * whose last change an agent's helper made, a deleted stroke, and a stroke whose place and points a
+ * person last changed at or before `options.after` are left out, by the time its drawing mark
+ * records where it holds one, though the listener receives it later. A stroke whose place and
+ * points are those of the last line that told of it, or of the copy the listener first received
+ * of a stroke it left out, doesn't make a line, so that a page's save of a stroke that leaves them
+ * as they are, as where Excalidraw sets a new version or index on it, doesn't make one. A stroke
+ * whose copy doesn't record when its place and points last changed, as a stroke that a page drew
+ * before the pages recorded the drawing mark, is left out too where the listener first receives it
+ * with a change at or before `options.start`; a later change of its place or its points makes a
+ * line.
  */
 export function listenSketches(doc: Y.Doc, options: BoardListenOptions<Sketched>): Listener {
   const elements = doc.getMap<unknown>(ELEMENTS);
+  const start = options.start ?? options.after;
+  /**
+   * The digest of the place and points of each stroke a line told of, that a person last changed
+   * at or before `options.after`, or that the listener first received without a record of when
+   * they changed, with a change at or before `start`.
+   */
+  const told = new Map<string, string>();
   /** The strokes changed since the last line, in the order of their last change. */
   let strokes: string[] = [];
   let pause: ReturnType<typeof setTimeout> | undefined;
@@ -336,6 +358,7 @@ export function listenSketches(doc: Y.Doc, options: BoardListenOptions<Sketched>
     });
     strokes = [];
     if (drawn.length === 0) return;
+    for (const { id, drawing } of drawn) told.set(id, drawing);
     options.onLine({
       at: new Date(Math.max(...drawn.map(({ updated }) => updated))).toISOString(),
       kind: 'sketch',
@@ -346,8 +369,16 @@ export function listenSketches(doc: Y.Doc, options: BoardListenOptions<Sketched>
 
   const off = watchElements(elements, (id) => {
     const stroke = strokeOf(elements.get(id));
-    if (stroke === undefined || stroke.updated <= options.after) return;
+    if (stroke === undefined) return;
+    if (stroke.updated <= options.after || (!told.has(id) && !stroke.marked && stroke.updated <= start)) {
+      told.set(id, stroke.drawing);
+      return;
+    }
+    // A stroke whose place and points are those the listener told of doesn't wait for a line, and
+    // doesn't hold back the line of the others: a change back to them before the pause ends takes
+    // the stroke out of the strokes changed since the last line.
     strokes = strokes.filter((other) => other !== id);
+    if (stroke.drawing === told.get(id)) return;
     strokes.push(id);
     clearTimeout(pause);
     pause = setTimeout(flush, options.pauseMs);
@@ -370,7 +401,7 @@ export interface BoardListenerOptions {
    * when the listener started, or the earlier time that `--after` sets.
    */
   after: number;
-  /** When the listener started, in milliseconds since the epoch, which `listenTexts` reads as its `start`. */
+  /** When the listener started, in milliseconds since the epoch, which `listenTexts` and `listenSketches` read as their `start`. */
   start: number;
   /** How long a pause after words ends their group, in milliseconds. */
   pauseMs: number;
@@ -390,7 +421,7 @@ export function listenToBoard(doc: Y.Doc, options: BoardListenerOptions): Listen
   const listeners = [
     listen(new TranscriptLog(doc), { after, pauseMs, onHeard: print }),
     listenTexts(doc, { after, start, pauseMs: boardPauseMs, onLine: print }),
-    listenSketches(doc, { after, pauseMs: boardPauseMs, onLine: print }),
+    listenSketches(doc, { after, start, pauseMs: boardPauseMs, onLine: print }),
   ];
   return {
     flush: () => {

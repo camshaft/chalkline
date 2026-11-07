@@ -2,7 +2,7 @@ import { appendEntry, connectDoc, MemoryNetwork, transcriptOf, type TranscriptEn
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { ELEMENTS } from './board';
-import { withChange, withCreator, withWordsChanged, type Creator } from './creator';
+import { withChange, withCreator, withDrawingChanged, withWordsChanged, type Creator } from './creator';
 import {
   BOARD_PAUSE_MS,
   listen,
@@ -651,6 +651,91 @@ describe('listenSketches', () => {
     expect(lines).toEqual([]);
   });
 
+  it("leaves out a person's stroke that a page saved again with its place and points, by its drawing mark, and prints a change of either", () => {
+    const { elements, lines } = watching<Sketched>(listenSketches);
+    // A person draws a stroke before the start and another after it; the page's binding keeps on
+    // the board's copy of each the time its place and points last changed.
+    const before = withDrawingChanged(stroke('before', 0, 0, [[0, 0], [9, 9]], -5), undefined);
+    const after = withDrawingChanged(stroke('after', 100, 0, [[0, 0], [9, 9]], 3), undefined);
+    // A peer's copy of the board brings each as a page saved it again after the start, with a new
+    // version and index and the same place and points.
+    const savedBefore = withDrawingChanged(edited(before, { index: 'a5' }, 5), before);
+    const savedAfter = withDrawingChanged(edited(after, { index: 'a6' }, 6), after);
+    elements.set('before', savedBefore);
+    elements.set('after', savedAfter);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(3), kind: 'sketch', ids: ['after'], box: { x: 100, y: 0, width: 9, height: 9 } }]);
+
+    // A person moves the stroke drawn before the start, and a page saves the other again just
+    // before the pause ends, which doesn't hold back the line of the move.
+    elements.set('before', withDrawingChanged(edited(savedBefore, { x: 20 }, 10), savedBefore));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS - 1);
+    const again = withDrawingChanged(edited(savedAfter, { index: 'a7' }, 12), savedAfter);
+    elements.set('after', again);
+    vi.advanceTimersByTime(1);
+    expect(lines).toEqual([
+      { at: at(3), kind: 'sketch', ids: ['after'], box: { x: 100, y: 0, width: 9, height: 9 } },
+      { at: at(10), kind: 'sketch', ids: ['before'], box: { x: 20, y: 0, width: 9, height: 9 } },
+    ]);
+
+    // A person moves the stroke drawn after the start and moves it back before the pause ends.
+    const away = withDrawingChanged(edited(again, { x: 140 }, 20), again);
+    const back = withDrawingChanged(edited(away, { x: 100 }, 21), away);
+    elements.set('after', away);
+    elements.set('after', back);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toHaveLength(2);
+
+    // A person draws on with the stroke's points.
+    elements.set('after', withDrawingChanged(edited(back, { points: [[0, 0], [9, 9], [30, 3]] }, 30), back));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines.slice(2)).toEqual([{ at: at(30), kind: 'sketch', ids: ['after'], box: { x: 100, y: 0, width: 30, height: 9 } }]);
+  });
+
+  it('leaves out a stroke without a drawing mark that a page saved again before the start, keeping its place and points, and prints a later change of its points', () => {
+    const doc = new Y.Doc();
+    const elements = doc.getMap<unknown>(ELEMENTS);
+    const lines: Sketched[] = [];
+    // A listener that starts a minute after the time `--after` sets.
+    listenSketches(doc, { after: START, start: START + 60_000, pauseMs: BOARD_PAUSE_MS, onLine: (line) => lines.push(line) });
+    // A person's stroke from an hour before, which a page drew before the pages recorded the
+    // drawing mark, and which a page saved again 30 seconds after `--after`, with a new version and
+    // index and the same place and points. A peer's copy of the board brings only that copy.
+    const saved = edited(stroke('old', 10, 20, [[0, 0], [30, 40]], -3600), { index: 'a5' }, 30);
+    elements.set('old', saved);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([]);
+
+    // A person's stroke that a page drew with its drawing mark 20 seconds after `--after`.
+    elements.set('drawn', withDrawingChanged(stroke('drawn', 100, 0, [[0, 0], [9, 9]], 20), undefined));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(20), kind: 'sketch', ids: ['drawn'], box: { x: 100, y: 0, width: 9, height: 9 } }]);
+
+    // A page that doesn't record the drawing mark brings a person's change of the old stroke's
+    // points from 50 seconds after `--after`.
+    const redrawn = edited(saved, { points: [[0, 0], [30, 40], [50, 10]] }, 50);
+    elements.set('old', redrawn);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines.slice(1)).toEqual([{ at: at(50), kind: 'sketch', ids: ['old'], box: { x: 10, y: 20, width: 50, height: 40 } }]);
+
+    // A page saves the stroke again after the start, with its place and points as they were.
+    const again = withDrawingChanged(edited(redrawn, { index: 'a6' }, 70), redrawn);
+    elements.set('old', again);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toHaveLength(2);
+
+    // A person changes the stroke's points, and another person draws a stroke on a page that
+    // doesn't record the drawing mark.
+    elements.set('old', withDrawingChanged(edited(again, { points: [[0, 0], [30, 40]] }, 80), again));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    elements.set('fresh', stroke('fresh', 0, 0, [[0, 0], [5, 5]], 90));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines.slice(2)).toEqual([
+      { at: at(80), kind: 'sketch', ids: ['old'], box: { x: 10, y: 20, width: 30, height: 40 } },
+      { at: at(90), kind: 'sketch', ids: ['fresh'], box: { x: 0, y: 0, width: 5, height: 5 } },
+    ]);
+  });
+
   it('prints the strokes that wait for their pause at once on flush, and drops them on stop', () => {
     const { elements, lines, listener } = watching<Sketched>(listenSketches);
     elements.set('one', stroke('one', 0, 0, [[0, 0], [9, 9]], 1));
@@ -702,7 +787,7 @@ describe('listenToBoard', () => {
     listener.stop();
   });
 
-  it("passes the listener's start to the texts, where --after sets an earlier time", () => {
+  it("passes the listener's start to the texts and the strokes, where --after sets an earlier time", () => {
     const doc = new Y.Doc();
     const elements = doc.getMap<unknown>(ELEMENTS);
     const lines: Line[] = [];
@@ -713,12 +798,17 @@ describe('listenToBoard', () => {
       boardPauseMs: BOARD_PAUSE_MS,
       print: (line) => lines.push(line),
     });
-    // A text without a words mark that a page saved again before the start, and a person's text
-    // after the start.
+    // A text without a words mark and a stroke without a drawing mark, each of which a page saved
+    // again before the start, and a person's text and stroke after the start.
     elements.set('old', edited(text('old', 'an old note', -3600), { width: 140 }, 30));
+    elements.set('scrawl', edited(stroke('scrawl', 0, 0, [[0, 0], [9, 9]], -3600), { index: 'a5' }, 30));
     elements.set('note', text('note', 'a box here', 70));
+    elements.set('one', stroke('one', 0, 0, [[0, 0], [5, 5]], 70));
     vi.advanceTimersByTime(BOARD_PAUSE_MS);
-    expect(lines).toEqual([{ at: at(70), kind: 'text', text: 'a box here' }]);
+    expect(lines).toEqual([
+      { at: at(70), kind: 'text', text: 'a box here' },
+      { at: at(70), kind: 'sketch', ids: ['one'], box: { x: 0, y: 0, width: 5, height: 5 } },
+    ]);
   });
 });
 
