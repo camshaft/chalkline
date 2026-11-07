@@ -1,4 +1,4 @@
-import type { TranscriptEntry, Transport } from '@chalkline/sync';
+import { feedbackOf, getFeedback, type Feedback, type TranscriptEntry, type Transport } from '@chalkline/sync';
 import type * as Y from 'yjs';
 import { ELEMENTS, finite, stringOf } from './board';
 import { agentWordsOf, changerOf, creatorOf, drawingChangedOf, drawingOf, wordsChangedOf } from './creator';
@@ -117,8 +117,27 @@ export type Sketched = {
   box: Box;
 };
 
+/** A line that `chalkline-mcp listen` prints for a feedback that becomes open: a new one, or one a person reopens. */
+export type FeedbackOpened = {
+  /**
+   * When the feedback became open (ISO 8601): its time, as its writer's page recorded it, for a new
+   * feedback, and the time the listener received the reopening for a feedback a person reopened,
+   * since the board doesn't record when a person reopens a feedback.
+   */
+  at: string;
+  kind: 'feedback';
+  /** The feedback's id, as read_feedback lists it, to pass to answer_feedback. */
+  id: string;
+  /** The writer's name. */
+  by: string;
+  /** What the person wrote. */
+  text: string;
+  /** The ids of the shapes that overlapped the feedback's area when the person sent it. */
+  shapes: string[];
+};
+
 /** A line that `chalkline-mcp listen` prints. */
-export type Line = Heard | Written | Sketched;
+export type Line = Heard | Written | Sketched | FeedbackOpened;
 
 /**
  * How long a person's text, or the strokes they draw, stay unchanged before a line tells of them,
@@ -395,10 +414,85 @@ export function listenSketches(doc: Y.Doc, options: BoardListenOptions<Sketched>
   };
 }
 
+/**
+ * The time `record`, an open feedback, became open, where the listener first receives it open: its
+ * time where no agent answered it, and now where a person reopened it after an agent's answer,
+ * since the board doesn't record when a person reopens a feedback. It returns undefined where the
+ * feedback became open at or before `after`: a new feedback written at or before `after`, and a
+ * reopened one whose answer came at or before `after`, since a person may have reopened it before
+ * `after` too.
+ */
+function firstOpenedAt(record: Feedback, after: number): string | undefined {
+  if (record.answer === null) return Date.parse(record.at) > after ? record.at : undefined;
+  return Date.parse(record.answer.at) > after ? new Date().toISOString() : undefined;
+}
+
+/** Orders two lines by their time. */
+const byTime = (a: FeedbackOpened, b: FeedbackOpened): number => Date.parse(a.at) - Date.parse(b.at);
+
+export interface FeedbackListenOptions {
+  /**
+   * The time a feedback has to become open after, in milliseconds since the epoch: when the
+   * listener started, or the earlier time that `--after` sets.
+   */
+  after: number;
+  /** Called with each line. */
+  onLine: (line: FeedbackOpened) => void;
+}
+
+/**
+ * Listens to the feedback people write on the board that `doc` holds. Each feedback that becomes
+ * open sends its line to `options.onLine` at once: a new feedback, by its time, and a feedback a
+ * person reopens after an agent's answer, by the time the listener receives the reopening. A
+ * feedback's other changes, such as an agent's answer, and a peer's copy of a record the listener
+ * read already, don't make a line. A feedback written at or before `options.after` is left out,
+ * though the listener receives it later, as a peer's copy of the board brings it, and so is a
+ * reopened feedback that the listener first receives open, where its answer came at or before
+ * `options.after`, since the board doesn't record when the person reopened it. A change that
+ * deletes a feedback, or that writes a value under its id that doesn't read as a feedback, makes
+ * the listener read it as not open, so that its next open copy makes a line.
+ */
+export function listenFeedback(doc: Y.Doc, options: FeedbackListenOptions): Listener {
+  const feedback = feedbackOf(doc);
+  /** Whether the listener last read each feedback as open. */
+  const open = new Map<string, boolean>();
+
+  const read = (ids: Iterable<string>): void => {
+    const lines: FeedbackOpened[] = [];
+    for (const id of ids) {
+      const record = getFeedback(feedback, id);
+      const wasOpen = open.get(id);
+      if (record === null) {
+        if (wasOpen !== undefined) open.set(id, false);
+        continue;
+      }
+      open.set(id, record.status === 'open');
+      if (record.status !== 'open' || wasOpen === true) continue;
+      const at = wasOpen === false ? new Date().toISOString() : firstOpenedAt(record, options.after);
+      if (at === undefined) continue;
+      lines.push({ at, kind: 'feedback', id, by: record.by, text: record.text, shapes: record.shapes });
+    }
+    // The feedback that one change opens, as where a peer's copy of the board arrives, comes in the
+    // order of its time.
+    lines.sort(byTime);
+    for (const line of lines) options.onLine(line);
+  };
+
+  const observer = (event: Y.YMapEvent<unknown>): void => read(event.keysChanged);
+  feedback.observe(observer);
+  read([...feedback.keys()]);
+  return {
+    // A feedback's line doesn't wait for a pause, so flush doesn't hold one to pass on.
+    flush: () => undefined,
+    stop: () => feedback.unobserve(observer),
+  };
+}
+
 export interface BoardListenerOptions {
   /**
-   * The time what was said, written or drawn has to come after, in milliseconds since the epoch:
-   * when the listener started, or the earlier time that `--after` sets.
+   * The time that what was said, written or drawn, and each feedback's opening, has to come after,
+   * in milliseconds since the epoch: when the listener started, or the earlier time that `--after`
+   * sets.
    */
   after: number;
   /** When the listener started, in milliseconds since the epoch, which `listenTexts` and `listenSketches` read as their `start`. */
@@ -412,9 +506,10 @@ export interface BoardListenerOptions {
 }
 
 /**
- * Listens to what people on the board that `doc` holds say, write and draw: the groups of words
- * that `listen` makes of the board's transcript, the texts that `listenTexts` tells of and the
- * sketches that `listenSketches` makes, each line to `options.print`.
+ * Listens to what people on the board that `doc` holds say, write and draw, and to the feedback
+ * they write: the groups of words that `listen` makes of the board's transcript, the texts that
+ * `listenTexts` tells of, the sketches that `listenSketches` makes and the feedback that
+ * `listenFeedback` tells of, each line to `options.print`.
  */
 export function listenToBoard(doc: Y.Doc, options: BoardListenerOptions): Listener {
   const { after, start, pauseMs, boardPauseMs, print } = options;
@@ -422,6 +517,7 @@ export function listenToBoard(doc: Y.Doc, options: BoardListenerOptions): Listen
     listen(new TranscriptLog(doc), { after, pauseMs, onHeard: print }),
     listenTexts(doc, { after, start, pauseMs: boardPauseMs, onLine: print }),
     listenSketches(doc, { after, start, pauseMs: boardPauseMs, onLine: print }),
+    listenFeedback(doc, { after, onLine: print }),
   ];
   return {
     flush: () => {
