@@ -9,9 +9,10 @@
 // the start with read_changes, then reads the empty transcript as the resource
 // chalkline://transcript, subscribes to it, and checks that read_transcript refuses a cursor past
 // the transcript's end. It posts a message in the board's chat with post_message and reads it
-// back with read_transcript. Last, it reads the empty feedback resource chalkline://feedback,
+// back with read_transcript. It reads the empty feedback resource chalkline://feedback,
 // subscribes to it, and checks that get_board doesn't list a feedback and that answer_feedback refuses
-// an id the board doesn't hold. CI runs it after the build.
+// an id the board doesn't hold. Last, it saves a snapshot mark with save_snapshot and reads it back
+// with list_snapshots. CI runs it after the build.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -51,12 +52,14 @@ assert.deepEqual(tools.map((tool) => tool.name).sort(), [
   'flatten',
   'get_board',
   'get_request',
+  'list_snapshots',
   'post_message',
   'read_changes',
   'read_feedback',
   'read_transcript',
   'render_board',
   'reorder_shapes',
+  'save_snapshot',
   'scale_shapes',
   'update_shape',
 ]);
@@ -157,7 +160,15 @@ const unknown = await client.callTool({
 });
 assert.equal(unknown.isError, true, JSON.stringify(unknown.content));
 
+// save_snapshot writes a mark with the agent's name, the label and the board's shape count, which
+// list_snapshots reads back.
+const { mark: saved } = await call('save_snapshot', { label: 'Smoke test snapshot' });
+assert.equal(saved.by, 'chalkline-smoke');
+assert.equal(saved.label, 'Smoke test snapshot');
+assert.equal(saved.shapes, changes.changes.length);
+assert.deepEqual((await call('list_snapshots', {})).marks, [saved]);
+
 await client.close();
 console.log(
-  `chalkline-mcp added ${id} labelled "Smoke test" and ${next}, connected them with ${arrow}, moved ${next}, deleted ${arrow}, added the freehand stroke ${stroke}, drew the board as a PNG of ${drawn.structuredContent.width} by ${drawn.structuredContent.height} pixels, wrote the Mermaid request ${asked.id}, read each back, read the board's ${changes.changes.length} changes, read the empty transcript, and posted the message ${posted.id} in the chat and read it back, and read the empty feedback`,
+  `chalkline-mcp added ${id} labelled "Smoke test" and ${next}, connected them with ${arrow}, moved ${next}, deleted ${arrow}, added the freehand stroke ${stroke}, drew the board as a PNG of ${drawn.structuredContent.width} by ${drawn.structuredContent.height} pixels, wrote the Mermaid request ${asked.id}, read each back, read the board's ${changes.changes.length} changes, read the empty transcript, and posted the message ${posted.id} in the chat and read it back, read the empty feedback, and saved the snapshot mark ${saved.id} and read it back`,
 );

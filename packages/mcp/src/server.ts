@@ -27,6 +27,7 @@ import {
   scalingSchema,
   shapeSchema,
 } from './shapes';
+import { registerSnapshots } from './snapshots';
 import { registerTranscript } from './transcript';
 
 /** A Mermaid request's state, as add_mermaid and get_request answer it. */
@@ -374,6 +375,9 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
 
   // read_feedback and answer_feedback, and the open feedback as a resource with its notification.
   registerFeedback(server, doc);
+
+  // save_snapshot and list_snapshots, which write and read the marks that ask each browser to keep a snapshot.
+  registerSnapshots(server, doc);
 
   return server;
 }

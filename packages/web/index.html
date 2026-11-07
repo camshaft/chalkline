@@ -357,7 +357,8 @@
       .join-error {
         color: #b00020;
       }
-      #settings {
+      #settings,
+      #history {
         position: fixed;
         inset: 0;
         z-index: 1000;
@@ -368,7 +369,8 @@
         overflow: auto;
         background: rgba(0, 0, 0, 0.3);
       }
-      #settings[hidden] {
+      #settings[hidden],
+      #history[hidden] {
         display: none;
       }
       .settings-panel {
@@ -403,6 +405,51 @@
         color: #b00020;
       }
       .settings-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        margin-top: 1rem;
+      }
+      .history-panel {
+        width: min(40rem, 100%);
+        box-sizing: border-box;
+        padding: 1rem 1.25rem;
+        background: #fff;
+        border-radius: 0.5rem;
+        box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.25);
+      }
+      .history-panel h2 {
+        margin-top: 0;
+      }
+      .history-list {
+        max-height: 14rem;
+        overflow: auto;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .history-list button {
+        width: 100%;
+        padding: 0.4rem 0.5rem;
+        border: 0;
+        background: none;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .history-list button[aria-pressed='true'] {
+        background: #e8e4ff;
+      }
+      .history-preview svg {
+        display: block;
+        width: 100%;
+        height: auto;
+        max-height: 40vh;
+      }
+      .history-lost {
+        color: #b00020;
+      }
+      .history-actions {
         display: flex;
         justify-content: flex-end;
         gap: 0.5rem;
@@ -582,6 +629,7 @@
     </div>
     <input id="open-file" type="file" accept=".excalidraw,application/json,application/vnd.excalidraw+json" hidden />
     <div id="settings" hidden></div>
+    <div id="history" hidden></div>
     <div id="board">
       <div id="app"></div>
       <div id="feedback-layer"></div>

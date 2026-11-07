@@ -57,9 +57,12 @@ export function mergeShared<T extends VersionedElement>(local: readonly T[], sha
   return { elements, keep, taken: elements.filter((element) => !ours.has(element)) };
 }
 
-// Fractional indices compare as plain strings. An element without one goes
-// last, and two elements with the same index go in the order of their ids.
-function byIndex(a: VersionedElement, b: VersionedElement): number {
+/**
+ * Orders two elements from back to front. Fractional indices compare as plain
+ * strings. An element without one goes last, and two elements with the same
+ * index go in the order of their ids.
+ */
+export function byIndex(a: VersionedElement, b: VersionedElement): number {
   const left = a.index ?? null;
   const right = b.index ?? null;
   if (left !== right) {
