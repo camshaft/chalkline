@@ -41,6 +41,7 @@ assert.deepEqual(tools.map((tool) => tool.name).sort(), [
   'read_transcript',
   'render_board',
   'reorder_shapes',
+  'scale_shapes',
   'update_shape',
 ]);
 

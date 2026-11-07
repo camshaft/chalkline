@@ -7,10 +7,20 @@ import { answer, refusal } from './answer';
 import { addShapes, ELEMENTS, newId, readBoard, ShapeError } from './board';
 import { registerChanges } from './changes';
 import type { Creator } from './creator';
-import { connect, deleteShapes, moveGroup, reorderShapes, updateShape } from './edit';
+import { connect, deleteShapes, moveGroup, reorderShapes, scaleShapes, updateShape } from './edit';
 import { renderBoard, RenderError } from './render';
 import { pendingRequests, RequestError, waitForRequest, writeMermaidRequest } from './requests';
-import { boardShapeSchema, changeSchema, connectionSchema, deletionSchema, LISTED_POINTS, placeSchema, reorderSchema, shapeSchema } from './shapes';
+import {
+  boardShapeSchema,
+  changeSchema,
+  connectionSchema,
+  deletionSchema,
+  LISTED_POINTS,
+  placeSchema,
+  reorderSchema,
+  scalingSchema,
+  shapeSchema,
+} from './shapes';
 import { registerTranscript } from './transcript';
 
 /** A Mermaid request's state, as add_mermaid and get_request answer it. */
@@ -210,6 +220,23 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       outputSchema: { ids: z.array(z.string()) },
     },
     ({ ids, place }) => refusing(async () => answer({ ids: reorderShapes(doc, ids, place) })),
+  );
+
+  server.registerTool(
+    'scale_shapes',
+    {
+      title: 'Scale shapes on the board',
+      description: [
+        'Makes shapes on the board smaller or larger in one change, by their ids, as get_board lists them, by their groups, or both, and answers them as get_board lists them after the change.',
+        'Each shape whose groups hold one of groups scales, and each shape scales with its label.',
+        "factor is how many times its size each shape becomes, and about is the point the shapes scale around: each shape's distance from that point, its width and its height, the points of a line, an arrow or a freehand stroke, and the font size of a text or a label scale by factor.",
+        "Where about is left out, the left and top edges of the shapes' bounds stay where they are.",
+        "An arrow that scales stays bound to each shape that scales with it, and each straight arrow between a shape that scales and one that doesn't is laid out again between them.",
+      ].join(' '),
+      inputSchema: scalingSchema.shape,
+      outputSchema: { shapes: z.array(boardShapeSchema) },
+    },
+    (scaling) => refusing(async () => answer({ shapes: await scaleShapes(doc, scaling) })),
   );
 
   server.registerTool(

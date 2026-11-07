@@ -1,6 +1,6 @@
 export { addShapes, backToFront, ELEMENTS, indicesAt, newId, readBoard, ShapeError, type Stacked } from './board';
 export { creatorOf, CUSTOM_DATA, withCreator, type Creator } from './creator';
-export { connect, deleteShapes, reorderShapes, updateShape } from './edit';
+export { connect, deleteShapes, reorderShapes, scaleShapes, updateShape } from './edit';
 export {
   arrowPoints,
   boardPoints,
@@ -30,10 +30,12 @@ export {
   deletionSchema,
   placeSchema,
   reorderSchema,
+  scalingSchema,
   shapeSchema,
   type BoardShape,
   type Connection,
   type Place,
+  type Scaling,
   type Shape,
   type ShapeChange,
 } from './shapes';
