@@ -13,6 +13,13 @@ The browser keeps each board in its IndexedDB storage, one store for each room a
 
 The Save file button above the board downloads the board as an `.excalidraw` file, which Excalidraw opens too. The Open file button, or a `.excalidraw` file dropped on the board, adds the file's shapes to the board for everyone in the room; where the board already holds one of the file's shapes, the file's copy replaces it. Each image's picture, from an opened file, a drop or a paste, goes to everyone in the room with the board's shapes, and the browser keeps it with the board. Excalidraw adds images of up to 4 MiB.
 
+## Connection settings
+
+The Connection settings button above the board opens two settings. They stay in the browser's own storage, apply to every board that browser opens, and are unset by default. Saving them reloads the board.
+
+- TURN servers. Some networks, such as some office networks and VPNs, block direct connections between browsers, and the page then says that a peer couldn't connect. A TURN server forwards the encrypted traffic between two such browsers. Sign up for a hosted TURN service, such as [Cloudflare's](https://developers.cloudflare.com/calls/turn/), or run your own, such as [coturn](https://github.com/coturn/coturn), and enter its address, such as `turn:turn.example.com:3478`, with its username and password.
+- Relays. Your own Nostr relays, one `wss://` address a line, which the page uses in place of the public relays. Everyone on a board needs at least one relay in common.
+
 ## Live speech
 
 The microphone button above the board turns on live speech. Speech is off by default, and each browser turns it on for itself. Before the browser starts listening, the page says where recognition runs: on the device, where the browser offers on-device recognition of your language (Web Speech's `processLocally`), after a download where the language needs one, or else on the browser vendor's speech service, which receives your audio. Recognition starts only once you choose Start listening. Each final result goes on the board's transcript with your name and the time, and everyone on the board and the agent can read it; the words the browser hasn't settled yet show on your page alone. The Transcript button opens the transcript. Where the browser doesn't offer speech recognition, the microphone button is disabled, and the transcript still shows what the others say.
@@ -30,13 +37,6 @@ The browsers the change ran in, in those jobs on 2026-11-07 (the fake microphone
 | Headless Chromium 149.0.7827.0, Linux, on cameron's desktop, on the live page before this change | `SpeechRecognition`, `processLocally`, `available` and `install` | A direct call of `SpeechRecognition.available({ langs: ['en-US'], processLocally: true })` didn't answer, and the page stopped answering, in each of three tries. |
 
 So the page asks the browser where recognition runs only once you press the microphone button, and shows Cancel speech while the browser answers.
-
-## Connection settings
-
-The Connection settings button above the board opens two settings. They stay in the browser's own storage, apply to every board that browser opens, and are unset by default. Saving them reloads the board.
-
-- TURN servers. Some networks, such as some office networks and VPNs, block direct connections between browsers, and the page then says that a peer couldn't connect. A TURN server forwards the encrypted traffic between two such browsers. Sign up for a hosted TURN service, such as [Cloudflare's](https://developers.cloudflare.com/calls/turn/), or run your own, such as [coturn](https://github.com/coturn/coturn), and enter its address, such as `turn:turn.example.com:3478`, with its username and password.
-- Relays. Your own Nostr relays, one `wss://` address a line, which the page uses in place of the public relays. Everyone on a board needs at least one relay in common.
 
 ## Add a box from a script
 
