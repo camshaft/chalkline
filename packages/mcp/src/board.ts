@@ -42,12 +42,14 @@ interface BoardElement {
   opacity: number | undefined;
   fontFamily: number | undefined;
   textAlign: string | undefined;
+  groups: string[];
 }
 
 /**
  * The board's shapes from back to front, as get_board answers them. A text bound to a shape is
  * that shape's label, an arrow's start and end are the shapes its ends are bound to, and a shape
- * an agent added lists the agent as its creator. A line's or an arrow's width and height say how
+ * an agent added lists the agent as its creator. A shape in a group lists each group it is in, the
+ * innermost first. A line's or an arrow's width and height say how
  * far its last point lies right of and below its first, which is where the pages draw it to.
  * Each shape answers its stroke and background colors, and each style field and its text's font
  * and alignment that aren't Excalidraw's defaults. Deleted elements, and values that aren't
@@ -87,6 +89,7 @@ export function readBoard(values: Iterable<unknown>): BoardShape[] {
     if (element.end !== undefined && listed.has(element.end)) shape.end = element.end;
     if (element.creator !== undefined) shape.creator = element.creator;
     addStyle(shape, element, text);
+    if (element.groups.length > 0) shape.groups = element.groups;
     return shape;
   });
 }
@@ -120,11 +123,17 @@ export function newId(): string {
  * Adds `shapes`, in Excalidraw's skeleton format, to the board that `doc` holds, above every
  * element on it, in one transaction, and returns each shape's id in the order of `shapes`. A shape
  * keeps the id it sets, and a shape that leaves it out gets a random one. Each element it adds, a
- * shape's label among them, records `creator`, where given, as its creator. Throws a ShapeError,
- * and adds nothing, where two shapes set one id, a shape sets an id the board holds already, or an
+ * shape's label among them, records `creator`, where given, as its creator, and goes into the
+ * group `group`, where given, as Excalidraw groups elements. Throws a ShapeError, and adds
+ * nothing, where two shapes set one id, a shape sets an id the board holds already, or an
  * arrow's start or end isn't a rectangle, an ellipse, a diamond or a text of the same call.
  */
-export async function addShapes(doc: Y.Doc, shapes: readonly Shape[], creator?: Creator): Promise<string[]> {
+export async function addShapes(
+  doc: Y.Doc,
+  shapes: readonly Shape[],
+  creator?: Creator,
+  group?: string,
+): Promise<string[]> {
   const shared = doc.getMap<unknown>(ELEMENTS);
   const ids = shapes.map((shape) => shape.id ?? newId());
 
@@ -168,7 +177,8 @@ export async function addShapes(doc: Y.Doc, shapes: readonly Shape[], creator?: 
   doc.transact(() => {
     elements.forEach((element, place) => {
       const copy = { ...structuredClone(element), index: indices[place] };
-      shared.set(element.id, creator === undefined ? copy : withCreator(copy, creator));
+      const placed = group === undefined ? copy : { ...copy, groupIds: [group] };
+      shared.set(element.id, creator === undefined ? placed : withCreator(placed, creator));
     });
   });
   return ids;
@@ -250,6 +260,7 @@ function boardElement(value: unknown): BoardElement | null {
     opacity: numberOf(fields.opacity),
     fontFamily: numberOf(fields.fontFamily),
     textAlign: stringOf(fields.textAlign),
+    groups: groupsOf(fields.groupIds),
   };
 }
 
@@ -279,6 +290,11 @@ export function finite(value: unknown): value is number {
 
 export function stringOf(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+/** The ids of the groups an element is in, as its `groupIds` lists them, the innermost first. */
+export function groupsOf(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((group): group is string => typeof group === 'string') : [];
 }
 
 function numberOf(value: unknown): number | undefined {
