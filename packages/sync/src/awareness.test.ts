@@ -178,6 +178,53 @@ describe('connectAwareness', () => {
     expect(others(d.awareness)).toEqual(['b', 'c']);
   });
 
+  it('removes the state of a peer that leaves from two relays that each sent the other that state', () => {
+    const network = new MemoryNetwork();
+    network.keepApart('a', 'c');
+    network.keepApart('a', 'd');
+    const a = participant(network, 'a');
+    network.flush();
+    const b = participant(network, 'b');
+    network.flush();
+    const aId = a.awareness.clientID;
+    // Each message with a's state in it that one relay sent the other, as `from->to`.
+    const relayed: string[] = [];
+    /** Joins the relay `id`, which records each message from the relay `other` that holds a's state. */
+    const relay = (id: string, other: string): Awareness => {
+      const transport = network.join(id);
+      transport.onMessage((channel, data, from) => {
+        if (channel !== 'awareness' || from !== other) return;
+        const reader = new Awareness(new Y.Doc());
+        made.push(reader);
+        applyAwarenessUpdate(reader, data, 'test');
+        if (reader.getStates().has(aId)) relayed.push(`${from}->${id}`);
+      });
+      const awareness = new Awareness(new Y.Doc());
+      made.push(awareness);
+      awareness.setLocalState({ name: id });
+      connectAwareness(awareness, transport);
+      network.flush();
+      return awareness;
+    };
+    const c = relay('c', 'd');
+    const d = relay('d', 'c');
+    relayed.splice(0);
+
+    // The link of c and d breaks and comes back, and each sends the other every state it holds, a's among them.
+    network.disconnect('c', 'd');
+    network.flush();
+    expect(relayed).toContain('c->d');
+    expect(relayed).toContain('d->c');
+    for (const peer of [b.awareness, c, d]) expect(others(peer)).toContain('a');
+
+    network.leave('a');
+    network.flush();
+
+    expect(others(b.awareness)).toEqual(['c', 'd']);
+    expect(others(c)).toEqual(['b', 'd']);
+    expect(others(d)).toEqual(['b', 'c']);
+  });
+
   it("shows each participant's latest state at every peer of a line once its middle link breaks and comes back, with messages out of order", () => {
     let reordered = 0;
     for (let seed = 1; seed <= 200; seed += 1) {
