@@ -107,6 +107,36 @@ describe('MemoryNetwork', () => {
     expect(seen.slice(6)).toEqual(['b saw a leave', 'c saw a leave']);
     expect(network.dropped).toBe(2);
   });
+
+  it('never connects two peers that keepApart keeps apart', () => {
+    const network = new MemoryNetwork();
+    network.keepApart('a', 'c');
+    const { seen, peers } = watched(network, ['a', 'b', 'c']);
+    network.flush();
+
+    peers[0].send('update', new Uint8Array([1]));
+    network.disconnect('a', 'c');
+    network.flush();
+
+    expect(seen).toEqual(['a saw b join', 'b saw a join', 'b saw c join', 'c saw b join', 'b got update 1 from a']);
+  });
+
+  it("ends the link of two peers that keepApart keeps apart later, with its messages that hadn't arrived, for good", () => {
+    const network = new MemoryNetwork();
+    const { seen, peers } = watched(network, ['a', 'b']);
+    network.flush();
+
+    peers[0].send('update', new Uint8Array([1]));
+    network.keepApart('a', 'b');
+    network.flush();
+    peers[0].send('update', new Uint8Array([2]));
+    network.disconnect('a', 'b');
+    network.flush();
+
+    expect(seen.slice(2)).toEqual(['a saw b leave', 'b saw a leave']);
+    expect(network.dropped).toBe(1);
+    expect(network.sent).toHaveLength(1);
+  });
 });
 
 describe('seededRandom', () => {
