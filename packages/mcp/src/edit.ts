@@ -1,10 +1,11 @@
 // The agent's edits of shapes that are on the board already: connect draws an arrow bound to two
-// of them, update_shape moves, resizes, relabels or recolors one, and delete_shapes deletes some.
+// of them, update_shape moves, resizes, relabels or recolors one, or moves a group of them, and
+// delete_shapes deletes some, by their ids or by their groups.
 // Each reads the board as chalkline-mcp's copy holds it, and writes its change in one transaction,
 // which reaches the page as any change of the board does.
 import { randomInt } from 'node:crypto';
 import type * as Y from 'yjs';
-import { boundTo, ELEMENTS, finite, newId, readBoard, ShapeError, stringOf } from './board';
+import { boundTo, ELEMENTS, finite, groupsOf, newId, readBoard, ShapeError, stringOf } from './board';
 import { withCreator, type Creator } from './creator';
 import { arrowPoints, boardPoints, type Outline, type Point } from './geometry';
 import { indicesAbove } from './order';
@@ -30,8 +31,8 @@ const BINDABLE: ReadonlySet<string> = new Set([
   'embeddable',
 ]);
 
-/** The fields of a change, besides the id of the shape it changes. */
-type Field = Exclude<keyof ShapeChange, 'id'>;
+/** The fields of a change, besides the id of the shape or the group it changes. */
+type Field = Exclude<keyof ShapeChange, 'id' | 'group'>;
 
 /** Each field that update_shape reads. */
 const FIELDS: readonly Field[] = ['x', 'y', 'width', 'height', 'label', 'text', 'fontSize', 'strokeColor', 'backgroundColor'];
@@ -130,36 +131,32 @@ export async function connect(doc: Y.Doc, connection: Connection, creator?: Crea
  * an empty label removes it, and its color is its label's too. A text is measured again for a new
  * text or font size. A straight arrow or line takes a new end from its width and height. Each
  * straight arrow bound to a shape that moves or changes size is laid out again between the shapes
- * it binds. A label the change adds records `creator`, where given, as its creator. Throws a
- * ShapeError, and changes nothing, where the id isn't a shape on the board, is a label or is a
- * kind of shape update_shape doesn't change, where the change doesn't change anything or sets a
- * field that doesn't apply to the shape, where a size isn't above 0, or where it moves an arrow
- * bound to a shape or gives a width or a height to an arrow or a line of more than two points.
+ * it binds. A label the change adds records `creator`, where given, as its creator, and goes into
+ * the groups its shape is in. Throws a ShapeError, and changes nothing, where `change` leaves the
+ * id out, where the id isn't a shape on the board, is a label or is a kind of shape update_shape
+ * doesn't change, where the change doesn't change anything or sets a field that doesn't apply to
+ * the shape, where a size isn't above 0, or where it moves an arrow bound to a shape or gives a
+ * width or a height to an arrow or a line of more than two points.
  */
 export async function updateShape(doc: Y.Doc, change: ShapeChange, creator?: Creator): Promise<BoardShape> {
   const shared = doc.getMap<unknown>(ELEMENTS);
-  const shape = shapeOf(
-    shared,
-    'id',
-    change.id,
-    (container) => `change it with update_shape, the id "${container}" and label`,
-  );
+  const id = change.id;
+  if (!present(id)) throw new ShapeError(NO_SHAPE);
+  const shape = shapeOf(shared, 'id', id, (container) => `change it with update_shape, the id "${container}" and label`);
   const type = String(shape.type);
   const fields = CHANGES.get(type);
   if (fields === undefined) {
     throw new ShapeError(
-      `"${change.id}" is ${article(type)}, which update_shape doesn't change: it changes rectangles, ellipses, diamonds, texts, arrows and lines.`,
+      `"${id}" is ${article(type)}, which update_shape doesn't change: it changes rectangles, ellipses, diamonds, texts, arrows and lines.`,
     );
   }
   const given = FIELDS.filter((field) => present(change[field]));
   if (given.length === 0) {
-    throw new ShapeError(`The call doesn't change "${change.id}": give ${article(type)}'s ${listed(fields)}, or some of them.`);
+    throw new ShapeError(`The call doesn't change "${id}": give ${article(type)}'s ${listed(fields)}, or some of them.`);
   }
   const stray = given.find((field) => !fields.includes(field));
   if (stray !== undefined) {
-    throw new ShapeError(
-      `${stray} doesn't apply to ${article(type)}, such as "${change.id}": update_shape changes its ${listed(fields)}.`,
-    );
+    throw new ShapeError(`${stray} doesn't apply to ${article(type)}, such as "${id}": update_shape changes its ${listed(fields)}.`);
   }
 
   const writes = new Writes(shared);
@@ -168,19 +165,99 @@ export async function updateShape(doc: Y.Doc, change: ShapeChange, creator?: Cre
   else await changeBox(writes, shape, change, creator);
   writes.commit(doc);
 
-  const changed = readBoard(shared.values()).find((candidate) => candidate.id === change.id);
-  if (changed === undefined) throw new Error(`get_board doesn't list "${change.id}" after update_shape changed it`);
+  const changed = readBoard(shared.values()).find((candidate) => candidate.id === id);
+  if (changed === undefined) throw new Error(`get_board doesn't list "${id}" after update_shape changed it`);
   return changed;
 }
 
+/** The refusal of an update_shape call that sets neither id nor group. */
+const NO_SHAPE = "The call doesn't name a shape: give id, the shape to change, or group, a group to move.";
+
 /**
- * Deletes the shapes `ids` from the board, each with its label, in one transaction, and returns
- * `ids`. An arrow bound to a deleted shape stays, with that end free, and each shape that lists a
- * deleted arrow among its bound elements no longer does. Throws a ShapeError, and deletes nothing,
- * where `ids` holds one id twice, or an id that isn't a shape on the board or is a label.
+ * Moves every shape of the group `change.group`, each with its label, so that the group's left
+ * edge goes to `change.x` and its top edge to `change.y`, where given, and returns the group's
+ * shapes as get_board lists them after the move, from back to front. The group's edges are those
+ * of the bounds of its shapes as get_board lists them. Each straight arrow bound to a shape of the
+ * group that isn't in the group, and each straight arrow of the group bound to a shape outside it,
+ * is laid out again between the shapes it binds; an arrow of more than two points and an elbow
+ * arrow move as they are. Throws a ShapeError, and changes nothing, where `change` sets id too,
+ * sets a field besides x and y, sets neither, or where no shape on the board is in the group.
  */
-export function deleteShapes(doc: Y.Doc, ids: readonly string[]): string[] {
+export async function moveGroup(doc: Y.Doc, change: ShapeChange): Promise<BoardShape[]> {
   const shared = doc.getMap<unknown>(ELEMENTS);
+  const { id, group, x, y } = change;
+  if (!present(group)) throw new ShapeError(NO_SHAPE);
+  if (present(id)) {
+    throw new ShapeError(`The call sets id "${id}" and group "${group}": give id to change one shape, or group to move a group.`);
+  }
+  const stray = FIELDS.find((field) => field !== 'x' && field !== 'y' && present(change[field]));
+  if (stray !== undefined) {
+    throw new ShapeError(
+      `${stray} doesn't apply to a group, such as "${group}": update_shape moves a group by x and y, and changes each of its shapes by that shape's id.`,
+    );
+  }
+  if (!present(x) && !present(y)) {
+    throw new ShapeError(`The call doesn't move the group "${group}": give its x, its y or both.`);
+  }
+  const members = inGroup(readBoard(shared.values()), group);
+  if (members.length === 0) {
+    throw new ShapeError(`group is "${group}", which no shape on the board is in: get_board lists each shape's groups.`);
+  }
+  const left = Math.min(...members.map((shape) => Math.min(shape.x, shape.x + shape.width)));
+  const top = Math.min(...members.map((shape) => Math.min(shape.y, shape.y + shape.height)));
+  const dx = present(x) ? x - left : 0;
+  const dy = present(y) ? y - top : 0;
+
+  // The group's shapes and their labels move together, and keep where each lies from the others.
+  const moved = new Set(members.map((shape) => shape.id));
+  for (const [elementId, value] of shared.entries()) {
+    const element = elementOf(value);
+    if (element === undefined || element.isDeleted === true) continue;
+    if (element.type === 'text' && typeof element.containerId === 'string' && moved.has(element.containerId)) {
+      moved.add(elementId);
+    }
+  }
+  const writes = new Writes(shared);
+  for (const elementId of moved) {
+    const element = writes.get(elementId);
+    if (element !== undefined) writes.set(touched(element, { x: numberOf(element.x) + dx, y: numberOf(element.y) + dy }));
+  }
+  // An arrow between a shape that moved and one that didn't is laid out again between them.
+  for (const elementId of moved) {
+    const element = writes.get(elementId);
+    if (element === undefined) continue;
+    if (element.type !== 'arrow') {
+      await relayArrows(writes, element, (arrow) => moved.has(arrow));
+      continue;
+    }
+    for (const end of [boundTo(element.startBinding), boundTo(element.endBinding)]) {
+      const shape = end === undefined || moved.has(end) ? undefined : writes.get(end);
+      if (shape !== undefined) await relayArrows(writes, shape, (arrow) => arrow !== elementId);
+    }
+  }
+  writes.commit(doc);
+  return inGroup(readBoard(shared.values()), group);
+}
+
+/** The shapes of `shapes` that are in the group `group`, in their order. */
+function inGroup(shapes: readonly BoardShape[], group: string): BoardShape[] {
+  return shapes.filter((shape) => shape.groups?.includes(group) === true);
+}
+
+/**
+ * Deletes the shapes `ids`, and every shape of each group of `groups`, from the board, each with
+ * its label, in one transaction, and returns the ids it deleted: `ids`, then each group's shapes
+ * that `ids` and an earlier group leave out, from back to front. An arrow bound to a deleted shape
+ * stays, with that end free, and each shape that lists a deleted arrow among its bound elements no
+ * longer does. Throws a ShapeError, and deletes nothing, where neither lists anything, where `ids`
+ * holds one id twice, or an id that isn't a shape on the board or is a label, or where `groups`
+ * holds one group twice, or a group that no shape on the board is in.
+ */
+export function deleteShapes(doc: Y.Doc, ids: readonly string[], groups: readonly string[] = []): string[] {
+  const shared = doc.getMap<unknown>(ELEMENTS);
+  if (ids.length === 0 && groups.length === 0) {
+    throw new ShapeError("The call doesn't name a shape to delete: give ids, groups or both.");
+  }
   const first = new Map<string, number>();
   ids.forEach((id, place) => {
     const earlier = first.get(id);
@@ -196,12 +273,37 @@ export function deleteShapes(doc: Y.Doc, ids: readonly string[]): string[] {
     );
   });
 
+  const deleted = [...ids];
+  if (groups.length > 0) {
+    const shapes = readBoard(shared.values());
+    const listed = new Set(ids);
+    const firstGroup = new Map<string, number>();
+    groups.forEach((group, place) => {
+      const earlier = firstGroup.get(group);
+      if (earlier !== undefined) {
+        throw new ShapeError(`groups[${place}] is "${group}", which groups[${earlier}] is too: list each group once.`);
+      }
+      firstGroup.set(group, place);
+      const members = inGroup(shapes, group);
+      if (members.length === 0) {
+        throw new ShapeError(
+          `groups[${place}] is "${group}", which no shape on the board is in: get_board lists each shape's groups.`,
+        );
+      }
+      for (const shape of members) {
+        if (listed.has(shape.id)) continue;
+        listed.add(shape.id);
+        deleted.push(shape.id);
+      }
+    });
+  }
+
   doc.transact(() => {
     const board = [...shared.entries()].flatMap(([id, value]): [string, Element][] => {
       const element = elementOf(value);
       return element === undefined || element.isDeleted === true ? [] : [[id, element]];
     });
-    const gone = new Set(ids);
+    const gone = new Set(deleted);
     for (const [id, element] of board) {
       if (element.type === 'text' && typeof element.containerId === 'string' && gone.has(element.containerId)) gone.add(id);
     }
@@ -221,7 +323,7 @@ export function deleteShapes(doc: Y.Doc, ids: readonly string[]): string[] {
       if (Object.keys(fields).length > 0) shared.set(id, touched(element, fields));
     }
   });
-  return [...ids];
+  return deleted;
 }
 
 /** The elements that one change of the board writes, read over the board as it stands. */
@@ -295,7 +397,7 @@ async function changeBox(writes: Writes, box: Element, change: ShapeChange, crea
     fields.height = laid.container.height;
     const layout = { ...pick(laid.label, LABEL_LAYOUT), angle: numberOf(box.angle) };
     if (label === undefined) {
-      writes.added.push(mark({ ...structuredClone(laid.label), ...layout }, creator));
+      writes.added.push(mark({ ...structuredClone(laid.label), ...layout, groupIds: groupsOf(box.groupIds) }, creator));
       fields.boundElements = [...entries(box.boundElements), { id: labelId, type: 'text' }];
     } else {
       writes.set(touched(label, { ...layout, ...(strokeColor === undefined ? {} : { strokeColor }) }));
@@ -407,7 +509,7 @@ async function changeLinear(writes: Writes, line: Element, change: ShapeChange, 
     );
     const layout = { ...pick(laid.label, LABEL_LAYOUT), angle: 0 };
     if (label === undefined) {
-      writes.added.push(mark({ ...structuredClone(laid.label), ...layout }, creator));
+      writes.added.push(mark({ ...structuredClone(laid.label), ...layout, groupIds: groupsOf(line.groupIds) }, creator));
       fields.boundElements = [...entries(line.boundElements), { id: labelId, type: 'text' }];
     } else {
       writes.set(touched(label, { ...layout, ...(strokeColor === undefined ? {} : { strokeColor }) }));
@@ -420,13 +522,14 @@ async function changeLinear(writes: Writes, line: Element, change: ShapeChange, 
 
 /**
  * Lays out again each straight arrow bound to `shape`, as the change writes it, between the
- * shapes it binds, with its label in its middle. An end bound to another shape follows that
- * shape, and a free end stays where it is. An arrow of more than two points, an elbow arrow and an
- * arrow bound to `shape` at both ends stay as they are.
+ * shapes it binds, with its label in its middle, leaving out each arrow for whose id `skip`
+ * answers true. An end bound to another shape follows that shape, and a free end stays where it
+ * is. An arrow of more than two points, an elbow arrow and an arrow bound to `shape` at both ends
+ * stay as they are.
  */
-async function relayArrows(writes: Writes, shape: Element): Promise<void> {
+async function relayArrows(writes: Writes, shape: Element, skip: (arrow: string) => boolean = () => false): Promise<void> {
   for (const entry of entries(shape.boundElements)) {
-    if (entry.type !== 'arrow') continue;
+    if (entry.type !== 'arrow' || skip(entry.id)) continue;
     const arrow = writes.get(entry.id);
     if (arrow === undefined || arrow.type !== 'arrow' || arrow.elbowed === true) continue;
     const points = pointsOf(arrow);
