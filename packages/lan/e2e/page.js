@@ -124,4 +124,69 @@ window.chalklineE2e = {
       check();
     });
   },
+  /**
+   * Resolves with the image `id` as the page shows it: its type, its fileId, the MIME type of the
+   * file the page holds for it, and the red, green, blue and alpha of the static canvas's pixel at
+   * the image's center. It resolves once the scene shows an image of the file `fileId`, the page
+   * holds that file, and the canvas draws that pixel red, on the scene's and the board's change
+   * events and on each frame the page draws, and rejects with what the page shows where `waitMs`
+   * passes first.
+   */
+  async picture(id, fileId, waitMs) {
+    const handle = await window.chalklineReady;
+    const { api, doc } = handle;
+    const read = () => {
+      const element = api.getSceneElements().find((candidate) => candidate.id === id);
+      const file = element === undefined ? undefined : api.getFiles()[element.fileId];
+      let color = null;
+      const canvas = document.querySelector('canvas.excalidraw__canvas.static');
+      const context = canvas?.getContext('2d');
+      if (element !== undefined && canvas && context && canvas.clientWidth > 0) {
+        const { scrollX, scrollY, zoom } = api.getAppState();
+        const ratio = canvas.width / canvas.clientWidth;
+        const x = Math.round((element.x + element.width / 2 + scrollX) * zoom.value * ratio);
+        const y = Math.round((element.y + element.height / 2 + scrollY) * zoom.value * ratio);
+        if (x >= 0 && y >= 0 && x < canvas.width && y < canvas.height) color = [...context.getImageData(x, y, 1, 1).data];
+      }
+      return {
+        id,
+        type: element?.type ?? null,
+        fileId: element?.fileId ?? null,
+        mimeType: file?.mimeType ?? null,
+        color,
+      };
+    };
+    const red = (color) => color !== null && color[0] > 200 && color[1] < 60 && color[2] < 60 && color[3] === 255;
+    return new Promise((resolve, reject) => {
+      let finished = false;
+      let stopScene = () => {};
+      let frame;
+      let timer;
+      const check = () => {
+        const shown = read();
+        if (shown.type === 'image' && shown.fileId === fileId && shown.mimeType !== null && red(shown.color)) finish(null, shown);
+      };
+      const everyFrame = () => {
+        check();
+        if (!finished) frame = requestAnimationFrame(everyFrame);
+      };
+      const finish = (error, value) => {
+        if (finished) return;
+        finished = true;
+        stopScene();
+        doc.off('update', check);
+        cancelAnimationFrame(frame);
+        clearTimeout(timer);
+        if (error) reject(error);
+        else resolve(value);
+      };
+      stopScene = api.onChange(check);
+      doc.on('update', check);
+      timer = setTimeout(() => {
+        const state = { picture: read(), peers: handle.peers() };
+        finish(new Error(`timed out waiting for the helper's picture: ${JSON.stringify(state)}`));
+      }, waitMs);
+      everyFrame();
+    });
+  },
 };
