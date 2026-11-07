@@ -28,7 +28,8 @@ scale_shapes makes shapes smaller or larger, add_mermaid asks a page of the boar
 Mermaid diagram, whose request get_request reads, read_changes reads the shapes added, changed
 and deleted on the board, read_transcript reads what the people on the board said and typed,
 post_message posts a message in the board's chat, read_feedback reads the feedback people
-write on areas of the board, and answer_feedback answers one.
+write on areas of the board and the asks they send on the shapes they select, and
+answer_feedback answers one.
 The link is the board's address, with its #room=<name>&key=<password> fragment, and with its
 ?relay= parameters where the board's participants meet through a relay. Each line the helper
 logs goes to standard error.
