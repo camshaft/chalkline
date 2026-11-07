@@ -13,6 +13,7 @@
 // the agent's helper does with add_mermaid, and waits until the board shows each
 // browser's diagram. Next it opens the chat with its button, types a message of
 // two lines in the chat's field, with Shift+Enter between them, presses Enter,
+// checks that the field grew with the message and went back once it was sent,
 // and waits until its chat shows each browser's message, on its two lines, under
 // that browser's name. It then marks seen-<name>, stays until the script marks
 // done-script, and marks bye-<name> as it leaves. Last, it presses New board and
@@ -479,11 +480,24 @@ try {
   // each browser's message as a typed entry under that browser's name, on its two lines: an entry's
   // innerText keeps the line break only where the page shows it.
   await page.getByRole('button', { name: /^Chat( \(\d+\))?$/ }).click();
+  // A runner's page has no on-screen keyboard, so followKeyboard leaves the chat where it is.
+  const keyboardInset = await page.evaluate(() => document.getElementById('transcript').style.getPropertyValue('--keyboard-inset'));
+  if (keyboardInset !== '0px') throw new Error(`the chat's --keyboard-inset is "${keyboardInset}", in place of 0px`);
   const messageField = page.getByRole('textbox', { name: 'Message' });
+  const fieldHeight = () => messageField.evaluate((field) => field.getBoundingClientRect().height);
+  const emptyHeight = await fieldHeight();
   await messageField.fill(`Hello from ${name}`);
   await messageField.press('Shift+Enter');
   await messageField.pressSequentially('on two lines');
+  const typedHeight = await fieldHeight();
   await messageField.press('Enter');
+  const sentHeight = await fieldHeight();
+  if (!(typedHeight > emptyHeight) || sentHeight !== emptyHeight) {
+    throw new Error(
+      `the Message field was ${emptyHeight}px high empty, ${typedHeight}px with two lines and ${sentHeight}px once sent, in place of growing and going back`,
+    );
+  }
+  console.log(`${name}: the Message field was ${emptyHeight}px high empty, ${typedHeight}px with two lines, and ${sentHeight}px once sent`);
   const chat = await page.evaluate(
     ({ wanted, waitMs }) =>
       new Promise((resolve, reject) => {
