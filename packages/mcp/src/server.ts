@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type * as Y from 'yjs';
+import { agentChangesOf, capturedChanges, nameOf, recordAgentChange } from './agent-changes';
 import { answer, refusal } from './answer';
 import { addShapes, ELEMENTS, FRAME_MARGIN, newId, readBoard, readFrames, ShapeError } from './board';
 import { registerChanges } from './changes';
@@ -26,9 +27,11 @@ import {
   reorderSchema,
   scalingSchema,
   shapeSchema,
+  type Place,
 } from './shapes';
 import { registerSnapshots } from './snapshots';
 import { registerTranscript } from './transcript';
+import { registerUndo } from './undo';
 
 /** A Mermaid request's state, as add_mermaid and get_request answer it. */
 const requestAnswerSchema = {
@@ -52,6 +55,15 @@ const PICTURE_SIZE = 1024;
 /** The longest timeout render_board takes, in seconds: Node's setTimeout waits at most 2^31 - 1 milliseconds. */
 const LONGEST_TIMEOUT = 2147483;
 
+/** The id of a call's change on the board's list of the agent's changes, which each tool that changes the board answers. */
+const changeIdSchema = z
+  .string()
+  .optional()
+  .describe("The id of the change on the board's list of the agent's changes, which undo_change undoes; left out where the call didn't change the board.");
+
+/** What the description of each tool that changes the board says of its answer's change. */
+const CHANGE_NOTE = "The answer's change is the id of this change on the board's list of the agent's changes: a person undoes it from the page, and undo_change undoes it.";
+
 /**
  * chalkline-mcp's MCP server, whose tools read and draw on the board that `doc` holds. `awareness`
  * holds the room's participants, which tell the helper whether a page is in the room to convert a
@@ -60,12 +72,25 @@ const LONGEST_TIMEOUT = 2147483;
 export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
   const server = new McpServer({ name: 'chalkline', version: '0.0.0' });
   const elements = doc.getMap<unknown>(ELEMENTS);
+  const changes = agentChangesOf(doc);
 
   // The agent whose shapes these are: its client, by the name it gave as it connected.
   const creator = (): Creator => ({
     kind: 'agent',
     name: server.server.getClientVersion()?.name ?? 'chalkline-mcp',
   });
+
+  // Runs a tool's change of the board as the agent `by`, which the tool's edit passes as the origin of
+  // the transaction that writes it, and records the change on the board's list of the agent's changes,
+  // with each element it wrote before and after, and `summary` after the agent's name. The answer
+  // holds the change's id as `change`, where the call wrote an element.
+  const recorded = (tool: string, work: (by: Creator) => Promise<Recorded>): Promise<CallToolResult> =>
+    refusing(async () => {
+      const by = creator();
+      const { result, elements: written } = await capturedChanges(elements, by, () => work(by));
+      const change = recordAgentChange(changes, { by, tool, summary: `${by.name} ${result.summary}`, elements: written });
+      return answer(change === null ? result.content : { ...result.content, change });
+    });
 
   server.registerTool(
     'get_board',
@@ -159,6 +184,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         'The new shapes go in front of every shape on the board, each in front of the shapes before it in the call; place puts them at the back of the board instead, or just below or just above a shape that get_board lists, as {"below": id} or {"above": id}.',
         'To draw a background behind shapes on the board, set place to {"below": id}, with id the first of those shapes that get_board lists, since it lists the board from back to front.',
         'reorder_shapes moves shapes forward or back once they are on the board.',
+        CHANGE_NOTE,
       ].join(' '),
       inputSchema: {
         shapes: z.array(shapeSchema).min(1),
@@ -170,18 +196,22 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         ids: z.array(z.string()),
         group: z.string().optional().describe("The id of the group the call's shapes went into, where the call asked for one."),
         frame: z.string().optional().describe("The id of the frame the call's shapes went into, where the call asked for one."),
+        change: changeIdSchema,
       },
     },
     ({ shapes, group, place, frame }) =>
-      refusing(async () => {
+      recorded('add_shapes', async (by) => {
         const id = group === true ? newId() : undefined;
         const framed = frame === undefined || frame === null ? undefined : { id: newId(), name: frame.name };
-        const ids = await addShapes(doc, shapes, creator(), id, place ?? undefined, framed);
-        return answer({
-          ids,
-          ...(id === undefined ? {} : { group: id }),
-          ...(framed === undefined ? {} : { frame: framed.id }),
-        });
+        const ids = await addShapes(doc, shapes, by, id, place ?? undefined, framed);
+        return {
+          content: {
+            ids,
+            ...(id === undefined ? {} : { group: id }),
+            ...(framed === undefined ? {} : { frame: framed.id }),
+          },
+          summary: `added ${counted(ids.length)}`,
+        };
       }),
   );
 
@@ -194,11 +224,16 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         "The arrow runs along the line between the two shapes' centers, from the edge of start to the edge of end, and it follows the shapes when either moves.",
         'start and end are ids that get_board lists: a rectangle, an ellipse, a diamond, a text, an image or a frame.',
         'The arrow records the agent as its creator.',
+        CHANGE_NOTE,
       ].join(' '),
       inputSchema: connectionSchema.shape,
-      outputSchema: { id: z.string() },
+      outputSchema: { id: z.string(), change: changeIdSchema },
     },
-    (connection) => refusing(async () => answer({ id: await connect(doc, connection, creator()) })),
+    (connection) =>
+      recorded('connect', async (by) => ({
+        content: { id: await connect(doc, connection, by) },
+        summary: 'connected two shapes with an arrow',
+      })),
   );
 
   server.registerTool(
@@ -214,16 +249,24 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         'link sets the URL that the page opens from a link icon on the shape, an http or https URL such as a permalink to code with a commit and a line range: beside the other fields of a shape that update_shape changes, and alone on a freehand stroke, an image or another kind of shape; an empty link removes the link.',
         "To move a group, give group, the id get_board lists in its shapes' groups, instead of id, with x, y or both: the group's left and top edges go there, every shape of it moves with its label, each arrow bound to it follows it, and the answer holds the group's shapes.",
         "A frame, by its id, takes x and y, its new left and top edges, and name, its new name: every shape in it moves with it, each with its label, and each arrow bound to them follows them.",
+        CHANGE_NOTE,
       ].join(' '),
       inputSchema: changeSchema.shape,
-      outputSchema: { shape: boardShapeSchema.optional(), shapes: z.array(boardShapeSchema).optional() },
+      outputSchema: {
+        shape: boardShapeSchema.optional(),
+        shapes: z.array(boardShapeSchema).optional(),
+        change: changeIdSchema,
+      },
     },
     (change) =>
-      refusing(async () =>
-        change.group === undefined || change.group === null
-          ? answer({ shape: await updateShape(doc, change, creator()) })
-          : answer({ shapes: await moveGroup(doc, change, creator()) }),
-      ),
+      recorded('update_shape', async (by) => {
+        if (change.group === undefined || change.group === null) {
+          const shape = await updateShape(doc, change, by);
+          return { content: { shape }, summary: `changed ${nameOf(elements.get(shape.id), elements.values())}` };
+        }
+        const shapes = await moveGroup(doc, change, by);
+        return { content: { shapes }, summary: `moved a group of ${counted(shapes.length)}` };
+      }),
   );
 
   server.registerTool(
@@ -234,11 +277,16 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         'Deletes shapes from the board by their ids, as get_board lists them, by their groups, or both, and answers the ids it deleted.',
         'Each shape whose groups hold one of groups goes, with its label.',
         "A shape's label goes with it, and each arrow bound to a deleted shape stays on the board, no longer bound at that end.",
+        CHANGE_NOTE,
       ].join(' '),
       inputSchema: deletionSchema.shape,
-      outputSchema: { ids: z.array(z.string()) },
+      outputSchema: { ids: z.array(z.string()), change: changeIdSchema },
     },
-    ({ ids, groups }) => refusing(async () => answer({ ids: deleteShapes(doc, ids ?? [], groups ?? [], creator()) })),
+    ({ ids, groups }) =>
+      recorded('delete_shapes', async (by) => {
+        const deleted = deleteShapes(doc, ids ?? [], groups ?? [], by);
+        return { content: { ids: deleted }, summary: `deleted ${counted(deleted.length)}` };
+      }),
   );
 
   server.registerTool(
@@ -250,11 +298,16 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         'ids are the shapes to move, as get_board lists them.',
         'place is where they go: "front", in front of every other shape; "back", behind every other shape; {"below": id}, just below the shape with that id; or {"above": id}, just above that shape and its label.',
         "The moved shapes keep their order among themselves, whatever order ids lists them in, and a shape's label moves with it.",
+        CHANGE_NOTE,
       ].join(' '),
       inputSchema: reorderSchema.shape,
-      outputSchema: { ids: z.array(z.string()) },
+      outputSchema: { ids: z.array(z.string()), change: changeIdSchema },
     },
-    ({ ids, place }) => refusing(async () => answer({ ids: reorderShapes(doc, ids, place, creator()) })),
+    ({ ids, place }) =>
+      recorded('reorder_shapes', async (by) => {
+        const order = reorderShapes(doc, ids, place, by);
+        return { content: { ids: order }, summary: `moved ${counted(order.length)} ${placeText(place)}` };
+      }),
   );
 
   server.registerTool(
@@ -267,11 +320,16 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         "factor is how many times its size each shape becomes, and about is the point the shapes scale around: each shape's distance from that point, its width and its height, the points of a line, an arrow or a freehand stroke, and the font size of a text or a label scale by factor.",
         "Where about is left out, the left and top edges of the shapes' bounds stay where they are.",
         "An arrow that scales stays bound to each shape that scales with it, and each straight arrow between a shape that scales and one that doesn't is laid out again between them.",
+        CHANGE_NOTE,
       ].join(' '),
       inputSchema: scalingSchema.shape,
-      outputSchema: { shapes: z.array(boardShapeSchema) },
+      outputSchema: { shapes: z.array(boardShapeSchema), change: changeIdSchema },
     },
-    (scaling) => refusing(async () => answer({ shapes: await scaleShapes(doc, scaling, creator()) })),
+    (scaling) =>
+      recorded('scale_shapes', async (by) => {
+        const shapes = await scaleShapes(doc, scaling, by);
+        return { content: { shapes }, summary: `scaled ${counted(shapes.length)}` };
+      }),
   );
 
   server.registerTool(
@@ -284,14 +342,15 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         'place is where it goes in the stacking order, as reorder_shapes reads it, in front of every shape where it is left out.',
         "The picture's file goes into the board's files, which every page of the room loads, as a picture a person drops on the board does.",
         "It answers the image's id, as get_board lists it, its file's id, and its width and height, and it records the agent as the image's creator.",
+        CHANGE_NOTE,
       ].join(' '),
       inputSchema: imageSchema.shape,
-      outputSchema: { id: z.string(), file: z.string(), width: z.number(), height: z.number() },
+      outputSchema: { id: z.string(), file: z.string(), width: z.number(), height: z.number(), change: changeIdSchema },
     },
     (request) =>
-      refusing(async () => {
-        const { id, file, width, height } = await addImage(doc, request, creator());
-        return answer({ id, file, width, height });
+      recorded('add_image', async (by) => {
+        const { id, file, width, height } = await addImage(doc, request, by);
+        return { content: { id, file, width, height }, summary: 'added an image' };
       }),
   );
 
@@ -306,6 +365,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         'An arrow bound to a deleted shape stays on the board, no longer bound at that end.',
         "It answers the image's id, its file's id, the ids of the shapes it deleted, and the region it drew with the picture's width and height in pixels.",
         "It refuses a picture of more than 4 MiB, a board's limit: give a smaller scale for a large drawing.",
+        CHANGE_NOTE,
       ].join(' '),
       inputSchema: flattenSchema.shape,
       outputSchema: {
@@ -315,12 +375,13 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         region: regionSchema,
         width: z.number().int(),
         height: z.number().int(),
+        change: changeIdSchema,
       },
     },
     (request, extra) =>
-      refusing(async () => {
-        const { id, file, ids, region, width, height } = await flatten(doc, request, creator(), extra.signal);
-        return answer({ id, file, ids, region, width, height });
+      recorded('flatten', async (by) => {
+        const { id, file, ids, region, width, height } = await flatten(doc, request, by, extra.signal);
+        return { content: { id, file, ids, region, width, height }, summary: `flattened ${counted(ids.length)} into a picture` };
       }),
   );
 
@@ -379,6 +440,9 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
   // save_snapshot and list_snapshots, which write and read the marks that ask each browser to keep a snapshot.
   registerSnapshots(server, doc);
 
+  // undo_change, which undoes one of the agent's own changes that the tools above record.
+  registerUndo(server, doc, creator);
+
   return server;
 }
 
@@ -390,4 +454,22 @@ async function refusing(work: () => Promise<CallToolResult>): Promise<CallToolRe
     if (error instanceof ShapeError) return refusal(error.message);
     throw error;
   }
+}
+
+/** What a tool's change answers, and the change in a few words after the agent's name, such as "added 2 shapes". */
+interface Recorded {
+  content: Record<string, unknown>;
+  summary: string;
+}
+
+/** `count` shapes, in words, such as "1 shape" or "18 shapes". */
+function counted(count: number): string {
+  return `${count} ${count === 1 ? 'shape' : 'shapes'}`;
+}
+
+/** Where reorder_shapes moves shapes, in words. */
+function placeText(place: Place): string {
+  if (place === 'front') return 'to the front';
+  if (place === 'back') return 'to the back';
+  return 'below' in place ? 'below another shape' : 'above another shape';
 }

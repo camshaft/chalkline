@@ -212,6 +212,8 @@ export function newId(): string {
  * With `frame`, each element the call adds goes into a new frame with the id and the name `frame`
  * sets, which frameAround lays FRAME_MARGIN outside their bounds and which goes just in front of
  * them; the frame records `creator` as its creator too, and isn't in `group`.
+ * The transaction that writes the shapes has `creator` as its origin, which the server's record of
+ * the agent's changes reads.
  */
 export async function addShapes(
   doc: Y.Doc,
@@ -295,7 +297,7 @@ export async function addShapes(
       const placed = group === undefined || element.id === frame?.id ? copy : { ...copy, groupIds: [group] };
       shared.set(element.id, creator === undefined ? placed : withCreator(placed, creator));
     });
-  });
+  }, creator);
   return ids;
 }
 

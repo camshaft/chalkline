@@ -585,6 +585,94 @@
         font-size: 0.8rem;
         color: #2f9e44;
       }
+      /* The list of the agent's changes, which the main menu's Agent's changes opens, below the menu's button. */
+      #changes {
+        position: absolute;
+        top: 4.5rem;
+        left: 1rem;
+        max-height: calc(100% - 5.5rem);
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        width: 22rem;
+        max-width: calc(100% - 2rem);
+        box-sizing: border-box;
+        padding: 0.75rem;
+        font-size: 0.9rem;
+        color: #1b1b1f;
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 0.5rem;
+        box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.15);
+        --chalkline-muted: #666;
+      }
+      /* On a phone, the list opens as a sheet across the window's width, from the window's bottom. */
+      #board:has(.chalkline-host--mobile) #changes {
+        top: auto;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: auto;
+        max-width: none;
+        max-height: min(28rem, 60dvh);
+        border-width: 1px 0 0;
+        border-radius: 0.75rem 0.75rem 0 0;
+        box-shadow: 0 -0.5rem 2rem rgba(0, 0, 0, 0.15);
+      }
+      #board:has(.excalidraw.theme--dark) #changes {
+        color: #e3e3e8;
+        background: #232329;
+        border-color: #46464f;
+        color-scheme: dark;
+        --chalkline-muted: #b8b8b8;
+      }
+      #changes[hidden] {
+        display: none;
+      }
+      .changes-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+      }
+      #changes h2 {
+        margin: 0;
+        font-size: 1rem;
+      }
+      #changes p {
+        margin: 0;
+      }
+      .changes-list {
+        flex: 1;
+        min-height: 0;
+        margin: 0;
+        padding: 0;
+        overflow-y: auto;
+        list-style: none;
+      }
+      .changes-item {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0.25rem 0.5rem;
+        padding: 0.4rem 0;
+        border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+      }
+      .changes-summary {
+        flex: 1;
+      }
+      .changes-time,
+      .changes-undone,
+      .changes-kept,
+      .changes-empty {
+        font-size: 0.8rem;
+        color: var(--chalkline-muted);
+      }
+      .changes-undone,
+      .changes-kept {
+        flex-basis: 100%;
+      }
     </style>
   </head>
   <body>
@@ -634,6 +722,7 @@
       <div id="app"></div>
       <div id="feedback-layer"></div>
       <aside id="transcript" aria-label="Chat" hidden></aside>
+      <aside id="changes" aria-label="Agent's changes" hidden></aside>
     </div>
     <script type="module" src="./src/main.ts"></script>
   </body>
