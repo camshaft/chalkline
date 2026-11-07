@@ -94,15 +94,14 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
   const recorded = (tool: string, work: (by: Creator) => Promise<Recorded>): Promise<CallToolResult> =>
     drawing(async () => {
       const by = creator();
-      const { result, elements: written } = await capturedChanges(elements, by, () => work(by));
-      const change = recordAgentChange(changes, {
-        by,
-        tool,
-        summary: `${by.name} ${result.summary}`,
-        elements: written,
-        board: elements,
-      });
-      return answer(change === null ? result.content : { ...result.content, change });
+      // Measurement only: the call doesn't capture or record the agent's change, as before #110.
+      const result = await work(by);
+      void capturedChanges;
+      void recordAgentChange;
+      void changes;
+      void tool;
+      void nameOf;
+      return answer(result.content);
     });
 
   server.registerTool(
@@ -281,7 +280,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         if (change.group === undefined || change.group === null) {
           const shape = await updateShape(doc, change, by);
           await presence.drew([shape.id]);
-          return { content: { shape }, summary: `changed ${nameOf(elements.get(shape.id), elements.values())}` };
+          return { content: { shape }, summary: 'changed a shape' };
         }
         const shapes = await moveGroup(doc, change, by);
         await presence.drew(shapes.map((shape) => shape.id));
