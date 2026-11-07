@@ -3,8 +3,10 @@
 // so that the agent can tell the shapes it added, and change them, from the shapes the people drew.
 // Each element that chalkline-mcp adds or changes also records the agent as the author of the
 // element's version, so that a person's later change of a shape an agent added, which sets a new
-// version on the element, reads as the person's. This module reads and writes both marks, and
-// runs in Node and in the browser alike.
+// version on the element, reads as the person's. A text's change mark also records the words the
+// agent wrote, which stay the agent's after a later change that leaves them as they are, such as a
+// person's move of the text. This module reads and writes both marks, and runs in Node and in the
+// browser alike.
 
 /** The member of an element's `customData` that holds Chalkline's fields. */
 export const CUSTOM_DATA = 'chalkline';
@@ -25,6 +27,11 @@ export interface Change {
   by: Creator;
   version: number;
   versionNonce: number;
+  /**
+   * The words of the version, where the element is a text, as Excalidraw keeps them unwrapped:
+   * they stay the agent's words after a later change of the element that leaves them as they are.
+   */
+  words?: string;
 }
 
 /**
@@ -39,15 +46,17 @@ export function withCreator<T extends object>(element: T, creator: Creator): T {
 
 /**
  * A copy of `element` whose `customData` records `agent` as the author of the element's version,
- * by its `version` and its `versionNonce`. The other members of the element, of its `customData`
- * and of Chalkline's member there stay as they are, and `element` itself doesn't change. Where
- * `element` doesn't hold a version and a nonce, it answers `element` itself, since a mark without
- * a version would match any later version.
+ * by its `version` and its `versionNonce`, and, where `element` is a text, the words it holds. The
+ * other members of the element, of its `customData` and of Chalkline's member there stay as they
+ * are, and `element` itself doesn't change. Where `element` doesn't hold a version and a nonce, it
+ * answers `element` itself, since a mark without a version would match any later version.
  */
 export function withChange<T extends object>(element: T, agent: Creator): T {
   const { version, versionNonce } = element as { version?: unknown; versionNonce?: unknown };
   if (!finite(version) || !finite(versionNonce)) return element;
   const change: Change = { by: agentOf(agent), version, versionNonce };
+  const words = wordsOf(element);
+  if (words !== undefined) change.words = words;
   return withFields(element, { change });
 }
 
@@ -74,11 +83,31 @@ export function changerOf(element: unknown): Creator | undefined {
   return by;
 }
 
+/**
+ * The words that the change mark of `element` records its agent wrote, whatever version the
+ * element holds now, where the mark records words: a later change that leaves the element's words
+ * as they are, such as a person's move of an agent's text, leaves them the agent's words.
+ * Undefined for any other element.
+ */
+export function agentWordsOf(element: unknown): string | undefined {
+  const change = recordOf(fieldsOf(element)?.change);
+  if (change === undefined || agentIn(change.by) === undefined) return undefined;
+  return typeof change.words === 'string' ? change.words : undefined;
+}
+
 /** A copy of `element` whose Chalkline member of `customData` holds `fields` beside its other members. */
 function withFields<T extends object>(element: T, fields: Record<string, unknown>): T {
   const customData = recordOf((element as { customData?: unknown }).customData) ?? {};
   const own = recordOf(customData[CUSTOM_DATA]) ?? {};
   return { ...element, customData: { ...customData, [CUSTOM_DATA]: { ...own, ...fields } } };
+}
+
+/** The words of `element` where it is a text, as Excalidraw keeps them unwrapped, else as it shows them. */
+function wordsOf(element: object): string | undefined {
+  const { type, text, originalText } = element as { type?: unknown; text?: unknown; originalText?: unknown };
+  if (type !== 'text') return undefined;
+  if (typeof originalText === 'string') return originalText;
+  return typeof text === 'string' ? text : undefined;
 }
 
 /** Chalkline's member of the `customData` of `element`, where it holds one. */

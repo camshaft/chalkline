@@ -1,7 +1,7 @@
 import type { TranscriptEntry, Transport } from '@chalkline/sync';
 import type * as Y from 'yjs';
 import { ELEMENTS, finite, stringOf } from './board';
-import { changerOf, creatorOf } from './creator';
+import { agentWordsOf, changerOf, creatorOf } from './creator';
 import { TranscriptLog } from './transcript';
 
 /**
@@ -150,16 +150,21 @@ function liveElement(value: unknown): (Record<string, unknown> & { updated: numb
 }
 
 /**
- * The words of the text that `value` holds, when its page last changed it, and whether an agent's
- * helper made that change, as the element's change mark records it, where it holds a text with
- * words.
+ * The words of the text that `value` holds, when its page last changed it, whether an agent's
+ * helper made that change, as the element's change mark records it, and whether the words are the
+ * ones the mark records an agent wrote, where it holds a text with words.
  */
-function writtenOf(value: unknown): { words: string; updated: number; byAgent: boolean } | undefined {
+function writtenOf(value: unknown): { words: string; updated: number; byAgent: boolean; agentWrote: boolean } | undefined {
   const fields = liveElement(value);
   if (fields === undefined || fields.type !== 'text') return undefined;
   const words = stringOf(fields.originalText) ?? stringOf(fields.text);
   if (words === undefined || words.trim() === '') return undefined;
-  return { words, updated: fields.updated, byAgent: changerOf(value) !== undefined };
+  return {
+    words,
+    updated: fields.updated,
+    byAgent: changerOf(value) !== undefined,
+    agentWrote: words === agentWordsOf(value),
+  };
 }
 
 /** The points of a freehand stroke, each relative to its x and y, where `value` holds at least one and each reads as one. */
@@ -237,13 +242,14 @@ function watchElements(elements: Y.Map<unknown>, seen: (id: string) => void): ()
  * at a time makes one line, and a text whose words the listener told of already, as where a person
  * moves it, doesn't make another. A change that an agent's helper made, as the element's change
  * mark records it, doesn't make a line, and the listener keeps the words the agent wrote as told,
- * so that a person's move of the agent's text doesn't make one either. A deleted text and a text
- * without words are left out, and so is a text that a person last changed at or before
- * `options.after`, though the listener receives it later, as a peer's copy of the board brings it.
+ * so that a person's move of the agent's text doesn't make one either, though the listener first
+ * receives the text after that move, as a peer's copy of the board brings it. A deleted text and a
+ * text without words are left out, and so is a text that a person last changed at or before
+ * `options.after`, though the listener receives it later.
  */
 export function listenTexts(doc: Y.Doc, options: BoardListenOptions<Written>): Listener {
   const elements = doc.getMap<unknown>(ELEMENTS);
-  /** The words of each text the listener told of, that a person wrote before the listener started, or that an agent wrote last. */
+  /** The words of each text the listener told of, that a person wrote before the listener started, or that an agent wrote, as its change mark records them. */
   const told = new Map<string, string>();
   /** The pause after each text's last change, where a line may follow it. */
   const pauses = new Map<string, ReturnType<typeof setTimeout>>();
@@ -265,7 +271,7 @@ export function listenTexts(doc: Y.Doc, options: BoardListenOptions<Written>): L
     const written = writtenOf(elements.get(id));
     settle(id);
     if (written === undefined) return;
-    if (written.byAgent || written.updated <= options.after) {
+    if (written.byAgent || written.updated <= options.after || (written.agentWrote && !told.has(id))) {
       told.set(id, written.words);
       return;
     }

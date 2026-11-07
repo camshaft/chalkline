@@ -371,6 +371,58 @@ describe('listenTexts', () => {
     ]);
   });
 
+  it('leaves out a text first received after the start whose next change keeps its words, and prints a later change of its words', () => {
+    const { elements, lines } = watching<Written>(listenTexts);
+    // A peer's copy of the board brings a text written before the start, and the agent writes its own.
+    let note = text('note', 'draw a box', -5);
+    elements.set('note', note);
+    let answer = withCreator(text('answer', 'The box is blue', 2), claude);
+    elements.set('answer', answer);
+    // A person widens each text, which leaves its words as they were.
+    note = edited(note, { width: 200 }, 5);
+    elements.set('note', note);
+    answer = edited(answer, { width: 200 }, 5);
+    elements.set('answer', answer);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([]);
+
+    elements.set('note', edited(note, words('draw a circle'), 10));
+    elements.set('answer', edited(answer, words('The box is green'), 11));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([
+      { at: at(10), kind: 'text', text: 'draw a circle' },
+      { at: at(11), kind: 'text', text: 'The box is green' },
+    ]);
+  });
+
+  it("leaves out a person's move of an agent's text that the listener first receives after the move, and prints the person's changes of its words", () => {
+    const { elements, lines } = watching<Written>(listenTexts);
+    // A person widens the agent's text and the agent's label before a peer's copy of the board brings them.
+    elements.set('box', withCreator(element({ id: 'box' }, -2), claude));
+    let answer = edited(withCreator(text('answer', 'The box is blue', -2), claude), { width: 200 }, 3);
+    elements.set('answer', answer);
+    const label = edited(withCreator(text('label', 'Start', -2, { containerId: 'box' }), claude), { width: 80 }, 3);
+    elements.set('label', label);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([]);
+
+    elements.set('label', edited(label, words('Begin'), 6));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(6), kind: 'text', text: 'Begin' }]);
+
+    answer = edited(answer, words('The box is green'), 10);
+    elements.set('answer', answer);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    // The person changes the words back to the ones the agent wrote, which makes a line too.
+    elements.set('answer', edited(answer, words('The box is blue'), 20));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([
+      { at: at(6), kind: 'text', text: 'Begin' },
+      { at: at(10), kind: 'text', text: 'The box is green' },
+      { at: at(20), kind: 'text', text: 'The box is blue' },
+    ]);
+  });
+
   it('prints the text that waits for its pause at once on flush, and drops it on stop', () => {
     const { elements, lines, listener } = watching<Written>(listenTexts);
     elements.set('note', text('note', 'draw a box', 1));

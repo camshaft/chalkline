@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readBoard } from './board';
-import { changerOf, creatorOf, CUSTOM_DATA, withChange, withCreator, type Creator } from './creator';
+import { agentWordsOf, changerOf, creatorOf, CUSTOM_DATA, withChange, withCreator, type Creator } from './creator';
 
 const AGENT: Creator = { kind: 'agent', name: 'agent' };
 const OTHER: Creator = { kind: 'agent', name: 'other' };
@@ -42,6 +42,19 @@ describe('withChange', () => {
       customData: { other: 1, chalkline: { creator: OTHER, change: { by: AGENT, version: 2, versionNonce: 5 } } },
     });
     expect(element).toEqual(before);
+  });
+
+  it('records the words of a text, as Excalidraw keeps them unwrapped, beside the version', () => {
+    const label = { id: 'l', type: 'text', version: 2, versionNonce: 5, text: 'start\nhere', originalText: 'start here' };
+    expect(withChange(label, AGENT)).toEqual({
+      ...label,
+      customData: { chalkline: { change: { by: AGENT, version: 2, versionNonce: 5, words: 'start here' } } },
+    });
+    const note = { id: 'n', type: 'text', version: 3, versionNonce: 6, text: 'draw a box' };
+    expect(withChange(note, AGENT)).toEqual({
+      ...note,
+      customData: { chalkline: { change: { by: AGENT, version: 3, versionNonce: 6, words: 'draw a box' } } },
+    });
   });
 
   it("answers the element itself where it doesn't hold a version and a nonce", () => {
@@ -114,6 +127,34 @@ describe('changerOf', () => {
       { ...element, customData: { chalkline: { creator: AGENT, change: { by: AGENT, version: '4', versionNonce: 40 } } } },
     ]) {
       expect(changerOf(value)).toBeUndefined();
+    }
+  });
+});
+
+describe('agentWordsOf', () => {
+  const answer = { id: 'a', type: 'text', version: 1, versionNonce: 10, text: 'The box is blue', originalText: 'The box is blue' };
+
+  it("reads the words that the agent's change mark records, after a later version of the element too", () => {
+    const marked = withCreator(answer, AGENT);
+    expect(agentWordsOf(marked)).toBe('The box is blue');
+    const corrected = { ...marked, version: 2, versionNonce: 20, text: 'The box is green', originalText: 'The box is green' };
+    expect(agentWordsOf(corrected)).toBe('The box is blue');
+    expect(changerOf(corrected)).toBeUndefined();
+  });
+
+  it("is undefined for an element whose change mark doesn't record an agent's words", () => {
+    const person = { kind: 'person', name: 'someone' };
+    const rectangle = { id: 'r', type: 'rectangle', version: 1, versionNonce: 10, text: 'The box is blue' };
+    for (const value of [
+      undefined,
+      answer,
+      withChange(rectangle, AGENT),
+      { ...answer, customData: { chalkline: { creator: AGENT } } },
+      { ...answer, customData: { chalkline: { change: { by: AGENT, version: 1, versionNonce: 10 } } } },
+      { ...answer, customData: { chalkline: { change: { by: person, version: 1, versionNonce: 10, words: 'The box is blue' } } } },
+      { ...answer, customData: { chalkline: { change: { by: AGENT, version: 1, versionNonce: 10, words: 3 } } } },
+    ]) {
+      expect(agentWordsOf(value)).toBeUndefined();
     }
   });
 });
