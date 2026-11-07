@@ -200,7 +200,7 @@ describe('choosing a board on the join screen', () => {
     expect(address.handlers.size).toBe(0);
   });
 
-  it('stays on the join screen while the address doesn't name a board', async () => {
+  it("stays on the join screen while the address doesn't name a board", async () => {
     const { holder, address, choice, chosen } = choose();
     address.navigate('#room=abc');
     address.navigate('#');
