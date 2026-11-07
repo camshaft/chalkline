@@ -155,7 +155,7 @@ export function bindAsk(
     if (menu === null) return;
     const added = menu.querySelectorAll(`.${MENU_ENTRY}, .${MENU_SEPARATOR}`);
     if (!offered) {
-      for (const part of added) part.remove();
+      for (const part of Array.from(added)) part.remove();
       return;
     }
     // The canvas calls each handler on each of its changes, so the entry goes in once for each menu it opens.
