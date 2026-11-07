@@ -324,6 +324,18 @@ describe('the local-network mode, end to end', () => {
       await page.locator('#name').fill('Ada');
       await page.waitForFunction(() => (window as unknown as E2eWindow).chalkline?.awareness.getLocalState()?.name === 'Ada');
 
+      // Where the browser can speak, the Read agent messages aloud button shows, and each click turns reading on or
+      // off; where it can't, the page doesn't show the button.
+      const readAloud = page.locator('#read-aloud');
+      if (await page.evaluate(() => 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window)) {
+        await readAloud.click();
+        expect(await readAloud.getAttribute('aria-pressed')).toBe('true');
+        await readAloud.click();
+        expect(await readAloud.getAttribute('aria-pressed')).toBe('false');
+      } else {
+        expect(await readAloud.isHidden()).toBe(true);
+      }
+
       // The microphone button asks where recognition runs, in the chat, which opens clear of the controls.
       const chat = page.locator('#transcript');
       await page.locator('#mic').click();
