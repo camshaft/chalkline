@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { readBoard } from './board';
-import { agentWordsOf, changerOf, creatorOf, CUSTOM_DATA, withChange, withCreator, type Creator } from './creator';
+import {
+  agentWordsOf,
+  changerOf,
+  creatorOf,
+  CUSTOM_DATA,
+  withChange,
+  withCreator,
+  withWordsChanged,
+  wordsChangedOf,
+  type Creator,
+} from './creator';
 
 const AGENT: Creator = { kind: 'agent', name: 'agent' };
 const OTHER: Creator = { kind: 'agent', name: 'other' };
@@ -156,5 +166,85 @@ describe('agentWordsOf', () => {
     ]) {
       expect(agentWordsOf(value)).toBeUndefined();
     }
+  });
+});
+
+/** A person's text of `written`, as a page last changed it at `updated`. */
+const note = (written: string, updated = 1000): Record<string, unknown> => ({
+  id: 'note',
+  type: 'text',
+  version: 1,
+  versionNonce: 1,
+  text: written,
+  originalText: written,
+  updated,
+});
+
+describe('wordsChangedOf', () => {
+  it('is the time the words mark records where it holds the words the text holds', () => {
+    expect(wordsChangedOf(withWordsChanged(note('draw a box', 1000), undefined))).toBe(1000);
+  });
+
+  it('is undefined without a mark, and for a mark that holds other words or no time', () => {
+    const marked = withWordsChanged(note('draw a box', 1000), undefined);
+    for (const value of [
+      undefined,
+      note('draw a box'),
+      // A page that doesn't write the mark changed the words, and kept the custom data as it was.
+      { ...marked, text: 'draw a circle', originalText: 'draw a circle' },
+      { ...note('draw a box'), customData: { [CUSTOM_DATA]: { wordsChanged: { words: 'draw a box', at: '1000' } } } },
+      { ...marked, type: 'rectangle' },
+    ]) {
+      expect(wordsChangedOf(value)).toBeUndefined();
+    }
+  });
+});
+
+describe('withWordsChanged', () => {
+  it("records the element's `updated` for a text the board doesn't hold yet, and for new words", () => {
+    expect(wordsChangedOf(withWordsChanged(note('draw a box', 1000), undefined))).toBe(1000);
+
+    const current = withWordsChanged(note('draw a box', 1000), undefined);
+    expect(wordsChangedOf(withWordsChanged(note('draw a circle', 2000), current))).toBe(2000);
+  });
+
+  it("keeps the time the board's copy records where the words are the same, whatever else changed", () => {
+    const current = withWordsChanged(note('draw a box', 1000), undefined);
+    // A move, and the page wrapping the text: a new version and a new `updated`, with the same words.
+    const moved = { ...note('draw a box', 2000), version: 2, x: 40, text: 'draw a\nbox' };
+
+    const written = withWordsChanged(moved, current);
+
+    expect(wordsChangedOf(written)).toBe(1000);
+    expect(written).toMatchObject({ version: 2, x: 40, updated: 2000, text: 'draw a\nbox' });
+  });
+
+  it("answers the element itself where the board's copy doesn't record when the same words changed", () => {
+    const moved = { ...note('draw a box', 2000), version: 2 };
+    expect(withWordsChanged(moved, note('draw a box', 1000))).toBe(moved);
+
+    // The board's copy holds a mark of other words, which a page that doesn't write the mark replaced.
+    const stale = { ...withWordsChanged(note('draw it', 500), undefined), text: 'draw a box', originalText: 'draw a box' };
+    expect(withWordsChanged(moved, stale)).toBe(moved);
+  });
+
+  it("answers the element itself where it isn't a text or doesn't hold an `updated` time", () => {
+    const shape = { id: 'box', type: 'rectangle', text: 'draw a box', updated: 1000 };
+    expect(withWordsChanged(shape, undefined)).toBe(shape);
+    const untimed = { id: 'note', type: 'text', text: 'draw a box' };
+    expect(withWordsChanged(untimed, undefined)).toBe(untimed);
+  });
+
+  it("keeps the other members of the element's custom data, and leaves the element as it was", () => {
+    const element = { ...note('draw a box', 1000), customData: { other: 1, [CUSTOM_DATA]: { note: 'kept' } } };
+    const before = structuredClone(element);
+
+    const written = withWordsChanged(element, undefined);
+
+    expect(written.customData).toEqual({
+      other: 1,
+      [CUSTOM_DATA]: { note: 'kept', wordsChanged: { words: 'draw a box', at: 1000 } },
+    });
+    expect(element).toEqual(before);
   });
 });
