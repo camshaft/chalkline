@@ -247,13 +247,10 @@ describe('flatten', () => {
     ).ids[0];
     const before = [...live(doc).keys()];
     expect(before).toHaveLength(5);
-    const shared = doc.getMap(ELEMENTS);
     let updates = 0;
     // Counts the transactions that change the board's elements: the flatten's own, and not the one
     // after it that records the change on the list of the agent's changes.
-    doc.on('afterTransaction', (transaction: Y.Transaction) => {
-      if (transaction.changed.has(shared) || transaction.changedParentTypes.has(shared)) updates++;
-    });
+    doc.getMap(ELEMENTS).observe(() => updates++);
 
     const flat = answered<{ id: string; file: string; ids: string[]; region: unknown; width: number; height: number }>(
       await call(client, 'flatten', { groups: [group.group] }),
