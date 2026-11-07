@@ -17,6 +17,8 @@ function shape(id: string, version: number, versionNonce = 1, index: string | nu
 
 class FakeCanvas implements Canvas<Shape> {
   current: Shape[] = [];
+  /** How many times the binding replaced the canvas's elements. */
+  replacements = 0;
   private readonly handlers = new Set<() => void>();
 
   elements(): readonly Shape[] {
@@ -25,6 +27,7 @@ class FakeCanvas implements Canvas<Shape> {
 
   replace(elements: Shape[]): void {
     this.current = elements;
+    this.replacements += 1;
   }
 
   onChange(handler: () => void): () => void {
@@ -103,6 +106,30 @@ describe('mergeShared', () => {
 
     expect(elements.map((element) => element.id)).toEqual(['x', 'y', 'z']);
   });
+
+  it("keeps the canvas's own object where the shared map holds the same copy, and lists the shared copies that won", () => {
+    const same = shape('same', 1, 1, 'a0');
+    const mine = shape('mine', 3, 1, 'a1');
+    const older = shape('older', 1, 1, 'a2');
+    const newer = shape('older', 2, 1, 'a2');
+    const added = shape('added', 1, 1, 'a3');
+
+    const { elements, keep, taken } = mergeShared(
+      [same, mine, older],
+      [shape('same', 1, 1, 'a0'), shape('mine', 2, 1, 'a1'), newer, added],
+    );
+
+    expect(elements).toHaveLength(4);
+    expect(elements[0]).toBe(same);
+    expect(elements[1]).toBe(mine);
+    expect(elements[2]).toBe(newer);
+    expect(elements[3]).toBe(added);
+    expect(keep).toHaveLength(1);
+    expect(keep[0]).toBe(mine);
+    expect(taken).toHaveLength(2);
+    expect(taken[0]).toBe(newer);
+    expect(taken[1]).toBe(added);
+  });
 });
 
 describe('bindElements', () => {
@@ -138,6 +165,35 @@ describe('bindElements', () => {
 
     expect(canvas.current).toEqual([shape('box', 3, 1, 'a0', 'third')]);
     expect(shared.get('box')).toEqual(shape('box', 3, 1, 'a0', 'third'));
+    expect(origins).toEqual([LOCAL, 'peer', LOCAL]);
+  });
+
+  it("keeps the canvas's own object of each element a peer didn't change, and a copy of the one it changed", () => {
+    const { doc, shared, canvas } = bound();
+    canvas.edit([shape('still', 1, 1, 'a0'), shape('moved', 1, 1, 'a1')]);
+    const [still] = canvas.current;
+
+    fromPeer(doc, shape('moved', 2, 1, 'a1', 'moved by the peer'));
+
+    expect(canvas.current).toHaveLength(2);
+    expect(canvas.current[0]).toBe(still);
+    expect(canvas.current[1]).toEqual(shape('moved', 2, 1, 'a1', 'moved by the peer'));
+    expect(canvas.current[1]).not.toBe(shared.get('moved'));
+  });
+
+  it("leaves the canvas as it is where a peer's copies are the same as its own, or older", () => {
+    const { doc, shared, canvas, origins } = bound();
+    canvas.edit([shape('same', 1, 1, 'a0'), shape('newer', 1, 1, 'a1')]);
+    // The canvas changes again before its change event runs.
+    const current = [canvas.current[0], shape('newer', 3, 1, 'a1', 'third')];
+    canvas.current = current;
+    const replacements = canvas.replacements;
+
+    fromPeer(doc, shape('same', 1, 1, 'a0'), shape('newer', 2, 1, 'a1', 'second'));
+
+    expect(canvas.replacements).toBe(replacements);
+    expect(canvas.current).toBe(current);
+    expect(shared.get('newer')).toEqual(shape('newer', 3, 1, 'a1', 'third'));
     expect(origins).toEqual([LOCAL, 'peer', LOCAL]);
   });
 

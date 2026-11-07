@@ -34,21 +34,26 @@ export interface Merged<T> {
   elements: T[];
   /** The local elements that won, which the shared map should take. */
   keep: T[];
+  /** The shared copies among `elements`, which the canvas lacks or holds an older copy of. */
+  taken: T[];
 }
 
-/** Merges the canvas's elements with the shared map's, element by element. */
+/**
+ * Merges the canvas's elements with the shared map's, element by element. Where the shared map
+ * holds the same copy of an element as the canvas, `elements` holds the canvas's own object of it.
+ */
 export function mergeShared<T extends VersionedElement>(local: readonly T[], shared: Iterable<T>): Merged<T> {
   const byId = new Map<string, T>();
   for (const element of shared) byId.set(element.id, element);
   const keep: T[] = [];
   for (const element of local) {
     const current = byId.get(element.id);
-    if (current === undefined || wins(element, current)) {
-      byId.set(element.id, element);
-      keep.push(element);
-    }
+    if (current === undefined || wins(element, current)) keep.push(element);
+    if (current === undefined || !wins(current, element)) byId.set(element.id, element);
   }
-  return { elements: [...byId.values()].sort(byIndex), keep };
+  const ours = new Set<T>(local);
+  const elements = [...byId.values()].sort(byIndex);
+  return { elements, keep, taken: elements.filter((element) => !ours.has(element)) };
 }
 
 // Fractional indices compare as plain strings. An element without one goes
@@ -91,8 +96,15 @@ export function bindElements<T extends VersionedElement>(shared: Y.Map<T>, canva
     }, LOCAL);
   };
   const pull = () => {
-    const { elements, keep } = mergeShared(canvas.elements(), shared.values());
-    canvas.replace(elements.map((element) => structuredClone(element)));
+    const { elements, keep, taken } = mergeShared(canvas.elements(), shared.values());
+    // The canvas gets a copy of each element a peer changed or added, and keeps its own object of
+    // every other element: Excalidraw keeps each element's drawing by its object, so a new object
+    // of every element on each change would draw the whole board again. Where no shared copy won,
+    // the canvas stays as it is.
+    if (taken.length > 0) {
+      const copies = new Set(taken);
+      canvas.replace(elements.map((element) => (copies.has(element) ? structuredClone(element) : element)));
+    }
     write(keep);
   };
   const push = () => write(localChanges(shared, canvas.elements()));
