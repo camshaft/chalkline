@@ -1,6 +1,7 @@
 import { MainMenu } from '@excalidraw/excalidraw';
 import { createElement, Fragment, useSyncExternalStore, type ReactElement } from 'react';
 import type { Followed } from './followed';
+import { SIDE_BUTTON_ACTIONS, type SideButtonSetting } from './pen';
 
 /** The board's file commands, which the menu's Save file and Open file items run. */
 export interface FileCommands {
@@ -22,6 +23,8 @@ export interface MenuActions {
   grid(): boolean;
   /** Shows or hides the canvas's grid. */
   setGrid(shown: boolean): void;
+  /** What a press of the pen's side button does, which the menu's Pen side button items choose. */
+  sideButton: SideButtonSetting;
 }
 
 const icon = (...paths: string[]): ReactElement =>
@@ -46,6 +49,8 @@ const SAVE_ICON = icon('M12 3v12', 'M7 10l5 5 5-5', 'M5 21h14');
 const OPEN_ICON = icon('M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z');
 const SETTINGS_ICON = icon('M5 12.55a11 11 0 0 1 14.08 0', 'M1.42 9a16 16 0 0 1 21.16 0', 'M8.53 16.11a6 6 0 0 1 6.95 0', 'M12 20h.01');
 const GRID_ICON = icon('M3 3h18v18H3z', 'M3 9h18', 'M3 15h18', 'M9 3v18', 'M15 3v18');
+const CHOSEN_ICON = icon('M5 12l5 5L20 7');
+const UNCHOSEN_ICON = icon();
 
 /** The Save file and Open file items, which show once the board's file commands are set. */
 function FileItems({ files }: { files: Followed<FileCommands | null> }): ReactElement | null {
@@ -73,9 +78,30 @@ function GridItem({ actions }: { actions: MenuActions }): ReactElement {
 }
 
 /**
+ * The items that choose what a press of the pen's side button does, one for each choice, under the title Pen side
+ * button. The menu shows its items again each time it opens, so the items read the choice then, and mark it.
+ */
+function SideButtonItems({ setting }: { setting: SideButtonSetting }): ReactElement {
+  const chosen = setting.get();
+  return createElement(MainMenu.Group, {
+    title: 'Pen side button',
+    children: SIDE_BUTTON_ACTIONS.map(({ action, label }) =>
+      createElement(MainMenu.Item, {
+        key: action,
+        icon: action === chosen ? CHOSEN_ICON : UNCHOSEN_ICON,
+        selected: action === chosen,
+        onSelect: () => setting.set(action),
+        children: label,
+      }),
+    ),
+  });
+}
+
+/**
  * Excalidraw's main menu with the page's items first: New board, Save file and Open file once the board
- * is open, and Connection settings. Then come Excalidraw's own items for the canvas, and last its items
- * for the drawing space: the theme, the grid and the canvas's background. The menu leaves out
+ * is open, and Connection settings. Then come Excalidraw's own items for the canvas, then its items for
+ * the drawing space: the theme, the grid and the canvas's background, and last the items that choose what
+ * the pen's side button does. The menu leaves out
  * Excalidraw's own Open and Save, which act on this page alone.
  */
 export function ChalklineMenu({ actions }: { actions: MenuActions }): ReactElement {
@@ -99,6 +125,8 @@ export function ChalklineMenu({ actions }: { actions: MenuActions }): ReactEleme
       createElement(MainMenu.DefaultItems.ToggleTheme, null),
       createElement(GridItem, { actions }),
       createElement(MainMenu.DefaultItems.ChangeCanvasBackground, null),
+      createElement(MainMenu.Separator, null),
+      createElement(SideButtonItems, { setting: actions.sideButton }),
     ),
   });
 }
