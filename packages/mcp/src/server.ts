@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type * as Y from 'yjs';
 import { answer, refusal } from './answer';
 import { addShapes, ELEMENTS, newId, readBoard, ShapeError } from './board';
+import { registerChanges } from './changes';
 import type { Creator } from './creator';
 import { connect, deleteShapes, moveGroup, updateShape } from './edit';
 import { renderBoard, RenderError } from './render';
@@ -233,6 +234,9 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       }
     },
   );
+
+  // read_changes, which answers the shapes added, changed and deleted after a cursor.
+  registerChanges(server, doc);
 
   // read_transcript, and the transcript as a resource with its notification.
   registerTranscript(server, doc);
