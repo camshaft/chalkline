@@ -1,6 +1,6 @@
 name: Board size measurement, repeated
 
-# Runs the Board size measurement six times at once on each push to a measure/ branch, so that the
+# Runs the Board size measurement ten times at once on each push to a measure/ branch, so that the
 # zoomed-out change's cost can be compared between commits across runners.
 on:
   push:
@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        attempt: [1, 2, 3, 4, 5, 6]
+        attempt: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
