@@ -89,12 +89,19 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
   // Runs a tool's change of the board as the agent `by`, as a drawing call of the helper's presence. The
   // tool's edit passes `by` as the origin of the transaction that writes the change, which goes on the
   // board's list of the agent's changes, with each element it wrote before and after, and `summary` after
-  // the agent's name. The answer holds the change's id as `change`, where the call wrote an element.
+  // the agent's name. Each earlier change that the board no longer shows anything of leaves the list as
+  // this one goes on it. The answer holds the change's id as `change`, where the call wrote an element.
   const recorded = (tool: string, work: (by: Creator) => Promise<Recorded>): Promise<CallToolResult> =>
     drawing(async () => {
       const by = creator();
       const { result, elements: written } = await capturedChanges(elements, by, () => work(by));
-      const change = recordAgentChange(changes, { by, tool, summary: `${by.name} ${result.summary}`, elements: written });
+      const change = recordAgentChange(changes, {
+        by,
+        tool,
+        summary: `${by.name} ${result.summary}`,
+        elements: written,
+        board: elements,
+      });
       return answer(change === null ? result.content : { ...result.content, change });
     });
 
