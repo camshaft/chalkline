@@ -1,10 +1,12 @@
 import { joinRoom as joinNostrRoom } from '@trystero-p2p/nostr';
 import { joinRoom as joinRelayRoom } from '@trystero-p2p/ws-relay';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { joinBoardRoom, PUBLIC_RELAYS } from './join';
+import { joinBoardRoom } from './join';
+import { joinPublicRelayRoom } from './public-relays';
 
 vi.mock('@trystero-p2p/nostr', () => ({ joinRoom: vi.fn(() => 'the Nostr room') }));
 vi.mock('@trystero-p2p/ws-relay', () => ({ joinRoom: vi.fn(() => 'the relay room') }));
+vi.mock('./public-relays', () => ({ joinPublicRelayRoom: vi.fn(() => 'the public relays room') }));
 
 describe('joinBoardRoom', () => {
   beforeEach(() => {
@@ -18,40 +20,28 @@ describe('joinBoardRoom', () => {
     expect(joinBoardRoom(config, 'room', [], callbacks)).toBe('the Nostr room');
 
     expect(joinNostrRoom).toHaveBeenCalledWith(config, 'room', callbacks);
+    expect(joinPublicRelayRoom).not.toHaveBeenCalled();
     expect(joinRelayRoom).not.toHaveBeenCalled();
   });
 
   it("joins through the public relays where the config doesn't list a Nostr relay", () => {
+    const config = { appId: 'chalkline', password: 'key' };
     const callbacks = { onJoinError: vi.fn() };
 
-    expect(joinBoardRoom({ appId: 'chalkline', password: 'key' }, 'room', [], callbacks)).toBe('the Nostr room');
+    expect(joinBoardRoom(config, 'room', [], callbacks)).toBe('the public relays room');
 
-    expect(joinNostrRoom).toHaveBeenCalledWith(
-      { appId: 'chalkline', password: 'key', relayConfig: { urls: [...PUBLIC_RELAYS] } },
-      'room',
-      callbacks,
-    );
+    expect(joinPublicRelayRoom).toHaveBeenCalledWith(config, 'room', callbacks);
+    expect(joinNostrRoom).not.toHaveBeenCalled();
     expect(joinRelayRoom).not.toHaveBeenCalled();
   });
 
-  it("keeps the rest of the config's relay settings where its list of Nostr relays is empty", () => {
+  it('joins through the public relays, with the rest of the config, where its list of Nostr relays is empty', () => {
     const config = { appId: 'chalkline', password: 'key', relayConfig: { urls: [], manualReconnection: true } };
 
-    joinBoardRoom(config, 'room', []);
+    expect(joinBoardRoom(config, 'room', [])).toBe('the public relays room');
 
-    expect(joinNostrRoom).toHaveBeenCalledWith(
-      { appId: 'chalkline', password: 'key', relayConfig: { urls: [...PUBLIC_RELAYS], manualReconnection: true } },
-      'room',
-      undefined,
-    );
-  });
-
-  it('names five of the relays Trystero lists as its defaults, each once', async () => {
-    const { defaultRelayUrls } = await vi.importActual<typeof import('@trystero-p2p/nostr')>('@trystero-p2p/nostr');
-
-    expect(PUBLIC_RELAYS).toHaveLength(5);
-    expect(new Set(PUBLIC_RELAYS).size).toBe(PUBLIC_RELAYS.length);
-    for (const url of PUBLIC_RELAYS) expect(defaultRelayUrls).toContain(url);
+    expect(joinPublicRelayRoom).toHaveBeenCalledWith(config, 'room', undefined);
+    expect(joinNostrRoom).not.toHaveBeenCalled();
   });
 
   it('joins through the listed WebSocket relays alone, with the rest of the configuration', () => {
@@ -76,5 +66,6 @@ describe('joinBoardRoom', () => {
       undefined,
     );
     expect(joinNostrRoom).not.toHaveBeenCalled();
+    expect(joinPublicRelayRoom).not.toHaveBeenCalled();
   });
 });
