@@ -1,0 +1,174 @@
+import * as Y from 'yjs';
+
+/** The feedback map's name in the room's Yjs document. */
+export const FEEDBACK = 'feedback';
+
+/**
+ * Where a feedback stands: "open" until the agent answers it, then
+ * "answered", until a person reopens it.
+ */
+export type FeedbackStatus = 'open' | 'answered';
+
+const STATUSES: readonly string[] = ['open', 'answered'];
+
+/** A rectangle on the board, in the board's coordinates. */
+export interface Region {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** The agent's answer to a feedback. */
+export interface FeedbackAnswer {
+  /** The agent's name. */
+  by: string;
+  /** When the agent answered, as an ISO 8601 time. */
+  at: string;
+  /** What the agent changed, in a short text. */
+  text: string;
+}
+
+/**
+ * A comment that a person writes on an area of the board, which every page
+ * shows and the agent answers.
+ */
+export interface Feedback {
+  /** The feedback's id, unique on the board, and its key in the map. */
+  id: string;
+  /** The writer's name. */
+  by: string;
+  /** When the person wrote it, as an ISO 8601 time. */
+  at: string;
+  /** What the person wrote. */
+  text: string;
+  /** The area the feedback is for, in the board's coordinates. */
+  region: Region;
+  /** The ids of the shapes that overlapped the region when the person sent it. */
+  shapes: string[];
+  status: FeedbackStatus;
+  /**
+   * The agent's answer, or null before the first one. A reopened feedback
+   * keeps its answer.
+   */
+  answer: FeedbackAnswer | null;
+}
+
+/**
+ * The board's feedback: a Y.Map from each feedback's id to its record. Each
+ * change writes the whole record under its key, so of two writes of one
+ * feedback the one Yjs orders last stays.
+ */
+export function feedbackOf(doc: Y.Doc): Y.Map<unknown> {
+  return doc.getMap<unknown>(FEEDBACK);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const filled = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '';
+
+const isTime = (value: unknown): value is string => filled(value) && !Number.isNaN(Date.parse(value));
+
+const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+const isStatus = (value: unknown): value is FeedbackStatus => typeof value === 'string' && STATUSES.includes(value);
+
+function readRegion(value: unknown): Region | null {
+  if (!isRecord(value)) return null;
+  const { x, y, width, height } = value;
+  if (!finite(x) || !finite(y) || !finite(width) || !finite(height)) return null;
+  return { x, y, width, height };
+}
+
+function readAnswer(value: unknown): FeedbackAnswer | null {
+  if (!isRecord(value)) return null;
+  const { by, at, text } = value;
+  if (!filled(by) || !isTime(at) || !filled(text)) return null;
+  return { by, at, text };
+}
+
+/**
+ * Reads one feedback, which may come from any peer: a value that isn't an
+ * object, that lacks one of the fields `id`, `by`, `at`, `text`, `region`,
+ * `shapes`, `status` and `answer`, that holds one of the wrong type or a
+ * blank text, or that holds a time that doesn't parse, reads as null. So does
+ * a value whose `region` lacks a finite `x`, `y`, `width` or `height`, whose
+ * `shapes` holds anything but text, whose `status` isn't "open" or
+ * "answered", or whose `answer` isn't null or a `by`, `at` and `text` that
+ * read as the feedback's own do. Other fields are left out, and the record it
+ * answers is a copy.
+ */
+export function readFeedback(value: unknown): Feedback | null {
+  if (!isRecord(value)) return null;
+  const { id, by, at, text, region, shapes, status, answer } = value;
+  if (!filled(id) || !filled(by) || !isTime(at) || !filled(text)) return null;
+  const area = readRegion(region);
+  if (area === null) return null;
+  if (!Array.isArray(shapes) || !shapes.every((shape) => typeof shape === 'string')) return null;
+  if (!isStatus(status)) return null;
+  let reply: FeedbackAnswer | null = null;
+  if (answer !== null) {
+    reply = readAnswer(answer);
+    if (reply === null) return null;
+  }
+  return { id, by, at, text, region: area, shapes: [...shapes], status, answer: reply };
+}
+
+/**
+ * The feedback that `feedback` holds under `id`, or null where it doesn't
+ * hold one, where its value doesn't read as a feedback, or where the value's
+ * `id` isn't `id`.
+ */
+export function getFeedback(feedback: Y.Map<unknown>, id: string): Feedback | null {
+  const record = readFeedback(feedback.get(id));
+  return record !== null && record.id === id ? record : null;
+}
+
+/**
+ * Every feedback of `feedback` that `getFeedback` reads under its key, in the
+ * order of `at`, and of `id` where two times are equal, so that every copy
+ * lists them in one order.
+ */
+export function listFeedback(feedback: Y.Map<unknown>): Feedback[] {
+  const records: Feedback[] = [];
+  for (const id of feedback.keys()) {
+    const record = getFeedback(feedback, id);
+    if (record !== null) records.push(record);
+  }
+  return records.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+/**
+ * Writes `record` whole under its id, which sends it to every peer: a new
+ * feedback, or a change of one, such as a reopen that sets `status` back to
+ * "open" and keeps the answer. It keeps only the record's fields, as a copy.
+ * Where the record doesn't read as a feedback, it throws a TypeError and
+ * doesn't write anything, so that a writer doesn't make a feedback absent
+ * for every reader.
+ */
+export function writeFeedback(feedback: Y.Map<unknown>, record: Feedback): void {
+  const value = readFeedback(record);
+  if (value === null) throw new TypeError(`not a feedback: ${JSON.stringify(record)}`);
+  feedback.set(value.id, value);
+}
+
+/**
+ * Answers the feedback that `feedback` holds under `id`: sets its `status`
+ * to "answered" and its `answer` to `answer`, and returns the record as it
+ * then stands. Where `getFeedback` doesn't read a feedback under `id`, it
+ * returns null and doesn't write anything; where the feedback is answered
+ * already, it returns the record as it stands and doesn't change it. Where
+ * `answer` doesn't read as one, it throws a TypeError and doesn't write
+ * anything.
+ */
+export function answerFeedback(feedback: Y.Map<unknown>, id: string, answer: FeedbackAnswer): Feedback | null {
+  const record = getFeedback(feedback, id);
+  if (record === null) return null;
+  if (record.status === 'answered') return record;
+  const answered = readFeedback({ ...record, status: 'answered', answer });
+  if (answered === null) throw new TypeError(`not an answer: ${JSON.stringify(answer)}`);
+  feedback.set(id, answered);
+  return getFeedback(feedback, id);
+}
