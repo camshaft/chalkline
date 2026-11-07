@@ -89,6 +89,9 @@ export async function renderBoard(
           files: boardFiles(doc) as ExportOptions['files'],
           exportPadding: 0,
           skipInliningFonts: true,
+          // Each image then sets its width and height in the board's units. With the image that a
+          // <use> shares at width and height 100%, resvg drew an image on part of its place only.
+          reuseImages: false,
         });
   const [minX, minY] = bounds ?? [0, 0];
   // exportToSvg sets xmlns as an attribute, which XMLSerializer writes a second time beside the
