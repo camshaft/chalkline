@@ -1,7 +1,13 @@
 import '@excalidraw/excalidraw/index.css';
 import { Awareness, connectAwareness, connectDoc, relaysFromAddress, trysteroTransport } from '@chalkline/sync';
 import { joinBoardRoom } from '@chalkline/sync/join';
-import { CaptureUpdateAction, Excalidraw, loadFromBlob, serializeAsJSON } from '@excalidraw/excalidraw';
+import {
+  CaptureUpdateAction,
+  convertToExcalidrawElements,
+  Excalidraw,
+  loadFromBlob,
+  serializeAsJSON,
+} from '@excalidraw/excalidraw';
 import type { OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type { BinaryFileData, Collaborator, ExcalidrawImperativeAPI, SocketId } from '@excalidraw/excalidraw/types';
 import { selfId } from '@trystero-p2p/nostr';
@@ -13,6 +19,7 @@ import { addOpened, boardFileName, connectFileControls, OPENED } from './board-f
 import { loadSettings, roomOptions, type ConnectionSettings, type SettingsStorage } from './connection';
 import { bindFiles, writeFiles } from './files';
 import { keepBoard, storeName, type KeptBoard } from './keep';
+import { bindRequests, mermaidConverter } from './mermaid';
 import { bindPresence, keepName, participantName, setName, type Button, type NameStorage, type Pointer } from './presence';
 import { connectionReport, type ConnectionReport } from './report';
 import type { RoomSecrets } from './room';
@@ -214,6 +221,20 @@ async function start(): Promise<ChalklineHandle> {
       };
     },
   });
+  // The page converts each Mermaid request that the agent's helper writes, since the conversion
+  // runs in a browser. mermaid-to-excalidraw loads with the first request, so a board without one
+  // doesn't load it.
+  bindRequests(
+    doc,
+    awareness,
+    mermaidConverter(
+      async (text) => (await import('@excalidraw/mermaid-to-excalidraw')).parseMermaidToExcalidraw(text),
+      (skeletons) =>
+        convertToExcalidrawElements(skeletons as Parameters<typeof convertToExcalidrawElements>[0], {
+          regenerateIds: true,
+        }),
+    ),
+  );
   connectFileControls(
     {
       save: pageElement('save-button'),
