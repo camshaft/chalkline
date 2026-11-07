@@ -1,15 +1,28 @@
 // The agent's edits of shapes that are on the board already: connect draws an arrow bound to two
-// of them, update_shape moves, resizes, relabels or recolors one, or moves a group of them, and
-// delete_shapes deletes some, by their ids or by their groups.
+// of them, update_shape moves, resizes, relabels or recolors one, or moves a group of them,
+// delete_shapes deletes some, by their ids or by their groups, and reorder_shapes moves some
+// forward or back.
 // Each reads the board as chalkline-mcp's copy holds it, and writes its change in one transaction,
 // which reaches the page as any change of the board does.
 import { randomInt } from 'node:crypto';
 import type * as Y from 'yjs';
-import { boundTo, ELEMENTS, finite, groupsOf, newId, readBoard, ShapeError, stringOf } from './board';
+import {
+  backToFront,
+  boundTo,
+  ELEMENTS,
+  finite,
+  groupsOf,
+  indicesAt,
+  newId,
+  readBoard,
+  ShapeError,
+  stringOf,
+  type Stacked,
+} from './board';
 import { withCreator, type Creator } from './creator';
 import { arrowPoints, boardPoints, type Outline, type Point } from './geometry';
 import { indicesAbove } from './order';
-import type { BoardShape, Connection, ShapeChange } from './shapes';
+import type { BoardShape, Connection, Place, ShapeChange } from './shapes';
 import { convertSkeletons, type Skeleton } from './skeleton';
 
 /** An Excalidraw element, as the board's shared map holds it. */
@@ -332,6 +345,62 @@ export function deleteShapes(doc: Y.Doc, ids: readonly string[], groups: readonl
     }
   });
   return deleted;
+}
+
+/**
+ * Moves the shapes `ids` to `place` in the board's stacking order, each with its label just above
+ * it, in one transaction, and returns `ids` back to front, as get_board then lists them. The shapes
+ * keep their order among themselves, whatever order `ids` lists them in, and each element moved
+ * gets a new version, so that each page takes the move. Throws a ShapeError, and moves nothing,
+ * where `ids` holds one id twice, or an id that isn't a shape on the board or is a label, or where
+ * `place` names a shape that `ids` moves too, or one that indicesAt refuses.
+ */
+export function reorderShapes(doc: Y.Doc, ids: readonly string[], place: Place): string[] {
+  const shared = doc.getMap<unknown>(ELEMENTS);
+  const first = new Map<string, number>();
+  const shapes = ids.map((id, n) => {
+    const earlier = first.get(id);
+    if (earlier !== undefined) {
+      throw new ShapeError(`ids[${n}] is "${id}", which ids[${earlier}] is too: list each shape once.`);
+    }
+    first.set(id, n);
+    return stacking(id, shapeOf(shared, `ids[${n}]`, id, (container) => `move "${container}", and its label moves with it`));
+  });
+  if (place !== 'front' && place !== 'back') {
+    const [side, target] = 'below' in place ? (['below', place.below] as const) : (['above', place.above] as const);
+    const mover = first.get(target);
+    if (mover !== undefined) {
+      throw new ShapeError(
+        `place.${side} is "${target}", which ids[${mover}] moves too: place the shapes ${side} a shape that stays where it is.`,
+      );
+    }
+  }
+
+  // Each shape's label moves with it, just above it, as add_shapes stacks a label on its shape.
+  const labels = new Map<string, Stacking[]>();
+  for (const [id, value] of shared.entries()) {
+    const element = elementOf(value);
+    if (element === undefined || element.isDeleted === true) continue;
+    const container = containerOf(shared, element);
+    if (container !== undefined && first.has(container)) labels.set(container, [...(labels.get(container) ?? []), stacking(id, element)]);
+  }
+  const order = [...shapes].sort(backToFront);
+  const moved = order.flatMap((shape) => [shape, ...(labels.get(shape.id) ?? []).sort(backToFront)]);
+  const indices = indicesAt(shared, place, moved.length, new Set(moved.map((entry) => entry.id)));
+  doc.transact(() => {
+    moved.forEach((entry, n) => shared.set(entry.id, touched(entry.element, { index: indices[n] })));
+  });
+  return order.map((shape) => shape.id);
+}
+
+/** An element that reorder_shapes moves, with its id and its index, which order it on the board. */
+interface Stacking extends Stacked {
+  element: Element;
+}
+
+/** The element `element`, whose id on the board is `id`, as reorder_shapes orders it. */
+function stacking(id: string, element: Element): Stacking {
+  return { id, index: typeof element.index === 'string' ? element.index : null, element };
 }
 
 /** The elements that one change of the board writes, read over the board as it stands. */

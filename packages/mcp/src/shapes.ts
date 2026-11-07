@@ -291,7 +291,28 @@ export const deletionSchema = z.object({
     .describe("The ids of groups to delete with every shape in them, as get_board lists them in a shape's groups."),
 });
 
+/** Where shapes go in the board's stacking order, which get_board lists from back to front. */
+export const placeSchema = z
+  .union([
+    z.enum(['front', 'back']),
+    z.object({ below: z.string().min(1) }).strict(),
+    z.object({ above: z.string().min(1) }).strict(),
+  ])
+  .describe(
+    'Where the shapes go in the order get_board lists, from back to front: "front", in front of every shape; "back", behind every shape; {"below": id}, just below the shape with that id; or {"above": id}, just above that shape and its label.',
+  );
+
+/** The shapes that reorder_shapes moves, and where it moves them. */
+export const reorderSchema = z.object({
+  ids: z
+    .array(z.string().min(1))
+    .min(1)
+    .describe('The ids of the shapes to move, as get_board lists them; they keep their order among themselves.'),
+  place: placeSchema,
+});
+
 export type Shape = z.infer<typeof shapeSchema>;
 export type BoardShape = z.infer<typeof boardShapeSchema>;
 export type Connection = z.infer<typeof connectionSchema>;
 export type ShapeChange = z.infer<typeof changeSchema>;
+export type Place = z.infer<typeof placeSchema>;
