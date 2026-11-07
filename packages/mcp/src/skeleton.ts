@@ -13,6 +13,46 @@ const CHARACTER_WIDTH = 0.6;
 /** Node's EventTarget, read before jsdom is installed. */
 const NodeEventTarget = globalThis.EventTarget;
 
+/** Excalidraw's module, which loads in Node only once jsdom supplies a DOM. */
+export type Excalidraw = typeof import('@excalidraw/excalidraw');
+
+/** One element in Excalidraw's skeleton format, as `convertToExcalidrawElements` reads it. */
+export type Skeleton = NonNullable<Parameters<Excalidraw['convertToExcalidrawElements']>[0]>[number];
+
+/** One element that `convertToExcalidrawElements` makes. */
+export type ConvertedElement = ReturnType<Excalidraw['convertToExcalidrawElements']>[number];
+
+let loading: Promise<Excalidraw> | undefined;
+
+/**
+ * Loads Excalidraw in Node, once. Excalidraw expects a DOM, so jsdom supplies one first, and
+ * Node has no canvas to measure text on, so each character measures CHARACTER_WIDTH of its font.
+ */
+export function loadExcalidraw(): Promise<Excalidraw> {
+  loading ??= (async () => {
+    await installDom();
+    const excalidraw = await import('@excalidraw/excalidraw');
+    excalidraw.setCustomTextMetricsProvider({
+      getLineWidth: (text: string, font: string) => text.length * fontSize(font) * CHARACTER_WIDTH,
+    });
+    return excalidraw;
+  })();
+  return loading;
+}
+
+/**
+ * Converts elements from Excalidraw's skeleton format with `convertToExcalidrawElements`, in Node.
+ * With `regenerateIds` false, each element keeps the id its skeleton sets, which an arrow's
+ * `start` and `end` name.
+ */
+export async function convertSkeletons(
+  skeletons: readonly Skeleton[],
+  { regenerateIds = true }: { regenerateIds?: boolean } = {},
+): Promise<ConvertedElement[]> {
+  const { convertToExcalidrawElements } = await loadExcalidraw();
+  return convertToExcalidrawElements([...skeletons], { regenerateIds });
+}
+
 export interface LabelledBox {
   /** Every element of the box, in the order to add them: the rectangle, then its label. */
   elements: readonly ExcalidrawElement[];
@@ -20,19 +60,9 @@ export interface LabelledBox {
   text: ExcalidrawTextElement;
 }
 
-/**
- * Converts one labelled rectangle from Excalidraw's skeleton format with
- * `convertToExcalidrawElements`, in Node: Excalidraw expects a DOM, so jsdom
- * supplies one first.
- */
+/** Converts one labelled rectangle from Excalidraw's skeleton format, as draw-box adds it. */
 export async function labelledBox(label: string, at = { x: 120, y: 420 }): Promise<LabelledBox> {
-  await installDom();
-  const { convertToExcalidrawElements, setCustomTextMetricsProvider } = await import('@excalidraw/excalidraw');
-  setCustomTextMetricsProvider({
-    getLineWidth: (text: string, font: string) => text.length * fontSize(font) * CHARACTER_WIDTH,
-  });
-
-  const elements = convertToExcalidrawElements([
+  const elements = await convertSkeletons([
     { type: 'rectangle', x: at.x, y: at.y, width: 280, height: 100, label: { text: label } },
   ]);
   const box = elements.find((element) => element.type === 'rectangle');
@@ -50,12 +80,14 @@ async function installDom(): Promise<void> {
   const { default: globalJsdom } = await import('global-jsdom');
   globalJsdom(undefined, { pretendToBeVisual: true, url: 'https://chalkline.invalid/' });
   // jsdom's canvas has no 2D context, and Excalidraw checks which context features exist as it
-  // loads. draw-box doesn't draw anything, so a context whose methods do nothing is enough.
+  // loads. Neither draw-box nor chalkline-mcp draws anything, so a context whose methods do nothing
+  // is enough.
   HTMLCanvasElement.prototype.getContext = function getContext(this: HTMLCanvasElement) {
     return inertContext(this);
   } as unknown as HTMLCanvasElement['getContext'];
   // jsdom has no font loading API either. Excalidraw registers its fonts as it measures text, and
-  // draw-box measures text with the metrics provider above, so fonts that load nothing are enough.
+  // loadExcalidraw measures text with a metrics provider of its own, so fonts that load nothing are
+  // enough.
   globalThis.FontFace = InertFontFace as unknown as typeof FontFace;
   Object.defineProperty(document, 'fonts', { value: new InertFontFaceSet(), configurable: true });
   // Libraries written for browsers, such as Trystero, call addEventListener on the global scope once
