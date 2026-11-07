@@ -284,7 +284,7 @@ export function rasterize(svg: string, signal?: AbortSignal): Promise<Buffer> {
 }
 
 /** The board's elements from back to front, as copies, without the deleted ones and the values that aren't elements. */
-function boardElements(doc: Y.Doc): Record<string, unknown>[] {
+export function boardElements(doc: Y.Doc): Record<string, unknown>[] {
   const elements: Record<string, unknown>[] = [];
   for (const value of doc.getMap<unknown>(ELEMENTS).values()) {
     if (typeof value !== 'object' || value === null) continue;
