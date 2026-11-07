@@ -176,9 +176,9 @@ export function reloadOnRoomChange(address: PageAddress, joined: RoomSecrets, re
 }
 
 /**
- * Opens a new board, with a new room's name and password, each time `button`
- * is clicked: `open` takes the fragment of the new board's link.
+ * The fragment of a new board's link, with a new room's name and password,
+ * which the main menu's New board item opens.
  */
-export function connectNewBoardButton(button: HTMLElement, open: (fragment: string) => void): void {
-  button.addEventListener('click', () => open(roomFragment(newRoomSecrets())));
+export function newBoardFragment(): string {
+  return roomFragment(newRoomSecrets());
 }

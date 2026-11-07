@@ -17,8 +17,12 @@ import * as Y from 'yjs';
 import { bindElements } from './binding';
 import { addOpened, boardFileName, connectFileControls, OPENED } from './board-file';
 import { loadSettings, roomOptions, type ConnectionSettings, type SettingsStorage } from './connection';
+import { bindStatusBadge, connectControlsToggle, controlsAttacher } from './controls';
+import { keepDrawingSpaceChanges, keptDrawingSpace } from './drawing-space';
 import { bindFiles, writeFiles } from './files';
 import { keepBoard, storeName, type KeptBoard } from './keep';
+import { Followed } from './followed';
+import { ChalklineMenu, type FileCommands } from './menu';
 import { bindRequests, mermaidConverter } from './mermaid';
 import {
   bindPresence,
@@ -35,12 +39,12 @@ import type { RoomSecrets } from './room';
 import {
   boardInAddress,
   chooseRoom,
-  connectNewBoardButton,
+  newBoardFragment,
   reloadOnRoomChange,
   windowAddress,
   type PageAddress,
 } from './room-links';
-import { connectSettingsButton } from './settings-panel';
+import { connectSettingsButton, settingsOpener } from './settings-panel';
 import { recognitionClass, recognitionLanguage, speechControl, type Speech } from './speech';
 import { statusLine, watchedPeerConnection } from './status';
 import { bindTranscriptPanel, followKeyboard } from './transcript-panel';
@@ -93,15 +97,10 @@ function pageButton(id: string): HTMLButtonElement {
   return found;
 }
 
-/**
- * Shows the join screen in the board's place until a person chooses a board,
- * and hides the bar's New board button meanwhile, since the screen holds one.
- */
-async function boardFromJoinScreen(address: PageAddress, status: HTMLElement, newBoard: HTMLElement): Promise<RoomSecrets> {
-  newBoard.hidden = true;
+/** Shows the join screen in the board's place until a person chooses a board. */
+async function boardFromJoinScreen(address: PageAddress, status: HTMLElement): Promise<RoomSecrets> {
   status.textContent = 'Start a new board, or join one from its link.';
   const secrets = await chooseRoom(pageElement('app'), address);
-  newBoard.hidden = false;
   status.textContent = 'Joining the room...';
   return secrets;
 }
@@ -148,24 +147,21 @@ function bindNameField(field: HTMLInputElement, awareness: Awareness, storage: N
 
 async function start(): Promise<ChalklineHandle> {
   const status = pageElement('status');
+  bindStatusBadge(pageButton('status-badge'), status);
+  connectControlsToggle(pageButton('controls-toggle'), pageElement('controls'));
   const storage = browserStorage();
   const settings = loadSettings(storage);
   const line = statusLine(status, settings);
-  connectSettingsButton(pageElement('settings-button'), pageElement('settings'), {
-    settings,
-    storage,
-    reload: () => window.location.reload(),
-  });
+  const settingsOptions = { settings, storage, reload: () => window.location.reload() };
+  // The controls' Connection settings button opens the settings on the join screen, and the main menu's
+  // item opens them once the board is open.
+  connectSettingsButton(pageElement('settings-button'), pageElement('settings'), settingsOptions);
+  const openSettings = settingsOpener(pageElement('settings'), settingsOptions);
   const address = windowAddress(window);
-  const newBoard = pageElement('new-board');
-  // Setting the fragment adds a history entry, so the Back button returns to the board before.
-  connectNewBoardButton(newBoard, (fragment) => {
-    window.location.hash = fragment;
-  });
   const doc = new Y.Doc();
   const awareness = new Awareness(doc);
   bindNameField(pageInput('name'), awareness, storage ?? undefined);
-  const secrets = boardInAddress(address) ?? (await boardFromJoinScreen(address, status, newBoard));
+  const secrets = boardInAddress(address) ?? (await boardFromJoinScreen(address, status));
   // The page joins its board only as it loads, so an address that names another board, or none, loads it again.
   reloadOnRoomChange(address, secrets, () => window.location.reload());
   // A page that the local-network mode serves names that machine's relay in its address, and finds
@@ -198,18 +194,58 @@ async function start(): Promise<ChalklineHandle> {
   showPeers();
 
   const pointerHandlers = new Set<(pointer: Pointer, button: Button) => void>();
+  // The menu's Save file and Open file items show once the board's file controls are connected, below.
+  const fileCommands = new Followed<FileCommands | null>(null);
+  let mounted: ExcalidrawImperativeAPI | null = null;
+  const attachControls = controlsAttacher(pageElement('controls'));
   const api = await new Promise<ExcalidrawImperativeAPI>((resolve) => {
     createRoot(pageElement('app')).render(
       createElement(Excalidraw, {
-        excalidrawAPI: resolve,
+        excalidrawAPI: (excalidraw) => {
+          mounted = excalidraw;
+          resolve(excalidraw);
+        },
         onPointerUpdate: ({ pointer, button }) => {
           for (const handler of pointerHandlers) handler(pointer, button);
         },
-        // The bar's Save file and Open file buttons save and open the board. Excalidraw's own Open
-        // replaces the whole scene on this page alone, so its menu leaves out Open and Save.
+        // The canvas's background and grid are this browser's, kept as the name is, and not the board's.
+        initialData: { appState: keptDrawingSpace(storage ?? undefined) },
+        // The page's controls go in the space Excalidraw keeps for its top-right area: below that area's
+        // buttons on a desktop, and on the screen's left edge on a phone.
+        renderTopRightUI: (isMobile) =>
+          createElement('div', {
+            className: isMobile ? 'chalkline-host chalkline-host--mobile' : 'chalkline-host',
+            ref: attachControls,
+          }),
+        // The main menu's Save file and Open file items save and open the board. Excalidraw's own Open
+        // replaces the whole scene on this page alone, so the menu leaves out Excalidraw's Open and Save.
         UIOptions: { canvasActions: { loadScene: false, export: false, saveToActiveFile: false } },
+        children: createElement(ChalklineMenu, {
+          actions: {
+            // Setting the fragment adds a history entry, so the Back button returns to the board before.
+            newBoard: () => {
+              window.location.hash = newBoardFragment();
+            },
+            connectionSettings: openSettings,
+            files: fileCommands,
+            grid: () => mounted?.getAppState().gridModeEnabled ?? false,
+            setGrid: (shown) =>
+              mounted?.updateScene({
+                appState: { gridModeEnabled: shown },
+                captureUpdate: CaptureUpdateAction.EVENTUALLY,
+              }),
+          },
+        }),
       }),
     );
+  });
+  // Each change of the canvas's background or grid is kept for this browser's next visit.
+  keepDrawingSpaceChanges(storage ?? undefined, {
+    current: () => {
+      const { viewBackgroundColor, gridModeEnabled } = api.getAppState();
+      return { viewBackgroundColor, gridModeEnabled };
+    },
+    onChange: (handler) => api.onChange(() => handler()),
   });
   const shared = doc.getMap<OrderedExcalidrawElement>('elements');
   bindElements(shared, {
@@ -256,28 +292,25 @@ async function start(): Promise<ChalklineHandle> {
         }),
     ),
   );
-  connectFileControls(
-    {
-      save: pageElement('save-button'),
-      open: pageElement('open-button'),
-      input: pageInput('open-file'),
-      dropTarget: pageElement('app'),
-    },
-    {
-      save: () => serializeAsJSON(api.getSceneElements(), api.getAppState(), api.getFiles(), 'local'),
-      fileName: () => boardFileName(secrets.room),
-      open: async (file) => {
-        // Excalidraw reads its own files, and files of its older versions, and checks that each holds a board.
-        const scene = await loadFromBlob(file, null, null);
-        const added = addOpened(shared, scene.elements);
-        writeFiles(files, Object.values(scene.files), OPENED);
-        status.textContent = `Opened ${file.name}: ${added.length} ${added.length === 1 ? 'shape' : 'shapes'} added to the board.`;
+  fileCommands.set(
+    connectFileControls(
+      { input: pageInput('open-file'), dropTarget: pageElement('app') },
+      {
+        save: () => serializeAsJSON(api.getSceneElements(), api.getAppState(), api.getFiles(), 'local'),
+        fileName: () => boardFileName(secrets.room),
+        open: async (file) => {
+          // Excalidraw reads its own files, and files of its older versions, and checks that each holds a board.
+          const scene = await loadFromBlob(file, null, null);
+          const added = addOpened(shared, scene.elements);
+          writeFiles(files, Object.values(scene.files), OPENED);
+          status.textContent = `Opened ${file.name}: ${added.length} ${added.length === 1 ? 'shape' : 'shapes'} added to the board.`;
+        },
+        onError: (file, error) => {
+          console.warn(`chalkline: couldn't open ${file.name}`, error);
+          status.textContent = `${file.name} couldn't be opened: ${error instanceof Error ? error.message : String(error)}`;
+        },
       },
-      onError: (file, error) => {
-        console.warn(`chalkline: couldn't open ${file.name}`, error);
-        status.textContent = `${file.name} couldn't be opened: ${error instanceof Error ? error.message : String(error)}`;
-      },
-    },
+    ),
   );
   // The board's transcript, which the page shows as its chat, holds each participant's final speech results and
   // typed messages, and the agent's posts. Speech stays off until the person presses the microphone button, and
@@ -302,10 +335,8 @@ async function start(): Promise<ChalklineHandle> {
   if (window.visualViewport !== null) {
     followKeyboard(pageElement('transcript'), window.visualViewport, () => document.documentElement.clientHeight);
   }
-  // The bar's Save file, Open file, microphone and Chat buttons show once the board they act on is open,
-  // and stay hidden on the join screen.
-  pageElement('save-button').hidden = false;
-  pageElement('open-button').hidden = false;
+  // The microphone and Chat buttons show once the board they act on is open, and stay hidden on the
+  // join screen, as the menu's Save file and Open file items do.
   pageElement('mic').hidden = false;
   pageElement('transcript-button').hidden = false;
 

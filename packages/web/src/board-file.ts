@@ -1,5 +1,6 @@
 import type * as Y from 'yjs';
 import { wins, type VersionedElement } from './binding';
+import type { FileCommands } from './menu';
 
 /** The transaction origin of the elements that an opened file adds to the shared map. */
 export const OPENED = Symbol('chalkline.opened');
@@ -51,13 +52,13 @@ export function boardFileName(room: string): string {
   return `chalkline-${room.replace(/[^A-Za-z0-9._-]/g, '-')}.excalidraw`;
 }
 
-/** Makes and revokes the object URLs that the Save button's downloads read, as `URL` does. */
+/** Makes and revokes the object URLs that Save file's downloads read, as `URL` does. */
 export interface ObjectUrls {
   createObjectURL(blob: Blob): string;
   revokeObjectURL(url: string): void;
 }
 
-/** What the Save and Open buttons do with the board. */
+/** What the main menu's Save file and Open file items do with the board. */
 export interface FileActions {
   /** The board, as the text of an `.excalidraw` file. */
   save(): string;
@@ -69,27 +70,26 @@ export interface FileActions {
   onError(file: File, error: unknown): void;
 }
 
-/** The page's parts that save and open the board's files. */
+/** The page's parts that open the board's files. */
 export interface FileControls {
-  save: HTMLElement;
-  open: HTMLElement;
-  /** The file input that Open asks for a file with. */
+  /** The file input that Open file asks for a file with. */
   input: HTMLInputElement;
   /** Where a person may drop a file to open it: the canvas. */
   dropTarget: HTMLElement;
 }
 
 /**
- * Connects the Save and Open buttons. Save downloads the board as an
+ * Connects the board's files, and returns the commands of the main menu's
+ * Save file and Open file items. Save downloads the board as an
  * `.excalidraw` file, and revokes the object URL of the save before it. Open
  * asks for a file with the file input, and opens the file chosen. A file
  * dropped on the canvas opens the same way, unless it is an image, which the
  * canvas adds as a shape.
  */
-export function connectFileControls(controls: FileControls, actions: FileActions, urls: ObjectUrls = URL): void {
+export function connectFileControls(controls: FileControls, actions: FileActions, urls: ObjectUrls = URL): FileCommands {
   let previous: string | null = null;
-  controls.save.addEventListener('click', () => {
-    const page = controls.save.ownerDocument;
+  const save = () => {
+    const page = controls.input.ownerDocument;
     const url = urls.createObjectURL(new Blob([actions.save()], { type: EXCALIDRAW_TYPE }));
     if (previous !== null) urls.revokeObjectURL(previous);
     previous = url;
@@ -100,12 +100,11 @@ export function connectFileControls(controls: FileControls, actions: FileActions
     page.body.append(link);
     link.click();
     link.remove();
-  });
+  };
 
   const open = (file: File) => {
     actions.open(file).catch((error: unknown) => actions.onError(file, error));
   };
-  controls.open.addEventListener('click', () => controls.input.click());
   controls.input.addEventListener('change', () => {
     const file = controls.input.files?.[0];
     // Clear the input, so that choosing the same file again opens it again.
@@ -125,4 +124,5 @@ export function connectFileControls(controls: FileControls, actions: FileActions
     },
     { capture: true },
   );
+  return { save, open: () => controls.input.click() };
 }
