@@ -245,8 +245,10 @@ describe('read_changes', () => {
   });
 
   it('lists a shape the agent adds with add_shapes, with the agent as its creator', async () => {
-    const { client } = await board();
+    // A board that holds a shape, so that the first read answers at once with the cursor after it.
+    const { client } = await board([drawn({ id: 'box' })]);
     const { cursor } = read(await readChanges(client));
+    expect(cursor).toBe(1);
     const added = (await client.callTool({
       name: 'add_shapes',
       arguments: { shapes: [{ type: 'rectangle', x: 10, y: 20, width: 200, height: 80 }] },
