@@ -259,10 +259,6 @@ export function rasterize(svg: string, signal?: AbortSignal): Promise<Buffer> {
       // A process that stops before it reads the whole SVG closes its input, and the close of the
       // process answers the call.
     });
-    child.on('error', (error) => {
-      signal?.removeEventListener('abort', kill);
-      reject(new RenderError(`render_board couldn't start resvg's process: ${error.message}`));
-    });
     child.on('close', (code, ended) => {
       signal?.removeEventListener('abort', kill);
       if (code === 0) {
