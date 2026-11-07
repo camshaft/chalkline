@@ -159,10 +159,18 @@ function text(result: CallToolResult): string {
 }
 
 describe('chalkline-mcp', () => {
-  it('lists get_board, add_shapes, add_mermaid and get_request', async () => {
+  it('lists get_board, add_shapes, connect, update_shape, delete_shapes, add_mermaid and get_request', async () => {
     const { client } = await board();
     const { tools } = await client.listTools();
-    expect(tools.map((tool) => tool.name).sort()).toEqual(['add_mermaid', 'add_shapes', 'get_board', 'get_request']);
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
+      'add_mermaid',
+      'add_shapes',
+      'connect',
+      'delete_shapes',
+      'get_board',
+      'get_request',
+      'update_shape',
+    ]);
   });
 
   it('adds a labelled rectangle, which reaches the page with its label bound to it', async () => {
