@@ -2,7 +2,17 @@
 import { feedbackKind, feedbackOf, listFeedback } from '@chalkline/sync';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
-import { ASK_LABEL, bindAsk, QUICK_ASKS, type AskCanvas, type AskRoom, type Selection } from './ask';
+import {
+  ASK_LABEL,
+  bindAsk,
+  QUICK_ASKS,
+  selectionOf,
+  type AskCanvas,
+  type AskRoom,
+  type Selection,
+  type SelectionShape,
+  type SelectionState,
+} from './ask';
 import type { CanvasView } from './feedback';
 
 const AT = '2026-11-07T01:02:03.000Z';
@@ -341,5 +351,129 @@ describe("the canvas's context menu", () => {
     expect(entries(menu)).toEqual(['li Copy']);
     expect(key(document, { key: 'Escape' })).toBe(true);
     expect(box(layer).hidden).toBe(true);
+  });
+});
+
+describe('a change of the canvas or the room', () => {
+  /** Watches `layer` and its children, and answers the page's writes to them from then on. */
+  const watch = (layer: Element): (() => string[]) => {
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(layer, { attributes: true, childList: true, characterData: true, subtree: true });
+    return () => {
+      const records = observer.takeRecords();
+      observer.disconnect();
+      return records.map((record) => `${record.type} ${record.attributeName ?? ''}`);
+    };
+  };
+
+  it("doesn't write the layer, read the view or the menu, or lay out the page, while nothing is selected", () => {
+    const { layer, canvas, move, agentIs } = page({ selection: null });
+    const placed = vi.spyOn(layer, 'getBoundingClientRect');
+    const viewed = vi.spyOn(canvas, 'view');
+    const menus = vi.spyOn(canvas, 'contextMenu');
+    const writes = watch(layer);
+    move(MOVED);
+    agentIs(true);
+    move(PLAIN);
+    expect(writes()).toEqual([]);
+    expect(placed).not.toHaveBeenCalled();
+    expect(viewed).not.toHaveBeenCalled();
+    expect(menus).not.toHaveBeenCalled();
+    expect(opener(layer).hidden).toBe(true);
+  });
+
+  it("doesn't read the selection, write the layer or lay out the page while no agent is on the board", () => {
+    const { layer, canvas, move, agentIs } = page({ agent: false });
+    const selected = vi.spyOn(canvas, 'selection');
+    const placed = vi.spyOn(layer, 'getBoundingClientRect');
+    const writes = watch(layer);
+    move(MOVED);
+    agentIs(false);
+    move(PLAIN);
+    expect(writes()).toEqual([]);
+    expect(selected).not.toHaveBeenCalled();
+    expect(placed).not.toHaveBeenCalled();
+    expect(button(layer, 'Send').disabled).toBe(true);
+  });
+
+  it("doesn't look for the menu once the entry is out of it", () => {
+    const { canvas, openMenu, agentIs, move } = page();
+    const menu = openMenu();
+    expect(menu.querySelector('.ask-menu-item')).not.toBeNull();
+    agentIs(false);
+    expect(menu.querySelector('.ask-menu-item')).toBeNull();
+    const looked = vi.spyOn(canvas, 'contextMenu');
+    move(MOVED);
+    expect(looked).not.toHaveBeenCalled();
+  });
+
+  it("doesn't look for the menu once the canvas has closed it", () => {
+    const { canvas, openMenu, closeMenu, select } = page();
+    openMenu();
+    closeMenu();
+    const looked = vi.spyOn(canvas, 'contextMenu');
+    select(null);
+    expect(looked).not.toHaveBeenCalled();
+  });
+});
+
+describe('selectionOf', () => {
+  /** A canvas's state while the person isn't dragging, resizing, rotating, drawing or writing. */
+  const settled: SelectionState = {
+    selectedElementIds: {},
+    selectedElementsAreBeingDragged: false,
+    isResizing: false,
+    isRotating: false,
+    selectionElement: null,
+    editingTextElement: null,
+    newElement: null,
+  };
+  /** A rectangle with its label inside it, a text on its own, and an ellipse. */
+  const shapes: SelectionShape[] = [
+    { id: 'box', type: 'rectangle' },
+    { id: 'label', type: 'text', containerId: 'box' },
+    { id: 'note', type: 'text', containerId: null },
+    { id: 'ring', type: 'ellipse' },
+  ];
+  /** A stand-in for the canvas's bounds, whose rectangle's x is the count of shapes it was given. */
+  const bounds = (selected: readonly SelectionShape[]) => ({ x: selected.length, y: 0, width: 10, height: 10 });
+
+  it("doesn't read the canvas's shapes while no shape is selected", () => {
+    const read = vi.fn(() => shapes);
+    expect(selectionOf(settled, read, bounds)).toBeNull();
+    expect(selectionOf({ ...settled, selectedElementIds: { box: false } }, read, bounds)).toBeNull();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('answers the selected shapes, without the text inside a selected shape, and the rectangle that holds them', () => {
+    const measured = vi.fn(bounds);
+    const selection = selectionOf(
+      { ...settled, selectedElementIds: { box: true, label: true, note: true } },
+      () => shapes,
+      measured,
+    );
+    expect(selection).toEqual({ shapes: ['box', 'note'], bounds: { x: 3, y: 0, width: 10, height: 10 } });
+    expect(measured).toHaveBeenCalledWith([shapes[0], shapes[1], shapes[2]]);
+  });
+
+  it('answers null while the person drags, resizes, rotates, draws or writes', () => {
+    const selected: SelectionState = { ...settled, selectedElementIds: { box: true } };
+    expect(selectionOf(selected, () => shapes, bounds)).toEqual({
+      shapes: ['box'],
+      bounds: { x: 1, y: 0, width: 10, height: 10 },
+    });
+    const unsettled: Partial<SelectionState>[] = [
+      { selectedElementsAreBeingDragged: true },
+      { isResizing: true },
+      { isRotating: true },
+      { selectionElement: shapes[3] },
+      { editingTextElement: shapes[2] },
+      { newElement: shapes[3] },
+    ];
+    for (const each of unsettled) expect(selectionOf({ ...selected, ...each }, () => shapes, bounds)).toBeNull();
+  });
+
+  it('answers null where no selected id is a shape on the canvas', () => {
+    expect(selectionOf({ ...settled, selectedElementIds: { gone: true } }, () => shapes, bounds)).toBeNull();
   });
 });

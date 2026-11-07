@@ -16,6 +16,65 @@ export interface Selection {
   bounds: Region;
 }
 
+/** What `selectionOf` reads of the canvas's state. */
+export interface SelectionState {
+  /** The ids of the selected shapes, each with true. */
+  selectedElementIds: Readonly<Record<string, boolean>>;
+  /** Whether the person is dragging the selected shapes. */
+  selectedElementsAreBeingDragged: boolean;
+  isResizing: boolean;
+  isRotating: boolean;
+  /** The rectangle the person drags out to select shapes, while they drag it, or null. */
+  selectionElement: unknown;
+  /** The text the person is writing, while they write it, or null. */
+  editingTextElement: unknown;
+  /** The shape the person is drawing, while they draw it, or null. */
+  newElement: unknown;
+}
+
+/** What `selectionOf` reads of each shape on the canvas. */
+export interface SelectionShape {
+  id: string;
+  type: string;
+  /** For a text, the shape the text is inside, or null. */
+  containerId?: string | null;
+}
+
+/**
+ * The shapes selected in `state`, as `AskCanvas.selection` answers them, or null while the person drags,
+ * resizes, rotates, draws or writes, or hasn't selected any shape. `shapes` answers every shape on the canvas,
+ * and `selectionOf` calls it only where `state` holds a selected shape: the canvas calls its handlers on each of
+ * its changes, and a board can hold thousands of shapes. `bounds` answers the rectangle that holds the selected
+ * shapes.
+ */
+export function selectionOf<S extends SelectionShape>(
+  state: SelectionState,
+  shapes: () => readonly S[],
+  bounds: (selected: readonly S[]) => Region,
+): Selection | null {
+  if (
+    state.selectedElementsAreBeingDragged ||
+    state.isResizing ||
+    state.isRotating ||
+    state.selectionElement !== null ||
+    state.editingTextElement !== null ||
+    state.newElement !== null
+  ) {
+    return null;
+  }
+  if (!Object.values(state.selectedElementIds).includes(true)) return null;
+  const selected = shapes().filter((shape) => state.selectedElementIds[shape.id] === true);
+  if (selected.length === 0) return null;
+  // The text inside a selected shape goes with its shape, so the ask lists the shape alone.
+  const ids = selected
+    .filter(
+      (shape) =>
+        !(shape.type === 'text' && shape.containerId != null && state.selectedElementIds[shape.containerId] === true),
+    )
+    .map((shape) => shape.id);
+  return { shapes: ids, bounds: bounds(selected) };
+}
+
 /** What `bindAsk` reads from the canvas, and does to it. */
 export interface AskCanvas {
   /** The canvas's view now. */
@@ -149,15 +208,25 @@ export function bindAsk(
     box.style.top = `${Math.max(0, top)}px`;
   };
 
+  // Whether the canvas's context menu may hold the entry, so that a change that doesn't offer the entry
+  // looks for the menu only where the menu may hold an entry to take out.
+  let entered = false;
+
   /** Adds the entry at the top of the canvas's context menu where `offered` is true, and takes it out where it is false. */
   const offerInMenu = (offered: boolean): void => {
+    if (!offered && !entered) return;
     const menu = canvas.contextMenu();
-    if (menu === null) return;
+    if (menu === null) {
+      entered = false;
+      return;
+    }
     const added = menu.querySelectorAll(`.${MENU_ENTRY}, .${MENU_SEPARATOR}`);
     if (!offered) {
       for (const part of Array.from(added)) part.remove();
+      entered = false;
       return;
     }
+    entered = true;
     // The canvas calls each handler on each of its changes, so the entry goes in once for each menu it opens.
     if (added.length > 0) return;
     const entry = make('li', MENU_ENTRY);
@@ -169,23 +238,36 @@ export function bindAsk(
     menu.prepend(entry, make('hr', `context-menu-item-separator ${MENU_SEPARATOR}`));
   };
 
+  /** Shows or hides `part`, and writes it only where that changes it. */
+  const show = (part: HTMLElement, shown: boolean): void => {
+    if (part.hidden === shown) part.hidden = !shown;
+  };
+  /** Enables or disables `control`, and writes it only where that changes it. */
+  const enable = (control: HTMLButtonElement, enabled: boolean): void => {
+    if (control.disabled === enabled) control.disabled = !enabled;
+  };
+
+  // The canvas and the room call `render` on each of their changes, each change of a shape among them, so a
+  // render that shows nothing new doesn't write the page, read every shape or make the browser lay out the page.
   const render = (): void => {
-    const view = canvas.view();
-    const origin = layer.getBoundingClientRect();
     const here = room.agentHere();
-    const selection = canvas.selection();
     // The button and the menu's entry show only while an agent is on the board to answer, the person
     // has selected shapes, and the box is closed.
-    const offered = here && selection !== null && asked === null;
-    opener.hidden = !offered;
-    if (offered) placeButton(selection.bounds, view, origin);
-    outline.hidden = asked === null;
-    box.hidden = asked === null;
-    if (asked !== null) placeBox(asked.bounds, view, origin);
-    note.hidden = here;
-    sendButton.disabled = !here;
-    for (const choice of quick) choice.disabled = !here;
-    offerInMenu(offered);
+    const selection = here && asked === null ? canvas.selection() : null;
+    show(opener, selection !== null);
+    show(outline, asked !== null);
+    show(box, asked !== null);
+    if (selection !== null || asked !== null) {
+      // Reading the layer's place makes the browser lay out the page, so render reads it only where the layer shows something.
+      const view = canvas.view();
+      const origin = layer.getBoundingClientRect();
+      if (selection !== null) placeButton(selection.bounds, view, origin);
+      if (asked !== null) placeBox(asked.bounds, view, origin);
+    }
+    show(note, !here);
+    enable(sendButton, here);
+    for (const choice of quick) enable(choice, here);
+    offerInMenu(selection !== null);
   };
 
   const open = (): void => {

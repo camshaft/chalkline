@@ -30,7 +30,7 @@ import { selfId } from '@trystero-p2p/nostr';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as Y from 'yjs';
-import { bindAsk, type AskCanvas } from './ask';
+import { bindAsk, selectionOf, type AskCanvas } from './ask';
 import { bindElements } from './binding';
 import { addOpened, boardFileName, connectFileControls, OPENED, restoreElements } from './board-file';
 import { bindChangesPanel } from './changes-panel';
@@ -501,31 +501,17 @@ async function start(): Promise<ChalklineHandle> {
   // kind "ask" among the board's feedback, which the chat lists too.
   const asking: AskCanvas = {
     view: () => canvas.view(),
-    selection: () => {
-      const appState = api.getAppState();
-      // The selection isn't settled while the person drags, resizes, rotates, draws or writes.
-      if (
-        appState.selectedElementsAreBeingDragged ||
-        appState.isResizing ||
-        appState.isRotating ||
-        appState.selectionElement !== null ||
-        appState.editingTextElement !== null ||
-        appState.newElement !== null
-      ) {
-        return null;
-      }
-      const selected = api.getSceneElements().filter((element) => appState.selectedElementIds[element.id] === true);
-      if (selected.length === 0) return null;
-      // The text inside a selected shape goes with its shape, so the ask lists the shape alone.
-      const shapes = selected
-        .filter(
-          (element) =>
-            !(element.type === 'text' && element.containerId !== null && appState.selectedElementIds[element.containerId] === true),
-        )
-        .map((element) => element.id);
-      const [minX, minY, maxX, maxY] = getCommonBounds(selected);
-      return { shapes, bounds: { x: minX, y: minY, width: maxX - minX, height: maxY - minY } };
-    },
+    // The selection isn't settled while the person drags, resizes, rotates, draws or writes, and the scene's
+    // shapes are read only where a shape is selected.
+    selection: () =>
+      selectionOf(
+        api.getAppState(),
+        () => api.getSceneElements(),
+        (selected) => {
+          const [minX, minY, maxX, maxY] = getCommonBounds(selected);
+          return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+        },
+      ),
     contextMenu: () => pageElement('app').querySelector<HTMLElement>('.context-menu'),
     closeMenu: () => api.updateScene({ appState: { contextMenu: null }, captureUpdate: CaptureUpdateAction.NEVER }),
     onChange: (handler) => api.onChange(() => handler()),
