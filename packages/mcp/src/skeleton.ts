@@ -90,6 +90,10 @@ async function installDom(): Promise<void> {
   // enough.
   globalThis.FontFace = InertFontFace as unknown as typeof FontFace;
   Object.defineProperty(document, 'fonts', { value: new InertFontFaceSet(), configurable: true });
+  // jsdom has no Path2D either. Excalidraw's shape cache builds one for each freehand stroke, to
+  // draw the stroke on a canvas, and the SVG that chalkline-mcp draws its pictures from writes the
+  // stroke's path itself, so a Path2D that keeps nothing is enough.
+  globalThis.Path2D ??= InertPath2D as unknown as typeof Path2D;
   // Libraries written for browsers, such as Trystero, call addEventListener on the global scope once
   // they see a window, which global-jsdom puts there without its event methods. Those methods come
   // from Node's EventTarget, since jsdom's refuses the Node AbortSignal that Trystero passes as the
@@ -168,6 +172,9 @@ class InertFontFaceSet extends Set<InertFontFace> {
     // Nothing to remove: addEventListener doesn't keep a listener.
   }
 }
+
+/** A Path2D that keeps nothing, since nothing draws it. */
+class InertPath2D {}
 
 function fontSize(font: string): number {
   const match = /(\d+(?:\.\d+)?)px/.exec(font);
