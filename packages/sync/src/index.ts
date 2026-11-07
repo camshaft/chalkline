@@ -1,8 +1,10 @@
 export { Awareness } from 'y-protocols/awareness';
+export { AGENT, agentInRoom, isAgent } from './agents';
 export { connectAwareness, type AwarenessOptions } from './awareness';
 export {
   answerFeedback,
   FEEDBACK,
+  feedbackKind,
   feedbackOf,
   getFeedback,
   listFeedback,
@@ -10,6 +12,7 @@ export {
   writeFeedback,
   type Feedback,
   type FeedbackAnswer,
+  type FeedbackKind,
   type FeedbackStatus,
   type Region,
 } from './feedback';

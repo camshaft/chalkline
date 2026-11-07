@@ -3,6 +3,7 @@
 import './log';
 import { parseArgs } from 'node:util';
 import {
+  AGENT,
   APP_ID,
   Awareness,
   connectAwareness,
@@ -28,7 +29,8 @@ scale_shapes makes shapes smaller or larger, add_mermaid asks a page of the boar
 Mermaid diagram, whose request get_request reads, read_changes reads the shapes added, changed
 and deleted on the board, read_transcript reads what the people on the board said and typed,
 post_message posts a message in the board's chat, read_feedback reads the feedback people
-write on areas of the board, and answer_feedback answers one.
+write on areas of the board and the asks they send on the shapes they select, and
+answer_feedback answers one.
 The link is the board's address, with its #room=<name>&key=<password> fragment, and with its
 ?relay= parameters where the board's participants meet through a relay. Each line the helper
 logs goes to standard error.
@@ -82,10 +84,11 @@ async function main(): Promise<void> {
   // The server answers the client at once, and its tools work on the helper's copy of the board
   // while the helper joins the room.
   const doc = new Y.Doc();
-  // The helper doesn't show in the room's presence: it reads the pages' awareness states to learn
-  // whether a page is in the room to convert a Mermaid request.
+  // The helper doesn't show in the room's presence as a person does: its awareness state says only
+  // that an agent is on the board, so that each page offers Ask an agent while it is there. It reads
+  // the pages' awareness states to learn whether a page is in the room to convert a Mermaid request.
   const awareness = new Awareness(doc);
-  awareness.setLocalState(null);
+  awareness.setLocalState({ [AGENT]: true });
   const server = createServer(doc, awareness);
   const closed = ended();
   await server.connect(new StdioServerTransport());

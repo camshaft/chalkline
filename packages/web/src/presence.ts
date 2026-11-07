@@ -1,4 +1,4 @@
-import type { Awareness } from '@chalkline/sync';
+import { isAgent, type Awareness } from '@chalkline/sync';
 
 /** Where a participant's pointer is, in the board's coordinates, and which of Excalidraw's pointer tools it holds. */
 export interface Pointer {
@@ -80,11 +80,14 @@ export function readPresence(state: unknown): Presence | null {
   return presence;
 }
 
-/** Every participant but `self`, by awareness client id, as the canvas shows them. */
+/**
+ * Every participant but `self`, by awareness client id, as the canvas shows them. An agent's helper
+ * isn't one: its state says only that an agent is on the board, without a name or a pointer.
+ */
 export function collaboratorsFrom(states: ReadonlyMap<number, unknown>, self: number): Map<string, Collaborator> {
   const collaborators = new Map<string, Collaborator>();
   for (const [client, state] of states) {
-    if (client === self) continue;
+    if (client === self || isAgent(state)) continue;
     const presence = readPresence(state);
     if (presence === null) continue;
     const { name, ...shown } = presence;

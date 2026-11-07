@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import {
   answerFeedback,
+  feedbackKind,
   feedbackOf,
   getFeedback,
   listFeedback,
@@ -289,5 +290,32 @@ describe('feedback between peers', () => {
     const first = getFeedback(feedbackOf(docs[0]), 'one');
     expect([reopened, edited]).toContainEqual(first);
     for (const doc of docs) expect(getFeedback(feedbackOf(doc), 'one')).toEqual(first);
+  });
+});
+
+describe('the kind of a feedback', () => {
+  it('reads an ask, with its shapes and their bounds, and keeps its kind through a write and an answer', () => {
+    const map = feedbackOf(new Y.Doc());
+    const ask: Feedback = { ...feedback('one'), text: 'Tidy this up', kind: 'ask' };
+    expect(readFeedback(ask)).toEqual(ask);
+    expect(feedbackKind(ask)).toBe('ask');
+
+    writeFeedback(map, ask);
+    expect(getFeedback(map, 'one')).toEqual(ask);
+    expect(answerFeedback(map, 'one', answer())).toEqual({ ...ask, status: 'answered', answer: answer() });
+    expect(getFeedback(map, 'one')?.kind).toBe('ask');
+  });
+
+  it('reads a value without a kind, or with an undefined one, without one, as a feedback, and keeps the kind "feedback"', () => {
+    expect(readFeedback(feedback('one'))).not.toHaveProperty('kind');
+    expect(readFeedback({ ...feedback('one'), kind: undefined })).not.toHaveProperty('kind');
+    expect(feedbackKind(feedback('one'))).toBe('feedback');
+    expect(readFeedback({ ...feedback('one'), kind: 'feedback' })).toEqual({ ...feedback('one'), kind: 'feedback' });
+  });
+
+  it('reads a value whose kind is neither "feedback" nor "ask" as null', () => {
+    for (const kind of ['question', 'Ask', '', null, 3, ['ask']]) {
+      expect(readFeedback({ ...feedback('one'), kind }), JSON.stringify(kind)).toBeNull();
+    }
   });
 });

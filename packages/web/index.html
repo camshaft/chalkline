@@ -538,6 +538,40 @@
         font-size: 0.8rem;
         color: #2f9e44;
       }
+      /*
+       * The layer over the canvas that holds Ask an agent: the button under the selected shapes, and the
+       * box beside them with the selection's outline. It lets each pointer event through to the canvas but
+       * its button and its box, and it hides while feedback mode is on.
+       */
+      #ask-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      #ask-layer [hidden],
+      #feedback-layer.feedback-active ~ #ask-layer {
+        display: none;
+      }
+      .ask-button {
+        position: absolute;
+        white-space: nowrap;
+        pointer-events: auto;
+      }
+      .ask-box {
+        pointer-events: auto;
+      }
+      .ask-choices {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .ask-note {
+        margin: 0;
+        font-size: 0.8rem;
+        color: var(--chalkline-muted);
+      }
     </style>
   </head>
   <body>
@@ -585,6 +619,7 @@
     <div id="board">
       <div id="app"></div>
       <div id="feedback-layer"></div>
+      <div id="ask-layer"></div>
       <aside id="transcript" aria-label="Chat" hidden></aside>
     </div>
     <script type="module" src="./src/main.ts"></script>

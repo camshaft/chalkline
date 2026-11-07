@@ -10,7 +10,7 @@ import { createServer } from './server';
 
 type Element = Record<string, unknown>;
 
-/** A feedback Ada wrote on the area from (0, 0) to (200, 100), open, which `fields` change. */
+/** A feedback Ada wrote on the area from (0, 0) to (200, 100), open, of the kind "feedback", which `fields` change. */
 const feedback = (id: string, fields: Partial<Feedback> = {}): Feedback => ({
   id,
   by: 'Ada',
@@ -20,6 +20,7 @@ const feedback = (id: string, fields: Partial<Feedback> = {}): Feedback => ({
   shapes: [],
   status: 'open',
   answer: null,
+  kind: 'feedback',
   ...fields,
 });
 
@@ -288,12 +289,12 @@ describe('answer_feedback', () => {
 });
 
 describe('get_board', () => {
-  it("lists each open feedback's id, writer, text and region, and leaves out an answered one", async () => {
+  it("lists each open feedback's id, kind, writer, text and region, and leaves out an answered one", async () => {
     const two = feedback('two', { by: 'Grace', at: '2026-11-07T01:02:04.000Z', region: { x: 5, y: 6, width: 7, height: 8 } });
     const { client } = await board(elements(), [two, feedback('one', { shapes: ['box'] }), answered(feedback('done'))]);
     expect(structured<{ feedback: ListedFeedback[] }>(await call(client, 'get_board')).feedback).toEqual([
-      { id: 'one', by: 'Ada', text: 'make one bigger', region: { x: 0, y: 0, width: 200, height: 100 } },
-      { id: 'two', by: 'Grace', text: 'make two bigger', region: { x: 5, y: 6, width: 7, height: 8 } },
+      { id: 'one', kind: 'feedback', by: 'Ada', text: 'make one bigger', region: { x: 0, y: 0, width: 200, height: 100 } },
+      { id: 'two', kind: 'feedback', by: 'Grace', text: 'make two bigger', region: { x: 5, y: 6, width: 7, height: 8 } },
     ]);
   });
 });
@@ -355,5 +356,48 @@ describe('the feedback resource', () => {
     await expect(client.subscribeResource({ uri: 'chalkline://board' })).rejects.toThrow(
       "chalkline://board isn't a resource of the helper's: subscribe to chalkline://transcript or chalkline://feedback.",
     );
+  });
+});
+
+describe('an ask', () => {
+  /** The bounds of the labelled box and the rectangle at its corner, as the page reads them of the two selected. */
+  const bounds = { x: 10, y: 10, width: 290, height: 140 };
+
+  it('comes in read_feedback with its kind, its shapes and their bounds, and in get_board with its kind', async () => {
+    const ask = feedback('ask', { text: 'Tidy this up', region: bounds, shapes: ['box', 'corner'], kind: 'ask' });
+    const { network, feedback: map, client } = await board(elements(), [ask]);
+    expect(opened(await call(client, 'read_feedback'))).toEqual({
+      opened: [{ feedback: ask, shapes: ['box', 'corner'] }],
+      cursor: 1,
+    });
+    expect(structured<{ feedback: ListedFeedback[] }>(await call(client, 'get_board')).feedback).toEqual([
+      { id: 'ask', kind: 'ask', by: 'Ada', text: 'Tidy this up', region: bounds },
+    ]);
+
+    // The agent answers an ask as it answers a feedback, and the answer keeps its kind.
+    const { feedback: record } = structured<{ feedback: Feedback }>(
+      await call(client, 'answer_feedback', { id: 'ask', text: 'lined the two boxes up' }),
+    );
+    expect(record).toEqual({
+      ...ask,
+      status: 'answered',
+      answer: { by: 'chalkline-test', at: expect.any(String), text: 'lined the two boxes up' },
+    });
+    network.flush();
+    expect(getFeedback(map, 'ask')).toEqual(record);
+  });
+
+  it('answers a record that a page wrote without a kind as a feedback, in each tool and in the resource', async () => {
+    const plain: Feedback = feedback('old');
+    delete plain.kind;
+    const { client } = await board(elements(), [plain]);
+    const [read] = structured<FeedbackRead>(await call(client, 'read_feedback')).opened;
+    expect(read?.feedback).toEqual(feedback('old'));
+    expect(structured<{ feedback: ListedFeedback[] }>(await call(client, 'get_board')).feedback[0]?.kind).toBe('feedback');
+    expect((await resource(client)).feedback).toEqual([feedback('old')]);
+    const { feedback: record } = structured<{ feedback: Feedback }>(
+      await call(client, 'answer_feedback', { id: 'old', text: 'made it bigger' }),
+    );
+    expect(record.kind).toBe('feedback');
   });
 });

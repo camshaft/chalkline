@@ -11,6 +11,15 @@ export type FeedbackStatus = 'open' | 'answered';
 
 const STATUSES: readonly string[] = ['open', 'answered'];
 
+/**
+ * What a record of the feedback map is: "feedback", a comment that a person writes on an area they
+ * mark, or "ask", a request that a person sends with Ask an agent on the shapes they selected. A
+ * record without a kind is a feedback, as each record that a page wrote before kinds is.
+ */
+export type FeedbackKind = 'feedback' | 'ask';
+
+const KINDS: readonly string[] = ['feedback', 'ask'];
+
 /** A rectangle on the board, in the board's coordinates. */
 export interface Region {
   x: number;
@@ -52,6 +61,12 @@ export interface Feedback {
    * keeps its answer.
    */
   answer: FeedbackAnswer | null;
+  /**
+   * What the record is, where it says: "ask" for a request that a person sent with Ask an agent on
+   * the shapes they selected, whose `shapes` are those shapes' ids and whose `region` is their
+   * bounds, or "feedback". A record without a kind is a feedback, as `feedbackKind` reads it.
+   */
+  kind?: FeedbackKind;
 }
 
 /**
@@ -75,6 +90,8 @@ const finite = (value: unknown): value is number => typeof value === 'number' &&
 
 const isStatus = (value: unknown): value is FeedbackStatus => typeof value === 'string' && STATUSES.includes(value);
 
+const isKind = (value: unknown): value is FeedbackKind => typeof value === 'string' && KINDS.includes(value);
+
 function readRegion(value: unknown): Region | null {
   if (!isRecord(value)) return null;
   const { x, y, width, height } = value;
@@ -96,13 +113,15 @@ function readAnswer(value: unknown): FeedbackAnswer | null {
  * blank text, or that holds a time that doesn't parse, reads as null. So does
  * a value whose `region` lacks a finite `x`, `y`, `width` or `height`, whose
  * `shapes` holds anything but text, whose `status` isn't "open" or
- * "answered", or whose `answer` isn't null or a `by`, `at` and `text` that
- * read as the feedback's own do. Other fields are left out, and the record it
- * answers is a copy.
+ * "answered", whose `answer` isn't null or a `by`, `at` and `text` that read as
+ * the feedback's own do, or whose `kind` is there and isn't "feedback" or
+ * "ask". A `kind` that the value doesn't hold, or holds as undefined, is left
+ * out of the record, which `feedbackKind` reads as a feedback. Other fields are
+ * left out, and the record it answers is a copy.
  */
 export function readFeedback(value: unknown): Feedback | null {
   if (!isRecord(value)) return null;
-  const { id, by, at, text, region, shapes, status, answer } = value;
+  const { id, by, at, text, region, shapes, status, answer, kind } = value;
   if (!filled(id) || !filled(by) || !isTime(at) || !filled(text)) return null;
   const area = readRegion(region);
   if (area === null) return null;
@@ -113,7 +132,17 @@ export function readFeedback(value: unknown): Feedback | null {
     reply = readAnswer(answer);
     if (reply === null) return null;
   }
-  return { id, by, at, text, region: area, shapes: [...shapes], status, answer: reply };
+  const record: Feedback = { id, by, at, text, region: area, shapes: [...shapes], status, answer: reply };
+  if (kind !== undefined) {
+    if (!isKind(kind)) return null;
+    record.kind = kind;
+  }
+  return record;
+}
+
+/** What `record` is: its `kind`, or "feedback" where it doesn't hold one. */
+export function feedbackKind(record: Pick<Feedback, 'kind'>): FeedbackKind {
+  return record.kind ?? 'feedback';
 }
 
 /**
