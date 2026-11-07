@@ -11,9 +11,10 @@
 // from Excalidraw's menu, and each browser waits until its board shows none of
 // the shapes. Next it writes a request for a page to draw a Mermaid diagram, as
 // the agent's helper does with add_mermaid, and waits until the board shows each
-// browser's diagram. Next it opens the chat with its button, types a message in
-// the chat's field and presses Enter, and waits until its chat shows each
-// browser's message under that browser's name. It then marks seen-<name>, stays until the script marks
+// browser's diagram. Next it opens the chat with its button, types a message of
+// two lines in the chat's field, with Shift+Enter between them, presses Enter,
+// and waits until its chat shows each browser's message, on its two lines, under
+// that browser's name. It then marks seen-<name>, stays until the script marks
 // done-script, and marks bye-<name> as it leaves. Last, it presses New board and
 // waits until the page loads again on a new room's link. The Probe workflow runs
 // one copy on each of two runners, and draw-box on a third.
@@ -473,12 +474,15 @@ try {
   );
   console.log(`${name}: the board shows each browser's Mermaid diagram: ${JSON.stringify(diagrams)}`);
 
-  // Open the chat with its button, type a message in its field and press Enter, as a person does,
-  // and wait, on the panel's own changes, until the chat shows each browser's message as a typed
-  // entry under that browser's name.
+  // Open the chat with its button, type a message of two lines in its field, with Shift+Enter between
+  // them, and press Enter, as a person does, and wait, on the panel's own changes, until the chat shows
+  // each browser's message as a typed entry under that browser's name, on its two lines: an entry's
+  // innerText keeps the line break only where the page shows it.
   await page.getByRole('button', { name: /^Chat( \(\d+\))?$/ }).click();
   const messageField = page.getByRole('textbox', { name: 'Message' });
   await messageField.fill(`Hello from ${name}`);
+  await messageField.press('Shift+Enter');
+  await messageField.pressSequentially('on two lines');
   await messageField.press('Enter');
   const chat = await page.evaluate(
     ({ wanted, waitMs }) =>
@@ -488,7 +492,7 @@ try {
           [...panel.querySelectorAll('.transcript-entries li')].map((item) => ({
             speaker: item.querySelector('.transcript-speaker')?.textContent,
             via: item.dataset.via,
-            text: item.querySelector('.transcript-text')?.textContent,
+            text: item.querySelector('.transcript-text')?.innerText,
           }));
         let finished = false;
         let timer;
@@ -512,7 +516,7 @@ try {
         timer = setTimeout(() => finish(new Error(`timed out waiting for each browser's chat message: ${JSON.stringify(shown())}`)), waitMs);
         check();
       }),
-    { wanted: [name, ...others].map((browser) => ({ speaker: browser, text: `Hello from ${browser}` })), waitMs },
+    { wanted: [name, ...others].map((browser) => ({ speaker: browser, text: `Hello from ${browser}\non two lines` })), waitMs },
   );
   console.log(`${name}: the chat shows each browser's typed message: ${JSON.stringify(chat)}`);
 
@@ -563,7 +567,7 @@ try {
       `Opened ${link.origin}${link.pathname} as "${name}", drew rectangle \`${drawnId}\`, and saw each participant's shape (${participants.join(', ')}), the box labelled "${label}", and each other browser's cursor with its name (${others.join(', ') || 'none'}). It saved the board as \`${savedName}\`, opened a copy of its rectangle and an image from a file, and saw each browser's copy and image (${openedIds.join(', ')}) and each picture (${pictureIds.join(', ')}).`,
       `After ${resetter} reset the canvas from Excalidraw's menu, the board showed none of the shapes.`,
       `The board showed each browser's Mermaid diagram: ${JSON.stringify(diagrams)}.`,
-      `It typed "Hello from ${name}" in the chat, and the chat showed each browser's typed message: ${JSON.stringify(chat)}.`,
+      `It typed "Hello from ${name}", Shift+Enter and "on two lines" in the chat and pressed Enter, and the chat showed each browser's typed message: ${JSON.stringify(chat)}.`,
       '',
       '| Peer | Connection | This browser\'s candidate | The peer\'s candidate |',
       '| --- | --- | --- | --- |',
