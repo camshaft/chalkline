@@ -1,6 +1,12 @@
 import { defaultRelayUrls, joinRoom as joinNostrRoom } from '@trystero-p2p/nostr';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRelayPool, joinPublicRelayRoom, publicRelayOrder, TRYSTERO_RELAY_COUNT } from './public-relays';
+import {
+  createRelayPool,
+  joinPublicRelayRoom,
+  publicRelayOrder,
+  TRYSTERO_RELAY_COUNT,
+  type PoolRelay,
+} from './public-relays';
 
 /** A WebSocket that a test opens, closes and answers by hand. */
 class FakeSocket extends EventTarget {
@@ -69,6 +75,24 @@ function socketOf(url: string): FakeSocket {
   const socket = socketsOf(url).at(-1);
   if (socket === undefined) throw new Error(`no socket of ${url}`);
   return socket;
+}
+
+/** Announces the board's topic on `relay`, as Trystero's topic strategy does. */
+function announce(relay: PoolRelay): Promise<unknown> {
+  return relay.publish('topic', { peerId: 'peer' }, true);
+}
+
+/** Answers the board's subscription on `socket` with an `EOSE`, as a relay that answers does. */
+function endStored(socket: FakeSocket): void {
+  const [[, subId]] = socket.messages('REQ');
+  socket.receive(['EOSE', subId]);
+}
+
+/** Answers the newest event the page sent on `socket` with an `OK`, as a relay that stores it does. */
+function acceptEvent(socket: FakeSocket): void {
+  const event = socket.messages('EVENT').at(-1)?.[1] as { id: string } | undefined;
+  if (event === undefined) throw new Error(`no event on ${socket.url}`);
+  socket.receive(['OK', event.id, true, '']);
 }
 
 beforeEach(() => {
@@ -262,6 +286,84 @@ describe('createRelayPool', () => {
     expect(socketsOf(urls[1])).toHaveLength(1);
   });
 
+  it('stops using a relay that stays open without answering, once each other relay that answers answered a later request', async () => {
+    const urls = relays('silent', 4);
+    const warn = vi.fn();
+    const pool = createRelayPool({ urls, count: 3, warn });
+    const [first, second, silent] = urls.slice(0, 3).map((url) => socketOf(url));
+    for (const socket of [first, second, silent]) socket.accept();
+    for (const relay of pool.relays.slice(0, 3)) {
+      relay.subscribe('topic', vi.fn());
+      await announce(relay);
+    }
+    endStored(first);
+    acceptEvent(first);
+    endStored(second);
+    acceptEvent(second);
+
+    // The silent relay's third announcement is the request its silence counts from.
+    await announce(pool.relays[2]);
+    await announce(pool.relays[2]);
+    await announce(pool.relays[0]);
+    acceptEvent(first);
+    expect(pool.retired()).toEqual([]);
+    await announce(pool.relays[1]);
+    acceptEvent(second);
+
+    expect(pool.retired()).toEqual([urls[2]]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`${urls[2]}, which didn't answer`));
+    expect(silent.readyState).toBe(3);
+    expect(pool.held()).toEqual([urls[0], urls[1], urls[3]]);
+    expect(socketsOf(urls[3])).toHaveLength(1);
+    await expect(announce(pool.relays[2])).resolves.toEqual({ stopAnnouncing: true });
+  });
+
+  it('keeps a relay that answers late, before each other relay that answers answered a later request', async () => {
+    const urls = relays('late', 4);
+    const warn = vi.fn();
+    const pool = createRelayPool({ urls, count: 3, warn });
+    const [first, second, late] = urls.slice(0, 3).map((url) => socketOf(url));
+    for (const socket of [first, second, late]) socket.accept();
+    for (const relay of pool.relays.slice(0, 3)) {
+      relay.subscribe('topic', vi.fn());
+      await announce(relay);
+    }
+    endStored(first);
+    endStored(second);
+    await announce(pool.relays[2]);
+    await announce(pool.relays[2]);
+    await announce(pool.relays[0]);
+    acceptEvent(first);
+
+    endStored(late);
+    await announce(pool.relays[1]);
+    acceptEvent(second);
+
+    expect(pool.retired()).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+    expect(pool.held()).toEqual(urls.slice(0, 3));
+    expect(late.readyState).toBe(1);
+    expect(socketsOf(urls[3])).toHaveLength(0);
+  });
+
+  it("doesn't stop using a relay that doesn't answer while no other relay answers", async () => {
+    const urls = relays('quiet', 3);
+    const warn = vi.fn();
+    const pool = createRelayPool({ urls, count: 2, warn });
+    for (const url of urls.slice(0, 2)) socketOf(url).accept();
+    for (const relay of pool.relays.slice(0, 2)) relay.subscribe('topic', vi.fn());
+
+    for (let round = 0; round < 5; round += 1) {
+      for (const relay of pool.relays.slice(0, 2)) await announce(relay);
+    }
+
+    expect(pool.retired()).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+    expect(pool.held()).toEqual(urls.slice(0, 2));
+    expect(socketsOf(urls[2])).toHaveLength(0);
+  });
+
   it('holds the same relays on two pages that see the same relays fail', () => {
     const [a, b, c, d, e] = relays('pages', 5);
     const urls = [a, b, c, d, e];
@@ -348,4 +450,46 @@ describe('joinPublicRelayRoom', () => {
       await room.leave();
     }
   });
+
+  it('moves to the next relay when one stays connected without answering the board', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const appId = 'chalkline-silent-test';
+    const order = publicRelayOrder(appId);
+    const silent = order[1];
+    // A socket that answers each subscription with EOSE and each event with OK, except on the silent relay.
+    vi.stubGlobal(
+      'WebSocket',
+      class extends FakeSocket {
+        override send(data: string): void {
+          super.send(data);
+          if (this.url === silent) return;
+          const [type, value] = JSON.parse(data) as unknown[];
+          if (type === 'REQ') queueMicrotask(() => this.receive(['EOSE', value]));
+          else if (type === 'EVENT') queueMicrotask(() => this.receive(['OK', (value as { id: string }).id, true, '']));
+        }
+      },
+    );
+    const room = joinPublicRelayRoom({ appId }, 'room');
+    try {
+      await vi.waitFor(() => expect(FakeSocket.made).toHaveLength(TRYSTERO_RELAY_COUNT));
+      for (const socket of [...FakeSocket.made]) socket.accept();
+      await vi.waitFor(
+        () => expect(warn.mock.calls.filter(([message]) => String(message).includes(silent))).toHaveLength(1),
+        { timeout: 10000 },
+      );
+
+      expect(socketOf(silent).readyState).toBe(3);
+      const next = socketOf(order[TRYSTERO_RELAY_COUNT]);
+      next.accept();
+      await vi.waitFor(
+        () => {
+          expect(next.messages('REQ')).toHaveLength(2);
+          expect(next.messages('EVENT').length).toBeGreaterThan(0);
+        },
+        { timeout: 5000 },
+      );
+    } finally {
+      await room.leave();
+    }
+  }, 20000);
 });
