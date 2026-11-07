@@ -12,8 +12,10 @@
 // Excalidraw's own UI over a canvas that fills the window, uses each of them there, and keeps a
 // screenshot of each layout; on the desktop it also presses the pen's side button. A fifth test
 // presses a pen's tip with each tool, also after a press whose release the page didn't receive,
-// and checks that it draws, selects and pans as a mouse's press does. It needs the page and the
-// helper that `npm run build` writes, and `npm run test:e2e` runs it.
+// and checks that it draws, selects and pans as a mouse's press does. A last test has the helper
+// delete a rectangle it added, and one browser press Undo on the deletion in the list that the main
+// menu's Agent's changes opens, and waits until both browsers show the rectangle again. It needs the
+// page and the helper that `npm run build` writes, and `npm run test:e2e` runs it.
 import { randomBytes } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -141,6 +143,7 @@ interface E2eWindow {
     shown(expected: Expected[], creator: string, waitMs: number): Promise<Shown[]>;
     answered(id: string, shapeId: string, y: number, waitMs: number): Promise<ShownFeedback>;
     picture(id: string, fileId: string, waitMs: number): Promise<ShownPicture>;
+    gone(ids: string[], waitMs: number): Promise<void>;
   };
 }
 
@@ -344,6 +347,19 @@ async function pictureIn(board: Board, id: string, fileId: string): Promise<Show
     );
     console.log(`${board.name}: the board shows the picture as ${JSON.stringify(shown)}`);
     return shown;
+  } finally {
+    await board.page.screenshot({ path: join(SCREENSHOTS, `e2e-${board.name}.png`) }).catch(() => undefined);
+  }
+}
+
+/** Waits until the page of `board` shows none of `ids`, and keeps a screenshot of the page either way. */
+async function goneIn(board: Board, ids: string[]): Promise<void> {
+  try {
+    await board.page.evaluate(
+      (arg) => (window as unknown as E2eWindow).chalklineE2e.gone(arg.ids, arg.waitMs),
+      { ids, waitMs: WAIT_MS },
+    );
+    console.log(`${board.name}: the board no longer shows ${JSON.stringify(ids)}`);
   } finally {
     await board.page.screenshot({ path: join(SCREENSHOTS, `e2e-${board.name}.png`) }).catch(() => undefined);
   }
@@ -954,4 +970,45 @@ describe('the local-network mode, end to end', () => {
       await page.context().close();
     }
   }, 120_000);
+
+  it('brings back in both browsers a rectangle that the helper deleted, once one browser presses Undo in the list of its changes', async () => {
+    const lan = server;
+    const chrome = browser;
+    if (lan === undefined || chrome === undefined) throw new Error('the server or the browser did not start');
+    const link = boardLink(lan.port);
+    const [presser, watcher] = await Promise.all(['undo-presser', 'undo-watcher'].map((name) => openBoard(chrome, link, name)));
+    const helper = new Client({ name: CLIENT, version: '0.0.0' });
+    try {
+      await helper.connect(new StdioClientTransport({ command: process.execPath, args: [HELPER, link.href] }));
+      const added = await call(helper, 'add_shapes', {
+        shapes: [{ type: 'rectangle', x: 100, y: 100, width: 240, height: 80, label: { text: 'Undo brings me back' } }],
+      });
+      const [shape] = added.ids as string[];
+      const expected: Expected[] = [{ id: shape, type: 'rectangle', label: 'Undo brings me back' }];
+      await Promise.all([presser, watcher].map((board) => shownIn(board, expected)));
+
+      // The helper deletes the rectangle, and answers the id of the change it recorded on the board.
+      const deleted = await call(helper, 'delete_shapes', { ids: [shape] });
+      expect(deleted.ids).toEqual([shape]);
+      const change = deleted.change;
+      if (typeof change !== 'string') throw new Error(`delete_shapes answered ${JSON.stringify(deleted)}`);
+      await Promise.all([presser, watcher].map((board) => goneIn(board, [shape])));
+
+      // The main menu's Agent's changes opens the list of the agent's changes, and Undo on the deletion
+      // brings the rectangle back, with its label and its creator, in both browsers.
+      const { page } = presser;
+      await menuItem(page, "Agent's changes");
+      const item = page.locator(`#changes li[data-id="${change}"]`);
+      await item.waitFor();
+      expect(await item.locator('.changes-summary').textContent()).toBe(`${CLIENT} deleted 1 shape`);
+      await item.locator('button.changes-undo').click();
+      await Promise.all([presser, watcher].map((board) => shownIn(board, expected)));
+      await page.locator(`#changes li[data-id="${change}"][data-state="undone"]`).waitFor();
+      expect(await item.locator('.changes-undone').textContent()).toMatch(/^Undone by /);
+      await page.screenshot({ path: join(SCREENSHOTS, 'e2e-undo-list.png') }).catch(() => undefined);
+    } finally {
+      await helper.close();
+      await Promise.all([presser, watcher].map((board) => board.page.context().close()));
+    }
+  }, 300_000);
 });
