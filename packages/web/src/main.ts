@@ -1,7 +1,7 @@
 import '@excalidraw/excalidraw/index.css';
 import { Awareness, connectAwareness, connectDoc, relaysFromAddress, trysteroTransport } from '@chalkline/sync';
 import { joinBoardRoom } from '@chalkline/sync/join';
-import { CaptureUpdateAction, Excalidraw } from '@excalidraw/excalidraw';
+import { CaptureUpdateAction, Excalidraw, loadFromBlob, serializeAsJSON } from '@excalidraw/excalidraw';
 import type { OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type { Collaborator, ExcalidrawImperativeAPI, SocketId } from '@excalidraw/excalidraw/types';
 import { selfId } from '@trystero-p2p/nostr';
@@ -9,7 +9,9 @@ import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as Y from 'yjs';
 import { bindElements } from './binding';
+import { addOpened, boardFileName, connectFileControls } from './board-file';
 import { loadSettings, roomOptions, type ConnectionSettings, type SettingsStorage } from './connection';
+import { keepBoard, storeName, type KeptBoard } from './keep';
 import { bindPresence, keepName, participantName, setName, type Button, type NameStorage, type Pointer } from './presence';
 import { connectionReport, type ConnectionReport } from './report';
 import type { RoomSecrets } from './room';
@@ -34,6 +36,8 @@ export interface ChalklineHandle {
   api: ExcalidrawImperativeAPI;
   /** The connection settings the page joined the room with. */
   settings: ConnectionSettings;
+  /** The copy of the board that this browser keeps, or null where the browser doesn't let the page keep one. */
+  kept: KeptBoard | null;
   peers(): string[];
   onPeerLeave(handler: (peerId: string) => void): () => void;
   /** The connection to each peer, by peer id. */
@@ -78,6 +82,16 @@ function browserStorage(): SettingsStorage | null {
   try {
     return window.localStorage;
   } catch {
+    return null;
+  }
+}
+
+/** Keeps the room's board in this browser's IndexedDB, or returns null where the browser doesn't let the page. */
+async function keepInBrowser(doc: Y.Doc, secrets: RoomSecrets): Promise<KeptBoard | null> {
+  try {
+    return keepBoard(doc, await storeName(secrets));
+  } catch (error) {
+    console.warn("chalkline: this browser doesn't keep a copy of the board", error);
     return null;
   }
 }
@@ -145,6 +159,9 @@ async function start(): Promise<ChalklineHandle> {
   const onSendError = (error: unknown) => console.warn('chalkline: a send failed', error);
   connectDoc(doc, transport, { onSendError });
   connectAwareness(awareness, transport, { onSendError });
+  // The copy this browser kept goes into the document as it loads, and the sync adapter sends the
+  // peers each of its changes they lack, such as the shapes drawn while offline.
+  const kept = await keepInBrowser(doc, secrets);
 
   const showPeers = () => line.showPeers(transport.peers().length);
   transport.onPeerJoin(showPeers);
@@ -159,10 +176,14 @@ async function start(): Promise<ChalklineHandle> {
         onPointerUpdate: ({ pointer, button }) => {
           for (const handler of pointerHandlers) handler(pointer, button);
         },
+        // The bar's Save file and Open file buttons save and open the board. Excalidraw's own Open
+        // replaces the whole scene on this page alone, so its menu leaves out Open and Save.
+        UIOptions: { canvasActions: { loadScene: false, export: false, saveToActiveFile: false } },
       }),
     );
   });
-  bindElements(doc.getMap<OrderedExcalidrawElement>('elements'), {
+  const shared = doc.getMap<OrderedExcalidrawElement>('elements');
+  bindElements(shared, {
     elements: () => api.getSceneElementsIncludingDeleted(),
     replace: (elements) => api.updateScene({ elements, captureUpdate: CaptureUpdateAction.NEVER }),
     onChange: (handler) => api.onChange(() => handler()),
@@ -184,6 +205,32 @@ async function start(): Promise<ChalklineHandle> {
       };
     },
   });
+  connectFileControls(
+    {
+      save: pageElement('save-button'),
+      open: pageElement('open-button'),
+      input: pageInput('open-file'),
+      dropTarget: pageElement('app'),
+    },
+    {
+      save: () => serializeAsJSON(api.getSceneElements(), api.getAppState(), api.getFiles(), 'local'),
+      fileName: () => boardFileName(secrets.room),
+      open: async (file) => {
+        // Excalidraw reads its own files, and files of its older versions, and checks that each holds a board.
+        const scene = await loadFromBlob(file, null, null);
+        const added = addOpened(shared, scene.elements);
+        api.addFiles(Object.values(scene.files));
+        status.textContent = `Opened ${file.name}: ${added.length} ${added.length === 1 ? 'shape' : 'shapes'} added to the board.`;
+      },
+      onError: (file, error) => {
+        console.warn(`chalkline: couldn't open ${file.name}`, error);
+        status.textContent = `${file.name} couldn't be opened: ${error instanceof Error ? error.message : String(error)}`;
+      },
+    },
+  );
+  // The bar's Save file and Open file buttons show once the board they act on is open, and stay hidden on the join screen.
+  pageElement('save-button').hidden = false;
+  pageElement('open-button').hidden = false;
 
   const handle: ChalklineHandle = {
     room: secrets.room,
@@ -192,6 +239,7 @@ async function start(): Promise<ChalklineHandle> {
     awareness,
     api,
     settings,
+    kept,
     peers: () => transport.peers(),
     onPeerLeave: (handler) => transport.onPeerLeave(handler),
     connectionReports: async () => {

@@ -2,11 +2,13 @@
 // join screen, puts the board's link in the address as a person who pastes it
 // in the address bar, types its name in the name field, draws a rectangle with
 // the mouse, and waits until the board shows each participant's shape, the
-// script's labelled box, and each other browser's cursor with its name. It then
-// marks seen-<name>, stays until the script marks done-script, and marks
-// bye-<name> as it leaves. Last, it presses New board and waits until the page
-// loads again on a new room's link. The Probe workflow runs one copy on each of
-// two runners, and draw-box on a third.
+// script's labelled box, and each other browser's cursor with its name. Next it
+// saves the board to a file with the Save file button, opens a file that holds
+// a copy of its rectangle, and waits until the board shows each browser's copy.
+// It then marks seen-<name>, stays until the script marks done-script, and
+// marks bye-<name> as it leaves. Last, it presses New board and waits until the
+// page loads again on a new room's link. The Probe workflow runs one copy on
+// each of two runners, and draw-box on a third.
 //
 // Settings, from the environment:
 //   PROBE_NAME     this browser's name in the room's probe map and by its cursor, such as chromium
@@ -19,7 +21,7 @@
 //   LABEL          the label of the script's box
 //   PAGE_URL       the page to open; left empty, this script serves the local build
 //   WAIT_SECONDS   how long each wait lasts before the probe fails (default: 480)
-import { appendFile } from 'node:fs/promises';
+import { appendFile, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium, firefox } from 'playwright';
 import { preview } from 'vite';
@@ -193,6 +195,66 @@ try {
   );
   console.log(`${name}: the board shows each other browser's cursor: ${JSON.stringify(cursors)}`);
 
+  // Save the board with the Save file button, as a person does, and read the file the browser downloads.
+  const [download] = await Promise.all([
+    page.waitForEvent('download', { timeout: 30_000 }),
+    page.locator('#save-button').click(),
+  ]);
+  const savedName = download.suggestedFilename();
+  const saved = JSON.parse(await readFile(await download.path(), 'utf8'));
+  const savedBox = Array.isArray(saved.elements) ? saved.elements.find((element) => element.id === drawnId) : undefined;
+  if (saved.type !== 'excalidraw' || savedBox === undefined) {
+    throw new Error(`the saved file ${savedName} doesn't hold the rectangle ${drawnId}: ${JSON.stringify(saved).slice(0, 2000)}`);
+  }
+  console.log(`${name}: saved the board as ${savedName}, which holds ${saved.elements.length} elements`);
+
+  // Open a file that holds a copy of this browser's rectangle under a new id, below the first one, with
+  // the Open file button's file input, and wait until the board shows each browser's opened copy.
+  const opened = `opened-${name}`;
+  const copy = { ...savedBox, id: opened, y: savedBox.y + 200 };
+  // Excalidraw gives the copy a place in the stacking order as it reads the file.
+  delete copy.index;
+  await page.locator('#open-file').setInputFiles({
+    name: `${opened}.excalidraw`,
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({ ...saved, elements: [copy] })),
+  });
+  const openedIds = [name, ...others].map((browser) => `opened-${browser}`);
+  await page.evaluate(
+    ({ ids, waitMs }) =>
+      new Promise((resolve, reject) => {
+        const { api, doc } = window.chalkline;
+        const missing = () => {
+          const shown = new Set(api.getSceneElements().map((element) => element.id));
+          return ids.filter((id) => !shown.has(id));
+        };
+        let finished = false;
+        let stopScene = () => {};
+        let timer;
+        const finish = (error) => {
+          if (finished) return;
+          finished = true;
+          stopScene();
+          doc.off('update', check);
+          clearTimeout(timer);
+          if (error) reject(error);
+          else resolve();
+        };
+        const check = () => {
+          if (missing().length === 0) finish(null);
+        };
+        stopScene = api.onChange(check);
+        doc.on('update', check);
+        timer = setTimeout(
+          () => finish(new Error(`timed out waiting for each opened copy: ${JSON.stringify({ missing: missing(), status: document.getElementById('status')?.textContent })}`)),
+          waitMs,
+        );
+        check();
+      }),
+    { ids: openedIds, waitMs },
+  );
+  console.log(`${name}: the board shows each browser's copy opened from a file: ${JSON.stringify(openedIds)}`);
+
   // Mark this browser's view as seen, and stay until the script has every browser's mark: a
   // browser that left at once could take its mark with it before any peer received it.
   await page.evaluate((who) => window.chalkline.doc.getMap('probe').set(`seen-${who}`, new Date().toISOString()), name);
@@ -237,7 +299,7 @@ try {
     const summary = [
       `### ${name}`,
       '',
-      `Opened ${link.origin}${link.pathname} as "${name}", drew rectangle \`${drawnId}\`, and saw each participant's shape (${participants.join(', ')}), the box labelled "${label}", and each other browser's cursor with its name (${others.join(', ') || 'none'}).`,
+      `Opened ${link.origin}${link.pathname} as "${name}", drew rectangle \`${drawnId}\`, and saw each participant's shape (${participants.join(', ')}), the box labelled "${label}", and each other browser's cursor with its name (${others.join(', ') || 'none'}). It saved the board as \`${savedName}\`, opened a copy of its rectangle from a file, and saw each browser's copy (${openedIds.join(', ')}).`,
       '',
       '| Peer | Connection | This browser\'s candidate | The peer\'s candidate |',
       '| --- | --- | --- | --- |',
