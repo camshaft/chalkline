@@ -187,7 +187,7 @@ describe('parseListenArgs', () => {
       help: false,
       room: { room: 'board', key: 'secret' },
       relays: [],
-      pauseMs: PAUSE_MS,
+      pauseMs: 1000,
       after: START,
     });
   });

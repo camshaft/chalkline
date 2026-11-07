@@ -26,7 +26,7 @@ again. It listens until Ctrl-C or SIGTERM stops it, and then prints the words th
 pause before it leaves the room.
 
 Options:
-  --pause <seconds>  how long a pause ends a group (default: 1.5)
+  --pause <seconds>  how long a pause ends a group (default: 1)
   --after <time>     leave out what was said at or before this ISO 8601 time, in place of the
                      time the listener starts, such as the "at" of the last line an earlier
                      listener printed
@@ -55,7 +55,7 @@ function pauseOf(text: string | undefined): number {
   const seconds = Number(text);
   if (!Number.isFinite(seconds) || seconds <= 0) {
     throw new Error(
-      `--pause is ${JSON.stringify(text)}: give the pause's length in seconds, above 0, such as 1.5.\n\n${LISTEN_USAGE}`,
+      `--pause is ${JSON.stringify(text)}: give the pause's length in seconds, above 0, such as 0.5.\n\n${LISTEN_USAGE}`,
     );
   }
   return seconds * 1000;

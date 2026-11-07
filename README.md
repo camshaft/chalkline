@@ -60,7 +60,7 @@ npm run build --workspace @chalkline/mcp
 claude mcp add --transport stdio chalkline -- node "$PWD/packages/mcp/dist/chalkline-mcp.mjs" '<the board link>'
 ```
 
-An MCP server answers the calls its agent makes, so the agent learns what someone said only once it reads the transcript. `chalkline-mcp listen` joins the board too, and prints on standard output one JSON line for each group of words people say with no pause of 1.5 seconds between them, such as:
+An MCP server answers the calls its agent makes, so the agent learns what someone said only once it reads the transcript. `chalkline-mcp listen` joins the board too, and prints on standard output one JSON line for each group of words people say with no pause of 1 second between them, such as:
 
 ```json
 {"at":"2026-11-07T03:00:04.000Z","speakers":["Ada","Grace"],"text":"draw a smiley face in blue"}

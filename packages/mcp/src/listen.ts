@@ -15,7 +15,7 @@ export type Heard = {
 };
 
 /** How long a pause ends a group where `--pause` doesn't set another length, in milliseconds. */
-export const PAUSE_MS = 1500;
+export const PAUSE_MS = 1000;
 
 export interface ListenOptions {
   /**
