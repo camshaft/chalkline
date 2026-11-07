@@ -5,8 +5,9 @@
 // element's version, so that a person's later change of a shape an agent added, which sets a new
 // version on the element, reads as the person's. A text's change mark also records the words the
 // agent wrote, which stay the agent's after a later change that leaves them as they are, such as a
-// person's move of the text. This module reads and writes both marks, and runs in Node and in the
-// browser alike.
+// person's move of the text. Each page's binding also records on the board's copy of each text the
+// words mark: its words, and when they last changed. This module reads and writes the three marks,
+// and runs in Node and in the browser alike.
 
 /** The member of an element's `customData` that holds Chalkline's fields. */
 export const CUSTOM_DATA = 'chalkline';
@@ -93,6 +94,54 @@ export function agentWordsOf(element: unknown): string | undefined {
   const change = recordOf(fieldsOf(element)?.change);
   if (change === undefined || agentIn(change.by) === undefined) return undefined;
   return typeof change.words === 'string' ? change.words : undefined;
+}
+
+/**
+ * The words mark: the words of a text, as Excalidraw keeps them unwrapped, and when a page last
+ * changed them, in milliseconds since the epoch. Each page's binding records it on the board's
+ * copy of each text it writes, so that a reader that receives only the newest copy of a text, as a
+ * peer's copy of the board holds it, tells a change of its words from a change that leaves them as
+ * they are, such as a person's move of the text.
+ */
+export interface WordsChanged {
+  words: string;
+  at: number;
+}
+
+/**
+ * When the words of the text `element` holds last changed, as its words mark records it, where the
+ * mark holds those words. Undefined where the element isn't a text or doesn't hold a mark, and where
+ * its mark holds other words, as where a page that doesn't write the mark changed them and kept the
+ * element's `customData` as it was.
+ */
+export function wordsChangedOf(element: unknown): number | undefined {
+  const fields = recordOf(element);
+  const words = fields === undefined ? undefined : wordsOf(fields);
+  const mark = recordOf(fieldsOf(element)?.wordsChanged);
+  const at = mark?.at;
+  if (words === undefined || mark?.words !== words || !finite(at)) return undefined;
+  return at;
+}
+
+/**
+ * A copy of the text `element`, which a page writes over `current`, the board's copy of the
+ * element before the change, or undefined where the board doesn't hold one, whose words mark
+ * records when its words last changed: the time the mark of `current` records, where the words are
+ * those of `current`, and else the element's `updated`, the time of the change that wrote them. It
+ * answers `element` itself where the element isn't a text or doesn't hold an `updated` time, and
+ * where its words are those of `current` and `current` doesn't record when they changed, since the
+ * page can't tell. The other members of the element, of its `customData` and of Chalkline's member
+ * there stay as they are, and `element` itself doesn't change.
+ */
+export function withWordsChanged<T extends object>(element: T, current: unknown): T {
+  const words = wordsOf(element);
+  const { updated } = element as { updated?: unknown };
+  if (words === undefined || !finite(updated)) return element;
+  const changed = (at: number): T => withFields(element, { wordsChanged: { words, at } satisfies WordsChanged });
+  const before = recordOf(current);
+  if (before === undefined || wordsOf(before) !== words) return changed(updated);
+  const at = wordsChangedOf(before);
+  return at === undefined ? element : changed(at);
 }
 
 /** A copy of `element` whose Chalkline member of `customData` holds `fields` beside its other members. */
