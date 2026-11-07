@@ -9,6 +9,7 @@ import { registerChanges } from './changes';
 import type { Creator } from './creator';
 import { connect, deleteShapes, moveGroup, reorderShapes, scaleShapes, updateShape } from './edit';
 import { listedFeedback, listedFeedbackSchema, registerFeedback } from './feedback';
+import { addImage, flatten } from './picture';
 import { renderBoard, RenderError } from './render';
 import { pendingRequests, RequestError, waitForRequest, writeMermaidRequest } from './requests';
 import {
@@ -17,7 +18,9 @@ import {
   changeSchema,
   connectionSchema,
   deletionSchema,
+  flattenSchema,
   frameSchema,
+  imageSchema,
   LISTED_POINTS,
   placeSchema,
   reorderSchema,
@@ -266,6 +269,56 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       outputSchema: { shapes: z.array(boardShapeSchema) },
     },
     (scaling) => refusing(async () => answer({ shapes: await scaleShapes(doc, scaling, creator()) })),
+  );
+
+  server.registerTool(
+    'add_image',
+    {
+      title: 'Place a picture on the board',
+      description: [
+        'Places a picture on the board: a PNG, JPEG or SVG file of at most 4 MiB, from path, a file on the machine that runs chalkline-mcp, or from data_url, the picture as a data URL.',
+        "x and y are where its top left corner goes and width is its width, in the units get_board reads; where height is left out, the picture keeps its proportions.",
+        'place is where it goes in the stacking order, as reorder_shapes reads it, in front of every shape where it is left out.',
+        "The picture's file goes into the board's files, which every page of the room loads, as a picture a person drops on the board does.",
+        "It answers the image's id, as get_board lists it, its file's id, and its width and height, and it records the agent as the image's creator.",
+      ].join(' '),
+      inputSchema: imageSchema.shape,
+      outputSchema: { id: z.string(), file: z.string(), width: z.number(), height: z.number() },
+    },
+    (request) =>
+      refusing(async () => {
+        const { id, file, width, height } = await addImage(doc, request, creator());
+        return answer({ id, file, width, height });
+      }),
+  );
+
+  server.registerTool(
+    'flatten',
+    {
+      title: 'Turn shapes into one picture',
+      description: [
+        'Turns shapes on the board into one picture, so that a heavy drawing, such as one of many freehand strokes, is one image: by their ids, as get_board lists them, by their groups, or both, or by region, each shape that lies wholly inside it.',
+        'It draws the shapes, with their labels, as render_board draws them, on a transparent background, at scale pixels for each unit of the board, 2 where it is left out: the part of the board region sets, or the bounds of the shapes with a margin of 10.',
+        'In one change, it then deletes the shapes, as delete_shapes deletes them, and places the picture where they were, just above the frontmost of them, in each group that all of them are in.',
+        'An arrow bound to a deleted shape stays on the board, no longer bound at that end.',
+        "It answers the image's id, its file's id, the ids of the shapes it deleted, and the region it drew with the picture's width and height in pixels.",
+        "It refuses a picture of more than 4 MiB, a board's limit: give a smaller scale for a large drawing.",
+      ].join(' '),
+      inputSchema: flattenSchema.shape,
+      outputSchema: {
+        id: z.string(),
+        file: z.string(),
+        ids: z.array(z.string()),
+        region: regionSchema,
+        width: z.number().int(),
+        height: z.number().int(),
+      },
+    },
+    (request, extra) =>
+      refusing(async () => {
+        const { id, file, ids, region, width, height } = await flatten(doc, request, creator(), extra.signal);
+        return answer({ id, file, ids, region, width, height });
+      }),
   );
 
   server.registerTool(
