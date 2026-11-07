@@ -159,10 +159,19 @@ function text(result: CallToolResult): string {
 }
 
 describe('chalkline-mcp', () => {
-  it('lists get_board, add_shapes, add_mermaid, get_request and read_transcript', async () => {
+  it('lists get_board, add_shapes, connect, update_shape, delete_shapes, add_mermaid, get_request and read_transcript', async () => {
     const { client } = await board();
     const { tools } = await client.listTools();
-    expect(tools.map((tool) => tool.name).sort()).toEqual(['add_mermaid', 'add_shapes', 'get_board', 'get_request', 'read_transcript']);
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
+      'add_mermaid',
+      'add_shapes',
+      'connect',
+      'delete_shapes',
+      'get_board',
+      'get_request',
+      'read_transcript',
+      'update_shape',
+    ]);
   });
 
   it('adds a labelled rectangle, which reaches the page with its label bound to it', async () => {
@@ -252,6 +261,10 @@ describe('chalkline-mcp', () => {
 });
 
 describe('lines and arrows of add_shapes', () => {
+  // The agent the tests' client is, by the name it gives as it connects, which get_board lists as
+  // the creator of each shape add_shapes adds.
+  const creator = { kind: 'agent', name: 'chalkline-test' };
+
   it('draws a line of width 0 straight down or up, and get_board reads it so', async () => {
     const { network, elements, client } = await board();
     const [down, up] = ids(
@@ -267,8 +280,8 @@ describe('lines and arrows of add_shapes', () => {
     expect(elements.get(down)).toMatchObject({ type: 'line', x: 10, y: 20, width: 0, height: 50, points: [[0, 0], [0, 50]] });
     expect(elements.get(up)).toMatchObject({ type: 'line', x: 40, y: 70, width: 0, height: 50, points: [[0, 0], [0, -50]] });
     expect(shapes(await call(client, 'get_board'))).toEqual([
-      { id: down, kind: 'line', x: 10, y: 20, width: 0, height: 50 },
-      { id: up, kind: 'line', x: 40, y: 70, width: 0, height: -50 },
+      { id: down, kind: 'line', x: 10, y: 20, width: 0, height: 50, creator },
+      { id: up, kind: 'line', x: 40, y: 70, width: 0, height: -50, creator },
     ]);
   });
 
@@ -308,6 +321,7 @@ describe('lines and arrows of add_shapes', () => {
       height: 49,
       start: 'top',
       end: 'bottom',
+      creator,
     });
   });
 

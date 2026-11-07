@@ -1,4 +1,17 @@
-export { addShapes, ELEMENTS, readBoard, ShapeError } from './board';
+export { addShapes, ELEMENTS, newId, readBoard, ShapeError } from './board';
+export { creatorOf, CUSTOM_DATA, withCreator, type Creator } from './creator';
+export { connect, deleteShapes, updateShape } from './edit';
+export {
+  arrowPoints,
+  boardPoints,
+  centerOf,
+  GAP,
+  reach,
+  type End,
+  type Outline,
+  type Point,
+  type Segment,
+} from './geometry';
 export { indicesAbove } from './order';
 export {
   pageInRoom,
@@ -9,7 +22,18 @@ export {
   type RequestAnswer,
 } from './requests';
 export { createServer } from './server';
-export { boardShapeSchema, shapeSchema, type BoardShape, type Shape } from './shapes';
+export {
+  boardShapeSchema,
+  changeSchema,
+  connectionSchema,
+  creatorSchema,
+  deletionSchema,
+  shapeSchema,
+  type BoardShape,
+  type Connection,
+  type Shape,
+  type ShapeChange,
+} from './shapes';
 export {
   convertSkeletons,
   labelledBox,

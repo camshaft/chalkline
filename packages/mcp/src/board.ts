@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type * as Y from 'yjs';
+import { creatorOf, withCreator, type Creator } from './creator';
 import { indicesAbove } from './order';
 import type { BoardShape, Shape } from './shapes';
 import { convertSkeletons, type Skeleton } from './skeleton';
@@ -10,7 +11,7 @@ export const ELEMENTS = 'elements';
 /** The kinds of shape that an arrow of add_shapes binds to. */
 const BINDABLE: ReadonlySet<Shape['type']> = new Set<Shape['type']>(['rectangle', 'ellipse', 'diamond', 'text']);
 
-/** A refusal of the shapes add_shapes was called with, whose message says what to change. */
+/** A refusal of a tool's call on the board's shapes, whose message says what to change. */
 export class ShapeError extends Error {
   constructor(message: string) {
     super(message);
@@ -31,14 +32,15 @@ interface BoardElement {
   text: string | undefined;
   start: string | undefined;
   end: string | undefined;
+  creator: Creator | undefined;
 }
 
 /**
  * The board's shapes from back to front, as get_board answers them. A text bound to a shape is
- * that shape's label, and an arrow's start and end are the shapes its ends are bound to. A line's
- * or an arrow's width and height say how far its last point lies right of and below its first,
- * which is where the pages draw it to. Deleted elements, and values that aren't elements, are left
- * out.
+ * that shape's label, an arrow's start and end are the shapes its ends are bound to, and a shape
+ * an agent added lists the agent as its creator. A line's or an arrow's width and height say how
+ * far its last point lies right of and below its first, which is where the pages draw it to.
+ * Deleted elements, and values that aren't elements, are left out.
  */
 export function readBoard(values: Iterable<unknown>): BoardShape[] {
   const elements = new Map<string, BoardElement>();
@@ -72,20 +74,27 @@ export function readBoard(values: Iterable<unknown>): BoardShape[] {
     if (label !== undefined) shape.label = label;
     if (element.start !== undefined && listed.has(element.start)) shape.start = element.start;
     if (element.end !== undefined && listed.has(element.end)) shape.end = element.end;
+    if (element.creator !== undefined) shape.creator = element.creator;
     return shape;
   });
+}
+
+/** A random id for a new element: 20 characters of base64url, as Excalidraw's are. */
+export function newId(): string {
+  return randomBytes(15).toString('base64url');
 }
 
 /**
  * Adds `shapes`, in Excalidraw's skeleton format, to the board that `doc` holds, above every
  * element on it, in one transaction, and returns each shape's id in the order of `shapes`. A shape
- * keeps the id it sets, and a shape that leaves it out gets a random one. Throws a ShapeError, and
- * adds nothing, where two shapes set one id, a shape sets an id the board holds already, or an
+ * keeps the id it sets, and a shape that leaves it out gets a random one. Each element it adds, a
+ * shape's label among them, records `creator`, where given, as its creator. Throws a ShapeError,
+ * and adds nothing, where two shapes set one id, a shape sets an id the board holds already, or an
  * arrow's start or end isn't a rectangle, an ellipse, a diamond or a text of the same call.
  */
-export async function addShapes(doc: Y.Doc, shapes: readonly Shape[]): Promise<string[]> {
+export async function addShapes(doc: Y.Doc, shapes: readonly Shape[], creator?: Creator): Promise<string[]> {
   const shared = doc.getMap<unknown>(ELEMENTS);
-  const ids = shapes.map((shape) => shape.id ?? randomBytes(15).toString('base64url'));
+  const ids = shapes.map((shape) => shape.id ?? newId());
 
   const first = new Map<string, number>();
   ids.forEach((id, place) => {
@@ -125,7 +134,10 @@ export async function addShapes(doc: Y.Doc, shapes: readonly Shape[]): Promise<s
   }
   const indices = indicesAbove(shared.values(), elements.length);
   doc.transact(() => {
-    elements.forEach((element, place) => shared.set(element.id, { ...structuredClone(element), index: indices[place] }));
+    elements.forEach((element, place) => {
+      const copy = { ...structuredClone(element), index: indices[place] };
+      shared.set(element.id, creator === undefined ? copy : withCreator(copy, creator));
+    });
   });
   return ids;
 }
@@ -185,6 +197,7 @@ function boardElement(value: unknown): BoardElement | null {
     text: stringOf(fields.originalText) ?? stringOf(fields.text),
     start: boundTo(fields.startBinding),
     end: boundTo(fields.endBinding),
+    creator: creatorOf(value),
   };
 }
 
@@ -208,16 +221,16 @@ function pointOf(value: unknown): readonly [number, number] | null {
   return finite(x) && finite(y) ? [x, y] : null;
 }
 
-function finite(value: unknown): value is number {
+export function finite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
-function stringOf(value: unknown): string | undefined {
+export function stringOf(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
 /** The id of the element that the binding of an arrow's end names. */
-function boundTo(binding: unknown): string | undefined {
+export function boundTo(binding: unknown): string | undefined {
   if (typeof binding !== 'object' || binding === null) return undefined;
   return stringOf((binding as { elementId?: unknown }).elementId);
 }

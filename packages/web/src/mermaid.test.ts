@@ -209,6 +209,9 @@ describe('bindRequests', () => {
     const indices = ['r-0', 'r-1', 'r-2', 'r-3', 'r-4'].map((id) => String(elements.get(id)?.index));
     expect(indices.every((index) => index > 'a5')).toBe(true);
     expect([...indices].sort()).toEqual(indices);
+    for (const id of ['r-0', 'r-1', 'r-2', 'r-3', 'r-4']) {
+      expect(elements.get(id)).toMatchObject({ customData: { chalkline: { creator: { kind: 'agent', name: 'agent' } } } });
+    }
     expect(origins).toContain(CONVERTED);
   });
 
