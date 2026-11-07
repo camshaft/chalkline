@@ -699,8 +699,18 @@ describe('the local-network mode, end to end', () => {
     if (lan === undefined || chrome === undefined) throw new Error('the server or the browser did not start');
     const { page } = await openBoard(chrome, boardLink(lan.port), 'pen');
     try {
-      const pick = (type: string) =>
-        page.evaluate((tool) => (window as unknown as E2eWindow).chalkline?.api.setActiveTool({ type: tool }), type);
+      // Excalidraw's app state holds the tool only after setActiveTool returns, so `pick` waits until it holds it: a
+      // press sent at once would reach the tool the board had before.
+      const pick = async (type: string) => {
+        await page.evaluate(
+          (tool) => (window as unknown as E2eWindow).chalkline?.api.setActiveTool({ type: tool }),
+          type,
+        );
+        await page.waitForFunction(
+          (tool) => (window as unknown as E2eWindow).chalkline?.api.getAppState().activeTool.type === tool,
+          type,
+        );
+      };
       const shapesAre = (types: string[]) =>
         page.waitForFunction(
           (expected) =>
