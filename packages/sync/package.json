@@ -15,6 +15,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@trystero-p2p/core": "0.26.0",
     "@trystero-p2p/nostr": "0.26.0",
     "@trystero-p2p/ws-relay": "0.26.0",
     "y-protocols": "^1.0.6",

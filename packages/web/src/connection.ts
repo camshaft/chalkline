@@ -12,7 +12,8 @@ export interface TurnServer {
  * The connection settings a person keeps in their browser, for every board it
  * opens. Both are unset by default, and a setting left unset leaves the
  * defaults in use: Trystero's STUN servers, and the public Nostr relays that
- * `PUBLIC_RELAYS` in `@chalkline/sync/join` lists.
+ * `joinBoardRoom` in `@chalkline/sync/join` holds: Trystero's default relays,
+ * without each one that fails or refuses the board.
  */
 export interface ConnectionSettings {
   /**
