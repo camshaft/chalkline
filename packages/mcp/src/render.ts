@@ -1,4 +1,6 @@
-import { Resvg } from '@resvg/resvg-js';
+import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type * as Y from 'yjs';
 import { backToFront, ELEMENTS } from './board';
 import { loadExcalidraw, type Excalidraw } from './skeleton';
@@ -7,8 +9,9 @@ import { loadExcalidraw, type Excalidraw } from './skeleton';
 // for it through a request as add_mermaid does: it draws with no page open, it draws the shapes
 // that get_board reads, and the picture's bytes stay out of the shared state that every
 // participant keeps. Excalidraw's exportToSvg draws the board as SVG under jsdom, and resvg turns
-// the SVG into a PNG. The helper loads Excalidraw's fonts as nothing, so resvg draws text in a font
-// of the helper's machine.
+// the SVG into a PNG in a Node process of its own, since a panic of resvg's aborts the process it
+// runs in. The helper loads Excalidraw's fonts as nothing, so resvg draws text in a font of the
+// helper's machine.
 
 /** The shared map that holds the board's files, such as an image's picture, by id, as the page keeps them. */
 export const FILES = 'files';
@@ -17,6 +20,36 @@ export const FILES = 'files';
 export const MARGIN = 10;
 
 const SVG = 'http://www.w3.org/2000/svg';
+
+/** The file of resvg's module, which the rasterizer's process loads, found as the helper finds its own modules. */
+const RESVG = createRequire(import.meta.url).resolve('@resvg/resvg-js');
+
+/** resvg's options: the picture on white, at the size the SVG sets. */
+const RESVG_OPTIONS = { background: '#ffffff', fitTo: { mode: 'original' } };
+
+/**
+ * The rasterizer, a script that Node runs in a process of its own: it reads an SVG on its standard
+ * input and writes resvg's PNG of the SVG on its standard output. It loads resvg's module from the
+ * file its first argument holds, and reads resvg's options from the JSON its second argument holds.
+ * Where resvg throws, it writes the error's message on its standard error and exits with code 1.
+ */
+const RASTERIZER = `
+const { Resvg } = require(process.argv[1]);
+const chunks = [];
+process.stdin.on('data', (chunk) => chunks.push(chunk));
+process.stdin.on('end', () => {
+  let png;
+  try {
+    const svg = Buffer.concat(chunks).toString('utf8');
+    png = new Resvg(svg, JSON.parse(process.argv[2])).render().asPng();
+  } catch (error) {
+    process.stderr.write(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+    return;
+  }
+  process.stdout.write(png);
+});
+`;
 
 /** A part of the board, in the board's units: its top left corner, its width and its height. */
 export interface Region {
@@ -46,24 +79,73 @@ export class RenderError extends Error {
   }
 }
 
+/** What renderBoard draws, and what stops it. */
+export interface RenderOptions {
+  /** The part of the board to draw; the whole board, with MARGIN around its shapes, where it is left out. */
+  region?: Region;
+  /** The widest the picture may be, in pixels. */
+  maxWidth: number;
+  /** The highest the picture may be, in pixels. */
+  maxHeight: number;
+  /** The seconds the render may take before it stops with a RenderError; it doesn't stop at a time where this is left out. */
+  timeout?: number;
+  /** A signal whose abort stops the render with a RenderError, such as the client's cancel of the call. */
+  signal?: AbortSignal;
+}
+
 type ExportOptions = Parameters<Excalidraw['exportToSvg']>[0];
 
 /**
  * Draws `region` of the board that `doc` holds, or the whole board with MARGIN around its shapes
  * where `region` is left out, as Excalidraw exports it, on white. The picture keeps the region's
  * shape, and is at most `maxWidth` pixels wide and `maxHeight` pixels high. Throws a RenderError
- * where the board doesn't hold a shape and `region` is left out.
+ * where the board doesn't hold a shape and `region` is left out, where resvg fails or stops before
+ * it draws the picture, where `signal` aborts, and where `timeout` seconds pass first. On the
+ * signal's abort or at the timeout, renderBoard ends resvg's process and throws the RenderError as
+ * soon as Excalidraw's export, which runs in the helper, yields.
  */
-export async function renderBoard(
+export async function renderBoard(doc: Y.Doc, options: RenderOptions): Promise<Picture> {
+  const { timeout, signal } = options;
+  const stop = new AbortController();
+  const cancel = () =>
+    stop.abort(new RenderError('The client cancelled the call before render_board drew the picture.'));
+  signal?.addEventListener('abort', cancel, { once: true });
+  if (signal?.aborted) cancel();
+  const timer =
+    timeout === undefined
+      ? undefined
+      : setTimeout(
+          () =>
+            stop.abort(
+              new RenderError(
+                `render_board didn't draw the picture within ${timeout} seconds, the call's timeout: draw a smaller region, or give a longer timeout.`,
+              ),
+            ),
+          timeout * 1000,
+        );
+  try {
+    stop.signal.throwIfAborted();
+    const stopped = new Promise<never>((_, reject) => {
+      stop.signal.addEventListener('abort', () => reject(stop.signal.reason), { once: true });
+    });
+    return await Promise.race([draw(doc, options, stop.signal), stopped]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', cancel);
+  }
+}
+
+/** Draws the picture renderBoard answers, and hands `signal` to resvg's process. */
+async function draw(
   doc: Y.Doc,
-  { region, maxWidth, maxHeight }: { region?: Region; maxWidth: number; maxHeight: number },
+  { region, maxWidth, maxHeight }: RenderOptions,
+  signal: AbortSignal,
 ): Promise<Picture> {
   const excalidraw = await loadExcalidraw();
   const elements = excalidraw.getNonDeletedElements(
     excalidraw.restoreElements(boardElements(doc) as unknown as Parameters<Excalidraw['restoreElements']>[0], null),
   );
-  // exportToSvg moves the shapes so that the top left corner of the bounds of the frames, and of
-  // the shapes outside frames, is the origin of the SVG it draws.
+  // The whole board's bounds: those of the frames, and of the shapes outside frames.
   const roots = rootElements(elements);
   const bounds = roots.length === 0 ? null : excalidraw.getCommonBounds(roots);
   const drawn = region ?? (bounds === null ? null : withMargin(bounds));
@@ -76,11 +158,12 @@ export async function renderBoard(
   const width = Math.min(maxWidth, Math.max(1, Math.round(drawn.width * scale)));
   const height = Math.min(maxHeight, Math.max(1, Math.round(drawn.height * scale)));
 
+  const shown = near(excalidraw, elements, drawn);
   const svg =
-    bounds === null
+    shown.length === 0
       ? document.createElementNS(SVG, 'svg')
       : await excalidraw.exportToSvg({
-          elements,
+          elements: shown,
           appState: {
             exportBackground: false,
             // exportToSvg counts a frame's name in the bounds it moves the shapes by.
@@ -93,7 +176,9 @@ export async function renderBoard(
           // <use> shares at width and height 100%, resvg drew an image on part of its place only.
           reuseImages: false,
         });
-  const [minX, minY] = bounds ?? [0, 0];
+  // exportToSvg moves the shapes so that the top left corner of the bounds of the frames, and of
+  // the shapes outside frames, that it draws is the origin of the SVG.
+  const [minX, minY] = shown.length === 0 ? [0, 0] : excalidraw.getCommonBounds(rootElements(shown));
   // exportToSvg sets xmlns as an attribute, which XMLSerializer writes a second time beside the
   // namespace it declares for the svg element, and resvg refuses an attribute written twice.
   svg.removeAttribute('xmlns');
@@ -101,13 +186,85 @@ export async function renderBoard(
   svg.setAttribute('width', String(width));
   svg.setAttribute('height', String(height));
   svg.setAttribute('preserveAspectRatio', 'none');
-  const png = new Resvg(new XMLSerializer().serializeToString(svg), {
-    background: '#ffffff',
-    fitTo: { mode: 'original' },
-  })
-    .render()
-    .asPng();
+  const png = await rasterize(new XMLSerializer().serializeToString(svg), signal);
   return { png, region: drawn, width, height };
+}
+
+/**
+ * The elements of `elements` that can show in `drawn`, which renderBoard draws in place of the
+ * whole board: each element whose bounds meet the area of `drawn` grown by half its width and half
+ * its height on each side, so that a stroke wider than its shape's bounds still shows at the
+ * region's edge, and whose frame, where it is in one, meets that area too, since its frame clips it.
+ *
+ * resvg 0.34 draws each group that has a mask, a clip path or an opacity, such as a labelled arrow
+ * or an image, on a layer that it fits into an area four times the picture's width wide and four
+ * times its height high, which starts twice the picture's width left of and twice its height above
+ * the picture's top left corner, and it panics where the layer lies wholly outside that area
+ * (render_group in its render.rs, fit_to_rect in its geom.rs). The grown area lies inside resvg's
+ * area, so each layer of the elements drawn meets resvg's area.
+ */
+function near<T extends ExcalidrawElement>(excalidraw: Excalidraw, elements: readonly T[], drawn: Region): T[] {
+  const left = drawn.x - drawn.width / 2;
+  const top = drawn.y - drawn.height / 2;
+  const right = drawn.x + drawn.width * 1.5;
+  const bottom = drawn.y + drawn.height * 1.5;
+  const meets = (element: T) => {
+    const [minX, minY, maxX, maxY] = excalidraw.getCommonBounds([element]);
+    return maxX >= left && minX <= right && maxY >= top && minY <= bottom;
+  };
+  const frames = new Map(
+    elements.filter((element) => isFrame(element)).map((frame): [string, boolean] => [frame.id, meets(frame)]),
+  );
+  return elements.filter(
+    (element) => meets(element) && (element.frameId === null || frames.get(element.frameId) !== false),
+  );
+}
+
+/**
+ * Turns `svg` into a PNG with resvg, in a Node process of its own, so that a panic of resvg's,
+ * which aborts the process it runs in, ends that process and not the helper. Rejects with a
+ * RenderError where the process fails or stops before it writes the PNG, and with the reason of
+ * `signal` where `signal` aborts, which ends the process.
+ */
+export function rasterize(svg: string, signal?: AbortSignal): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const child = spawn(process.execPath, ['-e', RASTERIZER, RESVG, JSON.stringify(RESVG_OPTIONS)]);
+    const kill = () => child.kill('SIGKILL');
+    signal?.addEventListener('abort', kill, { once: true });
+    const png: Buffer[] = [];
+    const said: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer) => png.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => said.push(chunk));
+    child.stdin.on('error', () => {
+      // A process that stops before it reads the whole SVG closes its input, and the close of the
+      // process answers the call.
+    });
+    child.on('error', (error) => {
+      signal?.removeEventListener('abort', kill);
+      reject(new RenderError(`render_board couldn't start resvg's process: ${error.message}`));
+    });
+    child.on('close', (code, ended) => {
+      signal?.removeEventListener('abort', kill);
+      if (code === 0) {
+        resolve(Buffer.concat(png));
+      } else if (signal?.aborted) {
+        reject(signal.reason);
+      } else {
+        const how = code === null ? `on the signal ${ended}` : `with the exit code ${code}`;
+        const message = Buffer.concat(said).toString('utf8').trim();
+        reject(
+          new RenderError(
+            `resvg, which turns the board's SVG into the PNG in a process of its own, stopped ${how} before it drew the picture${message === '' ? '.' : `: ${message}`}`,
+          ),
+        );
+      }
+    });
+    child.stdin.end(svg);
+  });
 }
 
 /** The board's elements from back to front, as copies, without the deleted ones and the values that aren't elements. */
