@@ -86,6 +86,25 @@ function labelOf(elements: Y.Map<Element>, id: string): Element | undefined {
   return [...elements.values()].find((element) => element.containerId === id && element.isDeleted !== true);
 }
 
+/** The outline of a shape as the board holds it, which an arrow bound to it stops short of. */
+const outline = (element: Element | undefined) => ({
+  type: element?.type === 'ellipse' ? ('ellipse' as const) : ('rectangle' as const),
+  x: Number(element?.x),
+  y: Number(element?.y),
+  width: Number(element?.width),
+  height: Number(element?.height),
+  angle: 0,
+});
+
+/** Checks that the arrow `id` runs between the shapes `start` and `end`, as they stand on the board. */
+const expectBetween = (elements: Y.Map<Element>, id: string, start: string, end: string): void => {
+  const expected = arrowPoints(outline(elements.get(start)), outline(elements.get(end)));
+  if (expected === null) throw new Error(`"${start}" and "${end}" have one center`);
+  const [from, to] = ends(elements.get(id));
+  expectNear(from, expected.from);
+  expectNear(to, expected.to);
+};
+
 describe('the creator mark', () => {
   it('marks each shape add_shapes adds, and its label, and get_board lists it', async () => {
     const { elements, client } = await helper([drawn({ id: 'theirs', type: 'rectangle', index: 'a0' })]);
@@ -523,25 +542,6 @@ describe('groups', () => {
     }),
   ];
 
-  /** The outline of a shape as the board holds it, which an arrow bound to it stops short of. */
-  const outline = (element: Element | undefined) => ({
-    type: element?.type === 'ellipse' ? ('ellipse' as const) : ('rectangle' as const),
-    x: Number(element?.x),
-    y: Number(element?.y),
-    width: Number(element?.width),
-    height: Number(element?.height),
-    angle: 0,
-  });
-
-  /** Checks that the arrow `id` runs between the shapes `start` and `end`, as they stand on the board. */
-  const expectBetween = (elements: Y.Map<Element>, id: string, start: string, end: string): void => {
-    const expected = arrowPoints(outline(elements.get(start)), outline(elements.get(end)));
-    if (expected === null) throw new Error(`"${start}" and "${end}" have one center`);
-    const [from, to] = ends(elements.get(id));
-    expectNear(from, expected.from);
-    expectNear(to, expected.to);
-  };
-
   it('puts the shapes of one add_shapes call into a new group, which get_board lists', async () => {
     const { elements, client } = await helper([drawn({ id: 'theirs', type: 'rectangle', x: 400, index: 'a0' })]);
     const added = ok<{ ids: string[]; group: string }>(
@@ -704,5 +704,221 @@ describe('groups', () => {
       properties: { shapes: { items: { properties: Record<string, unknown> } } };
     };
     expect(Object.keys(answer.properties.shapes.items.properties)).toContain('groups');
+  });
+});
+
+describe('scale_shapes', () => {
+  /**
+   * The group pumpkin: a body with a label, an eye, a stem, a caption and an arrow from the body
+   * to the eye. A leaf outside every group has an arrow from the eye.
+   */
+  const pumpkin = (): Element[] => [
+    drawn({
+      id: 'body',
+      type: 'rectangle',
+      x: 100,
+      y: 100,
+      width: 200,
+      height: 100,
+      index: 'a0',
+      groupIds: ['pumpkin'],
+      boundElements: [
+        { id: 'body-label', type: 'text' },
+        { id: 'link', type: 'arrow' },
+      ],
+    }),
+    drawn({
+      id: 'body-label',
+      type: 'text',
+      x: 150,
+      y: 137.5,
+      width: 100,
+      height: 25,
+      index: 'a1',
+      containerId: 'body',
+      groupIds: ['pumpkin'],
+      fontSize: 20,
+      text: 'Pumpkin',
+      originalText: 'Pumpkin',
+    }),
+    drawn({
+      id: 'eye',
+      type: 'ellipse',
+      x: 400,
+      y: 100,
+      width: 100,
+      height: 100,
+      index: 'a2',
+      groupIds: ['pumpkin'],
+      boundElements: [
+        { id: 'link', type: 'arrow' },
+        { id: 'vine', type: 'arrow' },
+      ],
+    }),
+    drawn({
+      id: 'stem',
+      type: 'line',
+      x: 100,
+      y: 300,
+      width: 200,
+      height: 50,
+      index: 'a3',
+      groupIds: ['pumpkin'],
+      points: [
+        [0, 0],
+        [100, 50],
+        [200, 0],
+      ],
+    }),
+    drawn({
+      id: 'caption',
+      type: 'text',
+      x: 400,
+      y: 300,
+      width: 120,
+      height: 25,
+      index: 'a4',
+      groupIds: ['pumpkin'],
+      fontSize: 20,
+      text: 'Boo',
+      originalText: 'Boo',
+    }),
+    drawn({
+      id: 'link',
+      type: 'arrow',
+      x: 305,
+      y: 150,
+      width: 90,
+      height: 0,
+      index: 'a5',
+      groupIds: ['pumpkin'],
+      points: [
+        [0, 0],
+        [90, 0],
+      ],
+      startBinding: { elementId: 'body', focus: 0, gap: 5 },
+      endBinding: { elementId: 'eye', focus: 0, gap: 5 },
+    }),
+    drawn({ id: 'leaf', type: 'rectangle', x: 700, y: 125, index: 'a6', boundElements: [{ id: 'vine', type: 'arrow' }] }),
+    drawn({
+      id: 'vine',
+      type: 'arrow',
+      x: 505,
+      y: 150,
+      width: 190,
+      height: 0,
+      index: 'a7',
+      points: [
+        [0, 0],
+        [190, 0],
+      ],
+      startBinding: { elementId: 'eye', focus: 0, gap: 5 },
+      endBinding: { elementId: 'leaf', focus: 0, gap: 5 },
+    }),
+  ];
+
+  it('scales a group around a point in one change: each place, size, point, font size and binding', async () => {
+    const { elements, client } = await helper(pumpkin());
+    const changes: string[][] = [];
+    elements.observe((event) => changes.push([...event.keysChanged].sort()));
+    const scaled = ok<{ shapes: BoardShape[] }>(
+      await call(client, 'scale_shapes', { groups: ['pumpkin'], factor: 0.5, about: { x: 100, y: 100 } }),
+    ).shapes;
+    expect(changes).toEqual([['body', 'body-label', 'caption', 'eye', 'link', 'stem', 'vine']]);
+    expect(scaled.map((shape) => shape.id)).toEqual(['body', 'eye', 'stem', 'caption', 'link']);
+    expect(scaled[0]).toEqual({ id: 'body', kind: 'rectangle', x: 100, y: 100, width: 100, height: 50, label: 'Pumpkin', groups: ['pumpkin'] });
+    expect(scaled[4]).toMatchObject({ id: 'link', start: 'body', end: 'eye' });
+    expect(elements.get('body')).toMatchObject({
+      x: 100,
+      y: 100,
+      width: 100,
+      height: 50,
+      boundElements: [
+        { id: 'body-label', type: 'text' },
+        { id: 'link', type: 'arrow' },
+      ],
+      version: 2,
+    });
+    expect(elements.get('body-label')).toMatchObject({ x: 125, y: 118.75, width: 50, height: 12.5, fontSize: 10, containerId: 'body', version: 2 });
+    expect(elements.get('eye')).toMatchObject({ x: 250, y: 100, width: 50, height: 50, version: 2 });
+    expect(elements.get('stem')).toMatchObject({
+      x: 100,
+      y: 200,
+      width: 100,
+      height: 25,
+      points: [
+        [0, 0],
+        [50, 25],
+        [100, 0],
+      ],
+      version: 2,
+    });
+    expect(elements.get('caption')).toMatchObject({ x: 250, y: 200, width: 60, height: 12.5, fontSize: 10, version: 2 });
+    expect(elements.get('link')).toMatchObject({
+      x: 202.5,
+      y: 125,
+      width: 45,
+      height: 0,
+      points: [
+        [0, 0],
+        [45, 0],
+      ],
+      startBinding: { elementId: 'body', focus: 0, gap: 2.5 },
+      endBinding: { elementId: 'eye', focus: 0, gap: 2.5 },
+      version: 2,
+    });
+    expect(elements.get('leaf')).toMatchObject({ x: 700, y: 125, width: 100, height: 50, version: 1 });
+    expectBetween(elements, 'vine', 'eye', 'leaf');
+  });
+
+  it("scales shapes by their ids around their left and top edges, and lays out again each arrow to a shape that doesn't scale", async () => {
+    const { elements, client } = await helper(pumpkin());
+    const scaled = ok<{ shapes: BoardShape[] }>(await call(client, 'scale_shapes', { ids: ['caption', 'eye'], factor: 2 })).shapes;
+    expect(scaled.map((shape) => shape.id)).toEqual(['eye', 'caption']);
+    expect(elements.get('eye')).toMatchObject({ x: 400, y: 100, width: 200, height: 200, version: 2 });
+    expect(elements.get('caption')).toMatchObject({ x: 400, y: 500, width: 240, height: 50, fontSize: 40, version: 2 });
+    expect(elements.get('body')).toMatchObject({ x: 100, y: 100, width: 200, height: 100, version: 1 });
+    expect(elements.get('body-label')).toMatchObject({ fontSize: 20, version: 1 });
+    expect(elements.get('stem')).toMatchObject({ version: 1 });
+    expectBetween(elements, 'link', 'body', 'eye');
+    expectBetween(elements, 'vine', 'eye', 'leaf');
+  });
+
+  it('refuses each call it cannot scale, and changes nothing', async () => {
+    const { elements, client } = await helper(pumpkin());
+    const before = JSON.stringify(elements.toJSON());
+    const cases: [Element, string][] = [
+      [{ factor: 2 }, "The call doesn't name a shape to scale: give ids, groups or both."],
+      [
+        { ids: ['body-label'], factor: 2 },
+        `ids[0] is "body-label", the label of the shape "body", which get_board lists with its label: scale "body", and its label scales with it.`,
+      ],
+      [{ ids: ['eye', 'eye'], factor: 2 }, `ids[1] is "eye", which ids[0] is too: list each shape once.`],
+      [{ ids: ['missing'], factor: 2 }, `ids[0] is "missing", which isn't the id of a shape on the board: get_board lists each shape's id.`],
+      [{ groups: ['pumpkin', 'pumpkin'], factor: 2 }, `groups[1] is "pumpkin", which groups[0] is too: list each group once.`],
+      [{ groups: ['missing'], factor: 2 }, `groups[0] is "missing", which no shape on the board is in: get_board lists each shape's groups.`],
+    ];
+    for (const [args, refusal] of cases) {
+      const result = await call(client, 'scale_shapes', args);
+      expect(result.isError, JSON.stringify(args)).toBe(true);
+      expect(text(result)).toBe(refusal);
+    }
+    for (const args of [{ groups: ['pumpkin'], factor: 0 }, { groups: ['pumpkin'], factor: -1 }, { groups: ['pumpkin'] }]) {
+      const result = await call(client, 'scale_shapes', args);
+      expect(result.isError, JSON.stringify(args)).toBe(true);
+      expect(text(result)).toContain('factor');
+    }
+    expect(JSON.stringify(elements.toJSON())).toBe(before);
+  });
+
+  it('says in its description what it scales, and takes ids, groups, factor and about', async () => {
+    const { client } = await helper();
+    const { tools } = await client.listTools();
+    const tool = tools.find((candidate) => candidate.name === 'scale_shapes');
+    for (const words of ['group', 'factor', 'about', 'label', 'points', 'font size', 'bound']) {
+      expect(tool?.description, words).toContain(words);
+    }
+    expect(Object.keys(tool?.inputSchema.properties ?? {}).sort()).toEqual(['about', 'factor', 'groups', 'ids']);
+    expect(tool?.inputSchema.required).toEqual(['factor']);
   });
 });
