@@ -22,6 +22,7 @@ export function registerUndo(server: McpServer, doc: Y.Doc, creator: () => Creat
         'add_shapes, connect, update_shape, delete_shapes, reorder_shapes, scale_shapes, add_image and flatten each record their change on the board, and each page lists the changes, newest first, with an Undo button.',
         'It writes each element the change wrote back as it was before the change, for everyone on the board, and deletes each element the change added; restored lists their ids.',
         'An element that someone changed after the change, such as a shape a person moved, relabelled or deleted since, stays as it is, and kept lists it with its name.',
+        "A change leaves the board's list, and undo_change refuses its id, once the board no longer shows anything it wrote, as where later changes moved or deleted each shape it added.",
         "It refuses an id that the board doesn't record, another agent's change, and a change that someone undid already.",
       ].join(' '),
       inputSchema: {

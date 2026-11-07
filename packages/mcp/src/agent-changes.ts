@@ -4,8 +4,10 @@
 // call wrote as it was before the call and as the call left it. A page lists the changes, newest
 // first, and undoes one with its Undo button, and the agent undoes one of its own with undo_change:
 // either writes each element back as it was before the change, for every participant, unless a
-// person changed it after the change, and records the undo beside the change. This module runs in
-// Node and in the browser alike.
+// person changed it after the change, and records the undo beside the change. As the helper records
+// a change, each earlier change that the board no longer shows anything of leaves the array, so that
+// the array doesn't grow for the life of the board (dropReplacedChanges). This module runs in Node
+// and in the browser alike.
 import { newEntryId } from '@chalkline/sync';
 import type * as Y from 'yjs';
 import { CUSTOM_DATA, withChange, withDrawingChanged, withWordsChanged, type Creator } from './creator';
@@ -57,6 +59,11 @@ export interface AgentUndo {
   kept: KeptElement[];
 }
 
+/** The mark the board's array holds once changes left it, which tells a page that older changes aren't kept. */
+export interface ChangesDropped {
+  kind: 'dropped';
+}
+
 /** An agent's change as the page lists it: the change, and its first undo, or null where no one undid it. */
 export interface ListedChange extends AgentChange {
   undo: AgentUndo | null;
@@ -102,11 +109,13 @@ export async function capturedChanges<T>(
 
 /**
  * Records an agent's change on `changes`, and returns its id; returns null, and records nothing,
- * where the change didn't write any element.
+ * where the change didn't write any element. With `board`, the board's elements, it drops in the
+ * same transaction each earlier change that the board no longer shows anything of, as
+ * dropReplacedChanges does.
  */
 export function recordAgentChange(
   changes: Y.Array<unknown>,
-  change: { by: Creator; tool: string; summary: string; elements: ElementChange[]; now?: Date },
+  change: { by: Creator; tool: string; summary: string; elements: ElementChange[]; now?: Date; board?: Y.Map<unknown> },
 ): string | null {
   if (change.elements.length === 0) return null;
   const record: AgentChange = {
@@ -118,7 +127,11 @@ export function recordAgentChange(
     summary: change.summary,
     elements: change.elements,
   };
-  changes.push([record]);
+  const { board } = change;
+  inTransaction(changes, () => {
+    changes.push([record]);
+    if (board !== undefined) dropReplacedChanges(board, changes);
+  });
   return record.id;
 }
 
@@ -129,19 +142,7 @@ export function recordAgentChange(
  * same order once their copies meet, lists them in the same order.
  */
 export function listAgentChanges(changes: Y.Array<unknown>): ListedChange[] {
-  const records = changes.toArray();
-  const undos = new Map<string, AgentUndo>();
-  for (const value of records) {
-    const undo = readUndo(value);
-    if (undo !== undefined && !undos.has(undo.change)) undos.set(undo.change, undo);
-  }
-  const listed: { change: ListedChange; place: number }[] = [];
-  records.forEach((value, place) => {
-    const change = readChange(value);
-    if (change !== undefined) listed.push({ change: { ...change, undo: undos.get(change.id) ?? null }, place });
-  });
-  listed.sort((a, b) => timeOf(b.change.at) - timeOf(a.change.at) || b.place - a.place);
-  return listed.map(({ change }) => change);
+  return listedIn(changes.toArray());
 }
 
 /** How an undo runs: who undoes the change, the agent where an agent does, the time, and the transaction's origin. */
@@ -171,7 +172,11 @@ export function undoAgentChange(
   options: UndoOptions,
 ): AgentUndo {
   const listed = listAgentChanges(changes).find((change) => change.id === id);
-  if (listed === undefined) throw new UndoError(`The board doesn't record an agent's change ${id}: give an id that the change list shows.`);
+  if (listed === undefined) {
+    throw new UndoError(
+      `The board doesn't record an agent's change ${id}: a change leaves the list once the board no longer shows anything it wrote, so give an id that the change list shows.`,
+    );
+  }
   if (listed.undo !== null) {
     throw new UndoError(`${listed.undo.by} undid the change ${id}, "${listed.summary}", at ${listed.undo.at} already.`);
   }
@@ -210,6 +215,69 @@ export function undoAgentChange(
     changes.push([undo]);
   }, options.origin);
   return undo;
+}
+
+/**
+ * Drops from `changes` each agent's change that the board, whose elements `elements` holds, no
+ * longer shows anything of, with its undos, and returns the ids of the changes it dropped. An
+ * element counts for one change at most: the newest change that no one undid whose Undo would write
+ * the element back, since the board shows the element as the change left it, or, where no such
+ * change counts it, the newest undone change whose undo the board shows the element as. A change
+ * stays while an element counts for it, so the array keeps at most one change for each element of
+ * the board, without a count or a size chosen for it. It drops too each undo of a change that the
+ * array doesn't hold and each undo of a change after its first, and, where it drops a change, keeps
+ * one ChangesDropped mark on the array, which tells a page that older changes aren't kept. It
+ * writes in one transaction, and doesn't write anything where it doesn't drop a record.
+ */
+export function dropReplacedChanges(elements: Y.Map<unknown>, changes: Y.Array<unknown>): string[] {
+  const records = changes.toArray();
+  const listed = listedIn(records);
+  const counted = new Set<string>();
+  const shown = new Set<string>();
+  // Counts for `change` each element of it that no change counts yet, where the board shows the
+  // element as `target` returns it.
+  const count = (change: ListedChange, target: (element: ElementChange) => unknown): void => {
+    for (const element of change.elements) {
+      const wanted = target(element);
+      if (counted.has(element.id) || wanted === undefined) continue;
+      if (contentOf(elements.get(element.id)) !== contentOf(wanted)) continue;
+      counted.add(element.id);
+      shown.add(change.id);
+    }
+  };
+  for (const change of listed) if (change.undo === null) count(change, (element) => element.after);
+  for (const change of listed) {
+    const { undo } = change;
+    if (undo !== null) count(change, (element) => undoneTo(undo, element));
+  }
+  const dropped = listed.filter((change) => !shown.has(change.id)).map((change) => change.id);
+  const undos = new Set(listed.flatMap((change) => (change.undo !== null && shown.has(change.id) ? [change.undo.id] : [])));
+  const places: number[] = [];
+  let marked = false;
+  records.forEach((value, place) => {
+    const change = readChange(value);
+    const undo = readUndo(value);
+    if (change !== undefined) {
+      if (!shown.has(change.id)) places.push(place);
+    } else if (undo !== undefined) {
+      if (!undos.has(undo.id)) places.push(place);
+    } else if (isDropped(value)) {
+      if (marked) places.push(place);
+      marked = true;
+    }
+  });
+  const mark = dropped.length > 0 && !marked;
+  if (places.length === 0 && !mark) return dropped;
+  inTransaction(changes, () => {
+    for (const place of places.reverse()) changes.delete(place, 1);
+    if (mark) changes.push([{ kind: 'dropped' } satisfies ChangesDropped]);
+  });
+  return dropped;
+}
+
+/** Whether `changes` holds the ChangesDropped mark: whether older changes left it, which a page's list says. */
+export function olderChangesDropped(changes: Y.Array<unknown>): boolean {
+  return changes.toArray().some(isDropped);
 }
 
 /** The fields that change with each new version of an element, whatever changed in it. */
@@ -327,6 +395,44 @@ function readUndo(value: unknown): AgentUndo | undefined {
     left.push({ id: element.id, name: element.name });
   }
   return { kind: 'undo', id, change, by, at, restored: [...restored], kept: left };
+}
+
+/** The changes `records` holds, as listAgentChanges lists them. */
+function listedIn(records: unknown[]): ListedChange[] {
+  const undos = new Map<string, AgentUndo>();
+  for (const value of records) {
+    const undo = readUndo(value);
+    if (undo !== undefined && !undos.has(undo.change)) undos.set(undo.change, undo);
+  }
+  const listed: { change: ListedChange; place: number }[] = [];
+  records.forEach((value, place) => {
+    const change = readChange(value);
+    if (change !== undefined) listed.push({ change: { ...change, undo: undos.get(change.id) ?? null }, place });
+  });
+  listed.sort((a, b) => timeOf(b.change.at) - timeOf(a.change.at) || b.place - a.place);
+  return listed.map(({ change }) => change);
+}
+
+/**
+ * `element` as the undo `undo` wrote it, which the board shows while no one changed it since: as it
+ * was before the change, or, where the change added it, as the change left it, deleted; undefined
+ * where the undo left it as it was.
+ */
+function undoneTo(undo: AgentUndo, { id, before, after }: ElementChange): unknown {
+  if (!undo.restored.includes(id)) return undefined;
+  return before ?? { ...(recordOf(after) ?? {}), isDeleted: true };
+}
+
+/** Whether `value` is the ChangesDropped mark. */
+function isDropped(value: unknown): boolean {
+  return recordOf(value)?.kind === 'dropped';
+}
+
+/** Runs `work` in one transaction of the doc that `changes` is on, or alone where it isn't on a doc. */
+function inTransaction(changes: Y.Array<unknown>, work: () => void): void {
+  const doc = changes.doc;
+  if (doc === null) work();
+  else doc.transact(work);
 }
 
 /** The milliseconds since the epoch of the ISO 8601 time `at`, or 0 where it doesn't parse. */
