@@ -421,3 +421,288 @@ describe('delete_shapes', () => {
     expect(JSON.stringify(elements.toJSON())).toBe(before);
   });
 });
+
+describe('groups', () => {
+  /**
+   * The group smiley: a face with a label, an eye, an arrow from the face to the eye, and an
+   * arrow from the face to a cloud, which is in the group sky, inside the group weather. A note
+   * outside every group has an arrow to the face.
+   */
+  const grouped = (): Element[] => [
+    drawn({
+      id: 'face',
+      type: 'rectangle',
+      index: 'a0',
+      groupIds: ['smiley'],
+      boundElements: [
+        { id: 'face-label', type: 'text' },
+        { id: 'tie', type: 'arrow' },
+        { id: 'leash', type: 'arrow' },
+        { id: 'pointer', type: 'arrow' },
+      ],
+    }),
+    drawn({
+      id: 'face-label',
+      type: 'text',
+      x: 10,
+      y: 12,
+      width: 80,
+      height: 25,
+      index: 'a1',
+      containerId: 'face',
+      groupIds: ['smiley'],
+      text: 'Face',
+      originalText: 'Face',
+    }),
+    drawn({
+      id: 'eye',
+      type: 'ellipse',
+      x: 20,
+      y: 10,
+      width: 10,
+      height: 10,
+      index: 'a2',
+      groupIds: ['smiley'],
+      boundElements: [{ id: 'tie', type: 'arrow' }],
+    }),
+    drawn({
+      id: 'tie',
+      type: 'arrow',
+      x: 50,
+      y: 25,
+      width: 10,
+      height: 0,
+      index: 'a3',
+      groupIds: ['smiley'],
+      points: [
+        [0, 0],
+        [10, 0],
+      ],
+      startBinding: { elementId: 'face', focus: 0, gap: 5 },
+      endBinding: { elementId: 'eye', focus: 0, gap: 5 },
+    }),
+    drawn({
+      id: 'leash',
+      type: 'arrow',
+      x: 50,
+      y: 55,
+      width: 0,
+      height: 240,
+      index: 'a4',
+      groupIds: ['smiley'],
+      points: [
+        [0, 0],
+        [0, 240],
+      ],
+      startBinding: { elementId: 'face', focus: 0, gap: 5 },
+      endBinding: { elementId: 'cloud', focus: 0, gap: 5 },
+    }),
+    drawn({
+      id: 'cloud',
+      type: 'ellipse',
+      y: 300,
+      index: 'a5',
+      groupIds: ['sky', 'weather'],
+      boundElements: [{ id: 'leash', type: 'arrow' }],
+    }),
+    drawn({ id: 'note', type: 'rectangle', x: 300, index: 'a6', boundElements: [{ id: 'pointer', type: 'arrow' }] }),
+    drawn({
+      id: 'pointer',
+      type: 'arrow',
+      x: 295,
+      y: 25,
+      width: 190,
+      height: 0,
+      index: 'a7',
+      points: [
+        [0, 0],
+        [-190, 0],
+      ],
+      startBinding: { elementId: 'note', focus: 0, gap: 5 },
+      endBinding: { elementId: 'face', focus: 0, gap: 5 },
+    }),
+  ];
+
+  /** The outline of a shape as the board holds it, which an arrow bound to it stops short of. */
+  const outline = (element: Element | undefined) => ({
+    type: element?.type === 'ellipse' ? ('ellipse' as const) : ('rectangle' as const),
+    x: Number(element?.x),
+    y: Number(element?.y),
+    width: Number(element?.width),
+    height: Number(element?.height),
+    angle: 0,
+  });
+
+  /** Checks that the arrow `id` runs between the shapes `start` and `end`, as they stand on the board. */
+  const expectBetween = (elements: Y.Map<Element>, id: string, start: string, end: string): void => {
+    const expected = arrowPoints(outline(elements.get(start)), outline(elements.get(end)));
+    if (expected === null) throw new Error(`"${start}" and "${end}" have one center`);
+    const [from, to] = ends(elements.get(id));
+    expectNear(from, expected.from);
+    expectNear(to, expected.to);
+  };
+
+  it('puts the shapes of one add_shapes call into a new group, which get_board lists', async () => {
+    const { elements, client } = await helper([drawn({ id: 'theirs', type: 'rectangle', x: 400, index: 'a0' })]);
+    const added = ok<{ ids: string[]; group: string }>(
+      await call(client, 'add_shapes', {
+        shapes: [
+          { type: 'rectangle', id: 'box', x: 0, y: 0, width: 100, height: 50, label: { text: 'Box' } },
+          { type: 'ellipse', id: 'oval', x: 200, y: 0, width: 100, height: 50 },
+          { type: 'arrow', id: 'link', x: 100, y: 25, width: 100, height: 0, start: 'box', end: 'oval' },
+        ],
+        group: true,
+      }),
+    );
+    expect(added.ids).toEqual(['box', 'oval', 'link']);
+    expect(added.group).toMatch(/^[\w-]{20}$/);
+    const label = labelOf(elements, 'box');
+    expect(label).toBeDefined();
+    for (const element of [elements.get('box'), label, elements.get('oval'), elements.get('link')]) {
+      expect(element?.groupIds, String(element?.id)).toEqual([added.group]);
+    }
+    expect(elements.get('theirs')?.groupIds).toBeUndefined();
+    const groups = Object.fromEntries((await board(client)).map((shape) => [shape.id, shape.groups]));
+    expect(groups).toEqual({ theirs: undefined, box: [added.group], oval: [added.group], link: [added.group] });
+  });
+
+  it('leaves the shapes of a call without group out of every group', async () => {
+    const { elements, client } = await helper();
+    const added = ok(await call(client, 'add_shapes', { shapes: [{ type: 'rectangle', id: 'solo', x: 0, y: 0, width: 100, height: 50 }] }));
+    expect(added).toEqual({ ids: ['solo'] });
+    expect(elements.get('solo')?.groupIds).toEqual([]);
+    const [shape] = await board(client);
+    expect(shape).not.toHaveProperty('groups');
+  });
+
+  it('lists each group a shape is in, the innermost first', async () => {
+    const { client } = await helper(grouped());
+    const groups = Object.fromEntries((await board(client)).map((shape) => [shape.id, shape.groups]));
+    expect(groups).toEqual({
+      face: ['smiley'],
+      eye: ['smiley'],
+      tie: ['smiley'],
+      leash: ['smiley'],
+      cloud: ['sky', 'weather'],
+      note: undefined,
+      pointer: undefined,
+    });
+  });
+
+  it('deletes every shape of a group, and no other', async () => {
+    const { elements, client } = await helper(grouped());
+    const deleted = ok<{ ids: string[] }>(await call(client, 'delete_shapes', { groups: ['smiley'] }));
+    expect(deleted.ids).toEqual(['face', 'eye', 'tie', 'leash']);
+    for (const id of ['face', 'face-label', 'eye', 'tie', 'leash']) {
+      expect(elements.get(id), id).toMatchObject({ isDeleted: true, version: 2 });
+    }
+    expect(elements.get('pointer')).toMatchObject({ isDeleted: false, startBinding: { elementId: 'note' }, endBinding: null, version: 2 });
+    expect(elements.get('cloud')).toMatchObject({ isDeleted: false, boundElements: [], version: 2 });
+    expect(elements.get('note')).toMatchObject({ isDeleted: false, version: 1 });
+    expect((await board(client)).map((shape) => shape.id)).toEqual(['cloud', 'note', 'pointer']);
+  });
+
+  it('deletes ids and groups together, each shape once', async () => {
+    const { client } = await helper(grouped());
+    const deleted = ok<{ ids: string[] }>(await call(client, 'delete_shapes', { ids: ['eye', 'cloud'], groups: ['weather', 'smiley'] }));
+    expect(deleted.ids).toEqual(['eye', 'cloud', 'face', 'tie', 'leash']);
+    expect((await board(client)).map((shape) => shape.id)).toEqual(['note', 'pointer']);
+  });
+
+  it('moves a group by its left and top edges, with its labels and the arrows bound to it', async () => {
+    const { elements, client } = await helper(grouped());
+    const moved = ok<{ shapes: BoardShape[] }>(await call(client, 'update_shape', { group: 'smiley', x: 100, y: 200 })).shapes;
+    expect(moved.map((shape) => shape.id)).toEqual(['face', 'eye', 'tie', 'leash']);
+    expect(moved[0]).toEqual({ id: 'face', kind: 'rectangle', x: 100, y: 200, width: 100, height: 50, label: 'Face', groups: ['smiley'] });
+    expect(elements.get('face')).toMatchObject({ x: 100, y: 200, version: 2 });
+    expect(elements.get('face-label')).toMatchObject({ x: 110, y: 212, version: 2 });
+    expect(elements.get('eye')).toMatchObject({ x: 120, y: 210, version: 2 });
+    expect(elements.get('tie')).toMatchObject({
+      x: 150,
+      y: 225,
+      points: [
+        [0, 0],
+        [10, 0],
+      ],
+      version: 2,
+    });
+    expect(elements.get('cloud')).toMatchObject({ x: 0, y: 300, version: 1 });
+    expect(elements.get('note')).toMatchObject({ x: 300, y: 0, version: 1 });
+    expectBetween(elements, 'leash', 'face', 'cloud');
+    expectBetween(elements, 'pointer', 'note', 'face');
+  });
+
+  it('moves a group along one axis where the call sets x or y alone', async () => {
+    const { elements, client } = await helper(grouped());
+    const moved = ok<{ shapes: BoardShape[] }>(await call(client, 'update_shape', { group: 'weather', y: 400 })).shapes;
+    expect(moved).toEqual([{ id: 'cloud', kind: 'ellipse', x: 0, y: 400, width: 100, height: 50, groups: ['sky', 'weather'] }]);
+    expect(elements.get('face')).toMatchObject({ x: 0, y: 0, version: 1 });
+    expectBetween(elements, 'leash', 'face', 'cloud');
+  });
+
+  it("puts a label that update_shape adds into its shape's groups", async () => {
+    const { elements, client } = await helper(grouped());
+    ok(await call(client, 'update_shape', { id: 'eye', label: { text: 'Eye' } }));
+    ok(await call(client, 'update_shape', { id: 'tie', label: { text: 'Tie' } }));
+    expect(labelOf(elements, 'eye')?.groupIds).toEqual(['smiley']);
+    expect(labelOf(elements, 'tie')?.groupIds).toEqual(['smiley']);
+  });
+
+  it('refuses each group it cannot move or delete, and changes nothing', async () => {
+    const { elements, client } = await helper(grouped());
+    const before = JSON.stringify(elements.toJSON());
+    const cases: [string, Element, string][] = [
+      ['update_shape', { x: 1 }, "The call doesn't name a shape: give id, the shape to change, or group, a group to move."],
+      [
+        'update_shape',
+        { id: 'face', group: 'smiley', x: 1 },
+        `The call sets id "face" and group "smiley": give id to change one shape, or group to move a group.`,
+      ],
+      [
+        'update_shape',
+        { group: 'smiley', width: 5 },
+        `width doesn't apply to a group, such as "smiley": update_shape moves a group by x and y, and changes each of its shapes by that shape's id.`,
+      ],
+      ['update_shape', { group: 'smiley' }, `The call doesn't move the group "smiley": give its x, its y or both.`],
+      [
+        'update_shape',
+        { group: 'missing', x: 1 },
+        `group is "missing", which no shape on the board is in: get_board lists each shape's groups.`,
+      ],
+      ['delete_shapes', {}, "The call doesn't name a shape to delete: give ids, groups or both."],
+      ['delete_shapes', { groups: ['smiley', 'smiley'] }, `groups[1] is "smiley", which groups[0] is too: list each group once.`],
+      [
+        'delete_shapes',
+        { groups: ['missing'] },
+        `groups[0] is "missing", which no shape on the board is in: get_board lists each shape's groups.`,
+      ],
+      [
+        'delete_shapes',
+        { ids: ['missing'], groups: ['smiley'] },
+        `ids[0] is "missing", which isn't the id of a shape on the board: get_board lists each shape's id.`,
+      ],
+    ];
+    for (const [tool, args, refusal] of cases) {
+      const result = await call(client, tool, args);
+      expect(result.isError, `${tool} ${JSON.stringify(args)}`).toBe(true);
+      expect(text(result)).toBe(refusal);
+    }
+    expect(JSON.stringify(elements.toJSON())).toBe(before);
+  });
+
+  it('names the group in the tools that read, add, move and delete it', async () => {
+    const { client } = await helper();
+    const { tools } = await client.listTools();
+    const tool = (name: string) => tools.find((candidate) => candidate.name === name);
+    for (const name of ['get_board', 'add_shapes', 'update_shape', 'delete_shapes']) {
+      expect(tool(name)?.description, name).toContain('group');
+    }
+    expect(Object.keys(tool('add_shapes')?.inputSchema.properties ?? {})).toContain('group');
+    expect(Object.keys(tool('update_shape')?.inputSchema.properties ?? {})).toContain('group');
+    expect(Object.keys(tool('delete_shapes')?.inputSchema.properties ?? {})).toContain('groups');
+    const answer = tool('get_board')?.outputSchema as unknown as {
+      properties: { shapes: { items: { properties: Record<string, unknown> } } };
+    };
+    expect(Object.keys(answer.properties.shapes.items.properties)).toContain('groups');
+  });
+});
