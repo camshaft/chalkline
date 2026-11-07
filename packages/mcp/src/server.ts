@@ -1,11 +1,12 @@
 import type { Awareness } from '@chalkline/sync';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type * as Y from 'yjs';
+import { answer, refusal } from './answer';
 import { addShapes, ELEMENTS, readBoard, ShapeError } from './board';
 import { pendingRequests, RequestError, waitForRequest, writeMermaidRequest } from './requests';
 import { boardShapeSchema, shapeSchema } from './shapes';
+import { registerTranscript } from './transcript';
 
 /** A Mermaid request's state, as add_mermaid and get_request answer it. */
 const requestAnswerSchema = {
@@ -104,15 +105,8 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
     },
   );
 
+  // read_transcript, and the transcript as a resource with its notification.
+  registerTranscript(server, doc);
+
   return server;
-}
-
-/** A tool's answer: its structured content, and the same JSON as text for clients that read text alone. */
-function answer(content: Record<string, unknown>): CallToolResult {
-  return { content: [{ type: 'text', text: JSON.stringify(content) }], structuredContent: content };
-}
-
-/** A tool's refusal, whose text says what to change. */
-function refusal(message: string): CallToolResult {
-  return { content: [{ type: 'text', text: message }], isError: true };
 }
