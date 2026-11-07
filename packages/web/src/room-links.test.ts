@@ -4,7 +4,7 @@ import { parseRoomFragment, roomFragment, type RoomSecrets } from './room';
 import {
   boardInAddress,
   chooseRoom,
-  connectNewBoardButton,
+  newBoardFragment,
   joinScreen,
   reloadOnRoomChange,
   secretsFromLink,
@@ -253,15 +253,10 @@ describe('loading the page again on another board', () => {
   });
 });
 
-describe("the bar's New board button", () => {
-  it("opens a new board's link each time it is clicked", () => {
-    const newBoard = document.createElement('button');
-    const open = vi.fn<(fragment: string) => void>();
-    connectNewBoardButton(newBoard, open);
-    newBoard.click();
-    newBoard.click();
-    expect(open).toHaveBeenCalledTimes(2);
-    const [first, second] = open.mock.calls.map(([fragment]) => parseRoomFragment(fragment));
+describe("the main menu's New board item", () => {
+  it("makes a new board's link each time it is chosen", () => {
+    const first = parseRoomFragment(newBoardFragment());
+    const second = parseRoomFragment(newBoardFragment());
     expect(first !== null && isNewBoard(first)).toBe(true);
     expect(second !== null && isNewBoard(second)).toBe(true);
     expect(second).not.toEqual(first);

@@ -127,7 +127,7 @@ export function settingsPanel(doc: Document, options: PanelOptions): HTMLElement
   return panel;
 }
 
-/** What the bar's button opens the panel with. */
+/** What the Connection settings button and the main menu's item open the panel with. */
 export interface ButtonOptions {
   settings: ConnectionSettings;
   /** The browser's storage, or null where the browser doesn't let the page use it. */
@@ -137,15 +137,15 @@ export interface ButtonOptions {
 }
 
 /**
- * Opens the panel in `holder` each time `button` is clicked. Save keeps the
- * settings in `storage` and reloads the board; Cancel closes the panel.
+ * Returns the call that opens the panel in `holder`. Save keeps the settings in
+ * `storage` and reloads the board; Cancel closes the panel.
  */
-export function connectSettingsButton(button: HTMLElement, holder: HTMLElement, options: ButtonOptions): void {
+export function settingsOpener(holder: HTMLElement, options: ButtonOptions): () => void {
   const close = () => {
     holder.hidden = true;
     holder.replaceChildren();
   };
-  button.addEventListener('click', () => {
+  return () => {
     holder.replaceChildren(
       settingsPanel(holder.ownerDocument, {
         settings: options.settings,
@@ -158,5 +158,10 @@ export function connectSettingsButton(button: HTMLElement, holder: HTMLElement, 
       }),
     );
     holder.hidden = false;
-  });
+  };
+}
+
+/** Opens the panel in `holder` each time `button` is clicked, as `settingsOpener` does. */
+export function connectSettingsButton(button: HTMLElement, holder: HTMLElement, options: ButtonOptions): void {
+  button.addEventListener('click', settingsOpener(holder, options));
 }

@@ -3,7 +3,7 @@
 // in the address bar, types its name in the name field, draws a rectangle with
 // the mouse, and waits until the board shows each participant's shape, the
 // script's labelled box, and each other browser's cursor with its name. Next it
-// saves the board to a file with the Save file button, opens a file that holds
+// saves the board to a file with the main menu's Save file item, opens a file that holds
 // a copy of its rectangle and an image whose picture is a PNG of about 262 KB,
 // and waits until the board shows each browser's copy and image and holds each
 // image's picture.
@@ -16,7 +16,7 @@
 // checks that the field grew with the message and went back once it was sent,
 // and waits until its chat shows each browser's message, on its two lines, under
 // that browser's name. It then marks seen-<name>, stays until the script marks
-// done-script, and marks bye-<name> as it leaves. Last, it presses New board and
+// done-script, and marks bye-<name> as it leaves. Last, it chooses New board in the main menu and
 // waits until the page loads again on a new room's link. The Probe workflow runs
 // one copy on each of two runners, and draw-box on a third.
 //
@@ -274,10 +274,13 @@ try {
   );
   console.log(`${name}: the board shows each other browser's cursor: ${JSON.stringify(cursors)}`);
 
-  // Save the board with the Save file button, as a person does, and read the file the browser downloads.
+  // Save the board with the main menu's Save file item, as a person does, and read the file the browser downloads.
   const [download] = await Promise.all([
     page.waitForEvent('download', { timeout: 30_000 }),
-    page.locator('#save-button').click(),
+    page
+      .getByTestId('main-menu-trigger')
+      .click()
+      .then(() => page.getByRole('button', { name: 'Save file', exact: true }).click()),
   ]);
   const savedName = download.suggestedFilename();
   const saved = JSON.parse(await readFile(await download.path(), 'utf8'));
@@ -288,7 +291,7 @@ try {
   console.log(`${name}: saved the board as ${savedName}, which holds ${saved.elements.length} elements`);
 
   // Open a file that holds a copy of this browser's rectangle under a new id, below the first one, and an
-  // image with its picture beside the copy, with the Open file button's file input. Then wait until the
+  // image with its picture beside the copy, with the file input of the main menu's Open file item. Then wait until the
   // board shows each browser's opened copy and image, and holds each image's picture as its file has it.
   const opened = `opened-${name}`;
   const copy = { ...savedBox, id: opened, y: savedBox.y + 200 };
@@ -595,7 +598,8 @@ try {
   await page.evaluate((who) => window.chalkline.doc.getMap('probe').set(`bye-${who}`, new Date().toISOString()), name);
   console.log(`${name}: said goodbye`);
 
-  // Start another board from the bar's New board button, as a person does: the page loads again on a new room's link.
+  // Start another board from the main menu's New board item, as a person does: the page loads again on a new room's link.
+  await page.getByTestId('main-menu-trigger').click();
   await Promise.all([page.waitForEvent('load'), page.getByRole('button', { name: 'New board', exact: true }).click()]);
   await page.waitForFunction(() => window.chalklineReady !== undefined);
   const next = await page.evaluate(async () => (await window.chalklineReady).room);

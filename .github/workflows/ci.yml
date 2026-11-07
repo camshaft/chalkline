@@ -65,6 +65,8 @@ jobs:
       # Serves the built page and the relay from this machine, opens the board in two Chromium
       # contexts, and starts the built chalkline-mcp on the same board: the helper adds two
       # labelled shapes and an arrow between them, and the test waits until both browsers show them.
+      # It also opens a board in a desktop's window and a phone's, uses each of the page's controls
+      # in its place in Excalidraw's UI, and keeps a screenshot of each layout.
       - name: Run the end-to-end test
         run: npm run test:e2e --workspace @chalkline/lan
       - name: Keep the screenshots
@@ -74,6 +76,50 @@ jobs:
           name: e2e-screenshots
           path: packages/lan/e2e-*.png
           if-no-files-found: ignore
+
+  # Keeps the end-to-end test's screenshots of a pull request on the screenshots branch, in a
+  # directory named after the pull request's branch, so that the pull request's description shows
+  # them from there. It runs for a pull request from a branch of this repository alone, since a
+  # fork's pull request can't write here.
+  screenshots:
+    name: Keep the screenshots on the screenshots branch
+    needs: e2e
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency: screenshots-branch
+    steps:
+      - name: Download the screenshots
+        uses: actions/download-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: shots
+      - name: Push them to the screenshots branch
+        env:
+          BRANCH: ${{ github.head_ref }}
+          TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -eu
+          git init -q branch
+          cd branch
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add origin "https://x-access-token:${TOKEN}@github.com/${REPOSITORY}.git"
+          if git fetch -q --depth 1 origin screenshots; then
+            git checkout -q -b screenshots FETCH_HEAD
+          else
+            git symbolic-ref HEAD refs/heads/screenshots
+          fi
+          dir="${BRANCH//\//-}"
+          rm -rf "$dir"
+          mkdir -p "$dir"
+          cp ../shots/*.png "$dir/"
+          git add -A "$dir"
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -q -m "Screenshots of ${BRANCH} at ${GITHUB_SHA}"
+          git push -q origin HEAD:screenshots
 
   measure:
     name: Board size measurement

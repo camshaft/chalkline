@@ -309,6 +309,29 @@ describe('the chat panel', () => {
     expect(panel.hidden).toBe(true);
   });
 
+  it('closes with one press of its Close button, or Escape in the panel, and puts the focus back on its opener', () => {
+    const { panel, opener, field } = page();
+    opener.click();
+    const closer = button(panel, 'Close');
+    expect(closer.getAttribute('aria-label')).toBe('Close the chat');
+
+    closer.click();
+    expect(panel.hidden).toBe(true);
+    expect(opener.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(opener);
+
+    opener.click();
+    field.focus();
+    const escape = (init: KeyboardEventInit = {}) =>
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...init }));
+    escape({ isComposing: true });
+    expect(panel.hidden).toBe(false);
+    escape();
+    expect(panel.hidden).toBe(true);
+    expect(opener.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(opener);
+  });
+
   it('turns speech on and off with the microphone button', () => {
     const { mic, actions, show } = page();
     show({ kind: 'off' });

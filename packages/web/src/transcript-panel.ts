@@ -4,9 +4,9 @@ import type { SpeechState } from './speech';
 
 /** The page's elements that `bindTranscriptPanel` binds. */
 export interface PanelElements {
-  /** The microphone button in the page's bar. */
+  /** The microphone button in the page's controls. */
   mic: HTMLButtonElement;
-  /** The bar's button that opens and closes the panel. */
+  /** The controls' Chat button, which opens and closes the panel. */
   opener: HTMLButtonElement;
   /** The panel, which `bindTranscriptPanel` fills. */
   panel: HTMLElement;
@@ -152,8 +152,10 @@ function entryItem(doc: Document, { id, speaker, at, text, via }: TranscriptEntr
  * `transcript` as a typed entry under `chat.speaker()`. Shift+Enter adds a line
  * break to the message, and the field grows with its text up to
  * `MESSAGE_LINES` lines, and goes back to one line once the message is sent.
- * `opener` opens and closes the panel, and counts the entries. The panel opens
- * as speech starts to turn on, so that the person reads the question.
+ * `opener` opens and closes the panel, and counts the entries; the panel's
+ * Close button, as Escape in the panel does, closes it with one press and puts
+ * the focus back on `opener`. The panel opens as speech starts to turn on, so
+ * that the person reads the question.
  *
  * Returns `show`, which shows a state of the speech, and `stop`, which stops
  * following the transcript.
@@ -180,6 +182,18 @@ export function bindTranscriptPanel(
     return made;
   };
 
+  const open = (shown: boolean) => {
+    panel.hidden = !shown;
+    opener.setAttribute('aria-expanded', String(shown));
+  };
+  const close = () => {
+    open(false);
+    opener.focus();
+  };
+  const closer = button('Close', close);
+  closer.setAttribute('aria-label', 'Close the chat');
+  const header = make('div', 'chat-header');
+  header.append(make('h2', '', 'Chat'), closer);
   const status = make('p', 'speech-status');
   status.setAttribute('role', 'status');
   const notice = make('p', 'speech-notice');
@@ -217,12 +231,13 @@ export function bindTranscriptPanel(
   });
   const compose = make('div', 'chat-compose');
   compose.append(field, button('Send', send));
-  panel.replaceChildren(make('h2', '', 'Chat'), status, ask, heard, entries, empty, compose);
+  panel.replaceChildren(header, status, ask, heard, entries, empty, compose);
+  panel.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || event.isComposing) return;
+    event.preventDefault();
+    close();
+  });
 
-  const open = (shown: boolean) => {
-    panel.hidden = !shown;
-    opener.setAttribute('aria-expanded', String(shown));
-  };
   opener.addEventListener('click', () => open(panel.hidden));
   mic.addEventListener('click', () => actions.toggle());
   open(false);
