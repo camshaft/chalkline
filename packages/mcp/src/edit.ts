@@ -20,7 +20,7 @@ import {
   type Stacked,
 } from './board';
 import { withCreator, type Creator } from './creator';
-import { arrowPoints, boardPoints, type Outline, type Point } from './geometry';
+import { arrowPoints, boardPoints, outlineOf, type Point } from './geometry';
 import { indicesAbove } from './order';
 import type { BoardShape, Connection, Place, Scaling, ShapeChange } from './shapes';
 import { convertSkeletons, type Skeleton } from './skeleton';
@@ -868,19 +868,6 @@ function touched(element: Element, changes: Element): Element {
 
 function mark(element: Element, creator: Creator | undefined): Element {
   return creator === undefined ? element : withCreator(element, creator);
-}
-
-/** The outline an arrow bound to `element` stops short of. */
-function outlineOf(element: Element): Outline {
-  const type: Outline['type'] = element.type === 'ellipse' ? 'ellipse' : element.type === 'diamond' ? 'diamond' : 'rectangle';
-  return {
-    type,
-    x: numberOf(element.x),
-    y: numberOf(element.y),
-    width: numberOf(element.width),
-    height: numberOf(element.height),
-    angle: numberOf(element.angle),
-  };
 }
 
 /** Whether `after` moved or resized the shape `before` was. */

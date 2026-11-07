@@ -30,6 +30,33 @@ export interface Segment {
 /** How far short of a shape's outline the end of an arrow bound to it stops. */
 export const GAP = 5;
 
+/** The fields of an element of the board that its outline reads. */
+export interface Shaped {
+  type?: unknown;
+  x?: unknown;
+  y?: unknown;
+  width?: unknown;
+  height?: unknown;
+  angle?: unknown;
+}
+
+/**
+ * The outline that an arrow bound to `shape`, an element of the board, stops short of: an
+ * ellipse's or a diamond's for those, and a rectangle's for any other kind of shape, with each of
+ * its x, y, width, height and angle that isn't a finite number read as 0.
+ */
+export function outlineOf(shape: Shaped): Outline {
+  const type: Outline['type'] = shape.type === 'ellipse' ? 'ellipse' : shape.type === 'diamond' ? 'diamond' : 'rectangle';
+  return {
+    type,
+    x: numberOf(shape.x),
+    y: numberOf(shape.y),
+    width: numberOf(shape.width),
+    height: numberOf(shape.height),
+    angle: numberOf(shape.angle),
+  };
+}
+
 /** The center of a shape's outline, or the point itself. */
 export function centerOf(end: End): Point {
   return isOutline(end) ? { x: end.x + end.width / 2, y: end.y + end.height / 2 } : { x: end.x, y: end.y };
@@ -106,4 +133,8 @@ export function boardPoints(origin: Point, points: readonly (readonly [number, n
 
 function isOutline(end: End): end is Outline {
   return 'type' in end;
+}
+
+function numberOf(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }

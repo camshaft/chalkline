@@ -120,8 +120,8 @@ export const shapeSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('arrow'),
     id: id.optional(),
-    x: coordinate.describe("The x of the arrow's first point."),
-    y: coordinate.describe("The y of the arrow's first point."),
+    x: coordinate.optional().describe("The x of the arrow's first point, which an arrow that runs between its start and end may leave out."),
+    y: coordinate.optional().describe("The y of the arrow's first point, which an arrow that runs between its start and end may leave out."),
     width: coordinate.optional().describe('How far right of its first point the arrow ends, or left where negative.'),
     height: coordinate.optional().describe('How far below its first point the arrow ends, or above where negative.'),
     points: points('arrow').optional(),
