@@ -5,8 +5,8 @@
 // arrow, and the test waits until both browsers show each of them. A second test opens the board
 // in a desktop's window and in a phone's, 390 px wide, checks that the page's controls sit in
 // Excalidraw's own UI over a canvas that fills the window, uses each of them there, and keeps a
-// screenshot of each layout. It needs the page and the helper that `npm run build` writes, and
-// `npm run test:e2e` runs it.
+// screenshot of each layout; on the desktop it also presses the pen's side button. It needs the
+// page and the helper that `npm run build` writes, and `npm run test:e2e` runs it.
 import { randomBytes } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -18,6 +18,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { chromium, type Browser, type Page } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DRAWING_SPACE_KEY } from '../../web/src/drawing-space';
+import { SIDE_BUTTON_KEY } from '../../web/src/pen';
 import { RELAY_PATH, startLanServer, type LanServer } from '../src/server';
 
 /** The built page, which `npm run build --workspace @chalkline/web` writes. */
@@ -70,7 +71,7 @@ interface Handle {
   room: string;
   awareness: { getLocalState(): Record<string, unknown> | null };
   api: {
-    getAppState(): { viewBackgroundColor: string; gridModeEnabled: boolean };
+    getAppState(): { viewBackgroundColor: string; gridModeEnabled: boolean; activeTool: { type: string } };
     updateScene(scene: { appState: Record<string, unknown> }): void;
   };
 }
@@ -184,6 +185,29 @@ async function openMenu(page: Page): Promise<void> {
 async function menuItem(page: Page, name: string): Promise<void> {
   await openMenu(page);
   await page.getByRole('button', { name, exact: true }).click();
+}
+
+/**
+ * Presses and releases the pen's side button at (`x`, `y`) on `page`. Playwright's mouse is a mouse, so the press
+ * goes through Chromium's DevTools protocol, which sends it as a pen's secondary button.
+ */
+async function pressSideButton(page: Page, x: number, y: number): Promise<void> {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    for (const type of ['mousePressed', 'mouseReleased'] as const) {
+      await cdp.send('Input.dispatchMouseEvent', {
+        type,
+        x,
+        y,
+        button: 'right',
+        buttons: type === 'mousePressed' ? 2 : 0,
+        clickCount: 1,
+        pointerType: 'pen',
+      });
+    }
+  } finally {
+    await cdp.detach();
+  }
 }
 
 /** Waits until the page of `board` shows each of `expected`, and keeps a screenshot of the page either way. */
@@ -417,6 +441,34 @@ describe('the local-network mode, end to end', () => {
           'rgb(35, 35, 41)',
         );
         await shot('e2e-dark.png');
+
+        // A press of the pen's side button switches tools in place of opening Excalidraw's menu, as the main
+        // menu's Pen side button items choose, and the choice stays with this browser across visits.
+        const toolIs = (type: string) =>
+          page.waitForFunction(
+            (expected) => (window as unknown as E2eWindow).chalkline?.api.getAppState().activeTool.type === expected,
+            type,
+          );
+        await pressSideButton(page, 600, 450);
+        await toolIs('freedraw');
+        await pressSideButton(page, 600, 450);
+        await toolIs('selection');
+        expect(await page.locator('.context-menu').count()).toBe(0);
+        // A mouse's right click still opens Excalidraw's menu, and a click elsewhere closes it.
+        await page.mouse.click(600, 450, { button: 'right' });
+        await page.locator('.context-menu').waitFor();
+        await page.mouse.click(300, 650);
+        await page.locator('.context-menu').waitFor({ state: 'hidden' });
+        await menuItem(page, 'Toggle the eraser');
+        await pressSideButton(page, 600, 450);
+        await toolIs('eraser');
+        await page.waitForFunction((key) => window.localStorage.getItem(key) === 'eraser', SIDE_BUTTON_KEY);
+        await page.reload();
+        await ready(page);
+        await pressSideButton(page, 600, 450);
+        await toolIs('eraser');
+        await pressSideButton(page, 600, 450);
+        await toolIs('selection');
       }
 
       // The main menu's New board item opens a new board, in a new room.
