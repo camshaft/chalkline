@@ -89,11 +89,27 @@ interface Candidate extends PoolRelay {
   opening: boolean;
   /** Whether the relay answered since its socket opened: an EOSE or an EVENT of the board's subscriptions, or an accepted event. */
   answered: boolean;
+  /** The number of each request of the board's that the current connection carried, by its subscription's or its event's id. */
+  readonly asked: Map<string, number>;
+  /** How many announcements of each topic the current connection carried. */
+  readonly announced: Map<string, number>;
+  /** The number of the relay's `SILENT_AFTER_ANNOUNCEMENT`th announcement of a topic on the current connection. */
+  silentAfter: number | undefined;
+  /** The number of the newest request the relay answered on the current connection, or 0. */
+  lastAnswered: number;
   readonly subscriptions: Map<string, Subscription>;
   readonly announcements: Map<string, string>;
 }
 
 const stopAnnouncing = { stopAnnouncing: true } as const;
+
+/**
+ * The announcement of a topic on a relay's connection that the relay's silence
+ * counts from. Trystero's topic strategy sends a room's third announcement on a
+ * relay 766 ms after its first, and the public relays that answered on
+ * 2026-11-07 answered a subscription within 214 ms and an event within 429 ms.
+ */
+const SILENT_AFTER_ANNOUNCEMENT = 3;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -104,18 +120,29 @@ function withReason(reason: unknown): string {
   return typeof reason === 'string' && reason !== '' ? `: ${reason}` : '';
 }
 
+/** The id of an event that `createEvent` wrote, an EVENT message. */
+function eventId(event: string): string | undefined {
+  const [, value] = JSON.parse(event) as unknown[];
+  return isRecord(value) && typeof value.id === 'string' ? value.id : undefined;
+}
+
 /**
  * Keeps a page on public relays that answer: the first `count` relays of
- * `urls` that it hasn't stopped using. It judges a relay by the relay's own
- * answers, and only while another relay is open, so that a page whose network
- * is down doesn't stop using any. It stops using a relay
+ * `urls` that it hasn't stopped using. It judges a relay only while another
+ * relay is open, and a relay that stays silent only once other relays answer,
+ * so that a page whose network is down doesn't stop using any. It stops using
+ * a relay
  *
  * - whose connection closes before it opens, while another relay is open;
  * - whose connection closes before the relay answered the board's
  *   subscription, while another relay is open;
  * - that refuses one of the board's events, with an `OK` false that isn't a
  *   duplicate's;
- * - that ends one of the board's subscriptions with `CLOSED`.
+ * - that ends one of the board's subscriptions with `CLOSED`;
+ * - whose connection stays open while the relay doesn't answer the board's
+ *   subscription or its events, once each other open relay that answers
+ *   answered a request the board sent after the relay's
+ *   `SILENT_AFTER_ANNOUNCEMENT`th announcement of a topic on that connection.
  *
  * It closes that relay's socket, which doesn't open again, so the console
  * stops logging the relay, and the next relay of `urls` replaces it. A relay
@@ -133,6 +160,8 @@ export function createRelayPool({
   warn = (message) => console.warn(message),
 }: RelayPoolOptions): RelayPool {
   const retiredUrls: string[] = [];
+  /** How many requests of the board's the pool sent, which numbers each one. */
+  let sent = 0;
 
   const isOpen = (relay: Candidate) => relay.openSocket !== undefined;
   const anyOpen = () => candidates.some(isOpen);
@@ -142,15 +171,26 @@ export function createRelayPool({
     return index !== -1 && index < count;
   };
 
-  const send = (relay: Candidate, data: string) => {
-    if (isOpen(relay)) relay.client?.send(data);
+  /** Sends `data` where the socket is open, and numbers it where it asks for an answer to the id `asks`; returns whether it sent it. */
+  const send = (relay: Candidate, data: string, asks?: string): boolean => {
+    if (!isOpen(relay)) return false;
+    relay.client?.send(data);
+    if (asks !== undefined) {
+      sent += 1;
+      relay.asked.set(asks, sent);
+    }
+    return true;
   };
 
   const sendEvent = async (relay: Candidate, topic: string, payload: string, isAnnouncement: boolean) => {
     if (!isOpen(relay)) return;
     // A new nonce in each announcement, as Trystero's Nostr strategy writes one, so that two announcements differ.
     const content = isAnnouncement ? toJson({ ...fromJson<Record<string, unknown>>(payload), nonce: genId(8) }) : payload;
-    send(relay, await createEvent(topic, content));
+    const event = await createEvent(topic, content);
+    if (!send(relay, event, eventId(event)) || !isAnnouncement) return;
+    const announced = (relay.announced.get(topic) ?? 0) + 1;
+    relay.announced.set(topic, announced);
+    if (announced === SILENT_AFTER_ANNOUNCEMENT && relay.silentAfter === undefined) relay.silentAfter = sent;
   };
 
   function disconnect(relay: Candidate): void {
@@ -197,8 +237,12 @@ export function createRelayPool({
     relay.openSocket = socket;
     relay.opening = false;
     relay.answered = false;
+    relay.asked.clear();
+    relay.announced.clear();
+    relay.silentAfter = undefined;
+    relay.lastAnswered = 0;
     socket.addEventListener('close', () => onClose(relay, client, socket));
-    for (const [topic, { subId }] of relay.subscriptions) send(relay, subscription(subId, topic));
+    for (const [topic, { subId }] of relay.subscriptions) send(relay, subscription(subId, topic), subId);
     for (const [topic, payload] of relay.announcements) void sendEvent(relay, topic, payload, true);
     // The network works, so each relay whose connection failed while none was open gets a new one, which the pool judges.
     for (const other of candidates) {
@@ -244,11 +288,12 @@ export function createRelayPool({
       return;
     }
     if (type === 'EOSE') {
-      if (ours) relay.answered = true;
+      if (ours) answer(relay, id);
       return;
     }
     if (type === 'OK' && value === true) {
-      relay.answered = true;
+      answer(relay, id);
+      if (typeof id === 'string') relay.asked.delete(id);
       return;
     }
     if (type === 'OK' && value === false) {
@@ -268,8 +313,38 @@ export function createRelayPool({
     if (topic === undefined) return;
     const sub = relay.subscriptions.get(topic);
     if (sub === undefined || sub.subId !== subId) return;
-    relay.answered = true;
+    answer(relay, subId);
     sub.onMessage(topic, content);
+  }
+
+  /** Notes that `relay` answered the request of `id`, and stops using each relay that stays silent past that answer. */
+  function answer(relay: Candidate, id: unknown): void {
+    relay.answered = true;
+    const asked = typeof id === 'string' ? relay.asked.get(id) : undefined;
+    if (asked === undefined || asked <= relay.lastAnswered) return;
+    relay.lastAnswered = asked;
+    if (retireSilent()) settle();
+  }
+
+  /**
+   * Stops using each open relay that hasn't answered since its connection
+   * opened, where each other open relay that answers answered a request sent
+   * after the relay's `silentAfter`. A page whose network is down doesn't get
+   * an answer, so it doesn't judge any relay. Returns whether it stopped using
+   * one.
+   */
+  function retireSilent(): boolean {
+    const answering = candidates.filter((relay) => isOpen(relay) && relay.answered);
+    if (answering.length === 0) return false;
+    let stopped = false;
+    for (const relay of candidates) {
+      const after = relay.silentAfter;
+      if (relay.retired || relay.answered || !isOpen(relay) || after === undefined) continue;
+      if (!answering.every((other) => other.lastAnswered > after)) continue;
+      retire(relay, "didn't answer the board's requests, while each other relay that answers answered a later one");
+      stopped = true;
+    }
+    return stopped;
   }
 
   function settle(): void {
@@ -309,12 +384,16 @@ export function createRelayPool({
       openSocket: undefined,
       opening: false,
       answered: false,
+      asked: new Map(),
+      announced: new Map(),
+      silentAfter: undefined,
+      lastAnswered: 0,
       subscriptions: new Map(),
       announcements: new Map(),
       subscribe(topic, onMessage) {
         const subId = genId(64);
         relay.subscriptions.set(topic, { subId, onMessage });
-        send(relay, subscription(subId, topic));
+        send(relay, subscription(subId, topic), subId);
         return () => {
           if (relay.subscriptions.get(topic)?.subId !== subId) return;
           relay.subscriptions.delete(topic);
