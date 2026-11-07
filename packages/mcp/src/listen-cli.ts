@@ -4,14 +4,13 @@
 // turns each line a command prints into a message to its agent, such as Claude Code's Monitor tool.
 import { parseArgs } from 'node:util';
 import {
-  APP_ID,
   connectDoc,
-  parseRoomFragment,
-  relaysFromAddress,
   trysteroTransport,
   type RoomSecrets,
+  type TurnServer,
 } from '@chalkline/sync';
 import * as Y from 'yjs';
+import { joinConfig, joinErrorLine, readBoardLink, routeText } from './board-link';
 import { BOARD_PAUSE_MS, listenToBoard, PAUSE_MS, watchRoom } from './listen';
 
 export const LISTEN_USAGE = `Usage: chalkline-mcp listen <board link> [options]
@@ -44,6 +43,9 @@ logs goes to standard error, such as where it loses the room and where it joins 
 listens until Ctrl-C or SIGTERM stops it, and then prints the lines that wait for their pause
 before it leaves the room.
 
+Where the link's fragment holds a turn parameter, as the page's Copy link with TURN servers
+writes it, the listener connects to the board's peers through the TURN servers it lists.
+
 Options:
   --pause <seconds>        how long a pause ends a group of words (default: 1)
   --board-pause <seconds>  how long a text or a sketch stays unchanged before its line
@@ -63,19 +65,17 @@ Options:
 /** What the arguments after `chalkline-mcp listen` ask for. */
 export type ListenArgs =
   | { help: true }
-  | { help: false; room: RoomSecrets; relays: string[]; pauseMs: number; boardPauseMs: number; after: number; start: number };
-
-function roomOf(link: string): RoomSecrets {
-  let address: URL;
-  try {
-    address = new URL(link);
-  } catch {
-    throw new Error(`${link} isn't a link.\n\n${LISTEN_USAGE}`);
-  }
-  const secrets = parseRoomFragment(address.hash);
-  if (secrets === null) throw new Error(`The link lacks the #room=<name>&key=<password> fragment.\n\n${LISTEN_USAGE}`);
-  return secrets;
-}
+  | {
+      help: false;
+      room: RoomSecrets;
+      relays: string[];
+      /** The servers the link's turn parameter carries, which the listener connects through. */
+      turnServers: TurnServer[];
+      pauseMs: number;
+      boardPauseMs: number;
+      after: number;
+      start: number;
+    };
 
 /** The pause that the option `--<name>` sets in seconds, or `fallback` where it is left out, in milliseconds. */
 function pauseOf(name: string, text: string | undefined, fallback: number): number {
@@ -116,10 +116,12 @@ export function parseListenArgs(args: string[], now: number): ListenArgs {
   if (values.help) return { help: true };
   if (positionals.length !== 1) throw new Error(LISTEN_USAGE);
   const [link] = positionals;
+  const board = readBoardLink(link, LISTEN_USAGE);
   return {
     help: false,
-    room: roomOf(link),
-    relays: relaysFromAddress(link),
+    room: board.room,
+    relays: board.relays,
+    turnServers: board.turnServers,
     pauseMs: pauseOf('pause', values.pause, PAUSE_MS),
     boardPauseMs: pauseOf('board-pause', values['board-pause'], BOARD_PAUSE_MS),
     after: afterOf(values.after, now),
@@ -145,7 +147,8 @@ export async function runListen(args: string[]): Promise<void> {
     await new Promise<void>((resolve) => process.stdout.write(`${LISTEN_USAGE}\n`, () => resolve()));
     return;
   }
-  const { room: secrets, relays, pauseMs, boardPauseMs, after, start } = parsed;
+  const { room: secrets, relays, turnServers, pauseMs, boardPauseMs, after, start } = parsed;
+  const board = { room: secrets, relays, turnServers };
 
   const doc = new Y.Doc();
   const listener = listenToBoard(doc, {
@@ -166,10 +169,10 @@ export async function runListen(args: string[]): Promise<void> {
     werift.RTCPeerConnection ?? (werift as unknown as { default: typeof werift }).default.RTCPeerConnection;
   const { joinBoardRoom } = await import('@chalkline/sync/join');
   const room = joinBoardRoom(
-    { appId: APP_ID, password: secrets.key, rtcPolyfill: PeerConnection as unknown as typeof RTCPeerConnection },
+    joinConfig(board, PeerConnection as unknown as typeof RTCPeerConnection),
     secrets.room,
     relays,
-    { onJoinError: ({ peerId, error }) => console.error(`${peerId} couldn't connect: ${error}`) },
+    { onJoinError: ({ peerId, error }) => console.error(joinErrorLine(board, peerId, String(error))) },
   );
   const transport = trysteroTransport(room);
   connectDoc(doc, transport, {
@@ -178,7 +181,7 @@ export async function runListen(args: string[]): Promise<void> {
   });
   watchRoom(transport, (line) => console.error(line));
   console.error(
-    `listening in room ${secrets.room} through ${relays.length > 0 ? relays.join(', ') : 'the public Nostr relays'}, for what is said, written or drawn, and each feedback that becomes open, after ${new Date(after).toISOString()}`,
+    `listening in room ${secrets.room} through ${routeText(board)}, for what is said, written or drawn, and each feedback that becomes open, after ${new Date(after).toISOString()}`,
   );
 
   await done;

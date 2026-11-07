@@ -1081,6 +1081,7 @@ describe('parseListenArgs', () => {
       help: false,
       room: { room: 'board', key: 'secret' },
       relays: [],
+      turnServers: [],
       pauseMs: 1000,
       boardPauseMs: 3000,
       after: START,
@@ -1102,11 +1103,19 @@ describe('parseListenArgs', () => {
       help: false,
       room: { room: 'board', key: 'secret' },
       relays: ['ws://192.168.1.2:8080/relay'],
+      turnServers: [],
       pauseMs: 500,
       boardPauseMs: 5000,
       after: Date.parse('2026-11-07T02:59:00.000Z'),
       start: START,
     });
+  });
+
+  it("reads the servers of the link's turn parameter, which the listener joins the room through", () => {
+    const servers = [{ urls: ['turn:turn.cloudflare.com:3478?transport=udp'], username: 'link-user', credential: 'link-pass' }];
+    const turn = Buffer.from(JSON.stringify(servers)).toString('base64url');
+    const parsed = parseListenArgs([`${link}&turn=${turn}`], START);
+    expect(parsed).toMatchObject({ help: false, room: { room: 'board', key: 'secret' }, turnServers: servers });
   });
 
   it('answers --help with the usage text', () => {
@@ -1124,6 +1133,7 @@ describe('parseListenArgs', () => {
       'The link lacks the #room=<name>&key=<password> fragment.',
     );
     expect(() => parseListenArgs(['not a link'], START)).toThrow("not a link isn't a link.");
+    expect(() => parseListenArgs([`${link}&turn=%25%25`], START)).toThrow("The link's turn parameter isn't base64url text.");
     expect(() => parseListenArgs([], START)).toThrow(LISTEN_USAGE);
     expect(() => parseListenArgs([link, link], START)).toThrow(LISTEN_USAGE);
   });
