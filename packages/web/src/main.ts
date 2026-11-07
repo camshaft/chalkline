@@ -1,5 +1,6 @@
 import '@excalidraw/excalidraw/index.css';
 import {
+  agentInRoom,
   Awareness,
   connectAwareness,
   connectDoc,
@@ -14,6 +15,7 @@ import {
   convertToExcalidrawElements,
   elementPartiallyOverlapsWithOrContainsBBox,
   Excalidraw,
+  getCommonBounds,
   loadFromBlob,
   serializeAsJSON,
   zoomToFitBounds,
@@ -24,6 +26,7 @@ import { selfId } from '@trystero-p2p/nostr';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as Y from 'yjs';
+import { bindAsk, type AskCanvas } from './ask';
 import { bindElements } from './binding';
 import { addOpened, boardFileName, connectFileControls, OPENED } from './board-file';
 import { loadSettings, roomOptions, type ConnectionSettings, type SettingsStorage } from './connection';
@@ -383,6 +386,53 @@ async function start(): Promise<ChalklineHandle> {
     { button: pageButton('feedback-button'), layer: pageElement('feedback-layer') },
     feedback,
     canvas,
+    { writer: speaker },
+  );
+  // Ask an agent: while an agent's helper is on the board, a button under the selected shapes and an entry at
+  // the top of the canvas's context menu open a box that asks the agent about those shapes, as a record of
+  // kind "ask" among the board's feedback, which the chat lists too.
+  const asking: AskCanvas = {
+    view: () => canvas.view(),
+    selection: () => {
+      const appState = api.getAppState();
+      // The selection isn't settled while the person drags, resizes, rotates, draws or writes.
+      if (
+        appState.selectedElementsAreBeingDragged ||
+        appState.isResizing ||
+        appState.isRotating ||
+        appState.selectionElement !== null ||
+        appState.editingTextElement !== null ||
+        appState.newElement !== null
+      ) {
+        return null;
+      }
+      const selected = api.getSceneElements().filter((element) => appState.selectedElementIds[element.id] === true);
+      if (selected.length === 0) return null;
+      // The text inside a selected shape goes with its shape, so the ask lists the shape alone.
+      const shapes = selected
+        .filter(
+          (element) =>
+            !(element.type === 'text' && element.containerId !== null && appState.selectedElementIds[element.containerId] === true),
+        )
+        .map((element) => element.id);
+      const [minX, minY, maxX, maxY] = getCommonBounds(selected);
+      return { shapes, bounds: { x: minX, y: minY, width: maxX - minX, height: maxY - minY } };
+    },
+    contextMenu: () => pageElement('app').querySelector<HTMLElement>('.context-menu'),
+    closeMenu: () => api.updateScene({ appState: { contextMenu: null }, captureUpdate: CaptureUpdateAction.NEVER }),
+    onChange: (handler) => api.onChange(() => handler()),
+  };
+  bindAsk(
+    { layer: pageElement('ask-layer') },
+    feedback,
+    asking,
+    {
+      agentHere: () => agentInRoom(awareness.getStates(), awareness.clientID),
+      onChange: (handler) => {
+        awareness.on('change', handler);
+        return () => awareness.off('change', handler);
+      },
+    },
     { writer: speaker },
   );
   const panel = bindTranscriptPanel(
