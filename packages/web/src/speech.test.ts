@@ -306,8 +306,8 @@ describe('speechControl', () => {
     listener.hear(1, ['draw a box', true], ['and an arrow', true], ['   ', true]);
 
     expect(readTranscript(transcript)).toEqual([
-      { id: 'entry-1', speaker: 'Ada', at: AT.toISOString(), text: 'draw a box' },
-      { id: 'entry-2', speaker: 'Ada Lovelace', at: AT.toISOString(), text: 'and an arrow' },
+      { id: 'entry-1', speaker: 'Ada', at: AT.toISOString(), text: 'draw a box', via: 'speech' },
+      { id: 'entry-2', speaker: 'Ada Lovelace', at: AT.toISOString(), text: 'and an arrow', via: 'speech' },
     ]);
     expect(speech.state()).toMatchObject({ heard: '' });
   });
