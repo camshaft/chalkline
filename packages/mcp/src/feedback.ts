@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type * as Y from 'yjs';
 import { answer, refusal } from './answer';
 import { ELEMENTS, readBoard } from './board';
+import { running, waiting } from './presence';
 import { boardElements } from './render';
 import { boardShapeSchema, type BoardShape } from './shapes';
 import { loadExcalidraw, type Excalidraw } from './skeleton';
@@ -215,23 +216,25 @@ export function registerFeedback(server: McpServer, doc: Y.Doc): FeedbackLog {
         cursor: z.number().int().min(0),
       },
     },
-    async ({ cursor = 0 }, extra) => {
-      if (cursor > log.length) {
-        return refusal(
-          `cursor is ${cursor}, and the feedback's end is at cursor ${log.length} in this run of the helper: give a cursor that read_feedback answered, or 0 to read from the start.`,
+    ({ cursor = 0 }, extra) =>
+      running(server, async () => {
+        if (cursor > log.length) {
+          return refusal(
+            `cursor is ${cursor}, and the feedback's end is at cursor ${log.length} in this run of the helper: give a cursor that read_feedback answered, or 0 to read from the start.`,
+          );
+        }
+        // The time the call waits for a feedback to open doesn't count as working.
+        const { feedback, cursor: end } = await waiting(server, log.next(cursor, extra.signal));
+        const shapes = await shapesIn(
+          doc,
+          feedback.map((record) => record.region),
         );
-      }
-      const { feedback, cursor: end } = await log.next(cursor, extra.signal);
-      const shapes = await shapesIn(
-        doc,
-        feedback.map((record) => record.region),
-      );
-      const read: FeedbackRead = {
-        opened: feedback.map((record, index) => ({ feedback: record, shapes: shapes[index] ?? [] })),
-        cursor: end,
-      };
-      return answer(read);
-    },
+        const read: FeedbackRead = {
+          opened: feedback.map((record, index) => ({ feedback: record, shapes: shapes[index] ?? [] })),
+          cursor: end,
+        };
+        return answer(read);
+      }),
   );
 
   server.registerTool(
@@ -250,24 +253,25 @@ export function registerFeedback(server: McpServer, doc: Y.Doc): FeedbackLog {
       },
       outputSchema: { feedback: feedbackSchema },
     },
-    ({ id, text }) => {
-      const words = text.trim();
-      if (words === '') return refusal('text is blank: give a short text of what you changed for the feedback.');
-      const record = answerFeedback(feedbackOf(doc), id, {
-        by: agentName(server),
-        at: new Date().toISOString(),
-        text: words,
-      });
-      if (record === null) {
-        const open = openFeedback(doc).map((each) => JSON.stringify(each.id));
-        return refusal(
-          `id is ${JSON.stringify(id)}, which isn't the id of a feedback on the board: ${
-            open.length === 0 ? "the board doesn't hold an open feedback" : `the open feedback's ids are ${open.join(', ')}`
-          }.`,
-        );
-      }
-      return answer({ feedback: record });
-    },
+    ({ id, text }) =>
+      running(server, () => {
+        const words = text.trim();
+        if (words === '') return refusal('text is blank: give a short text of what you changed for the feedback.');
+        const record = answerFeedback(feedbackOf(doc), id, {
+          by: agentName(server),
+          at: new Date().toISOString(),
+          text: words,
+        });
+        if (record === null) {
+          const open = openFeedback(doc).map((each) => JSON.stringify(each.id));
+          return refusal(
+            `id is ${JSON.stringify(id)}, which isn't the id of a feedback on the board: ${
+              open.length === 0 ? "the board doesn't hold an open feedback" : `the open feedback's ids are ${open.join(', ')}`
+            }.`,
+          );
+        }
+        return answer({ feedback: record });
+      }),
   );
 
   server.registerResource(

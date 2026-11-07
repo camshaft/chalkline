@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type * as Y from 'yjs';
 import { answer, refusal } from './answer';
 import { ELEMENTS, readBoard } from './board';
+import { running, waiting } from './presence';
 import { boardShapeSchema, type BoardShape } from './shapes';
 
 /** One shape's change, as read_changes answers it: the shape as get_board lists it, with what changed. */
@@ -162,14 +163,16 @@ export function registerChanges(server: McpServer, doc: Y.Doc): ChangeLog {
       inputSchema: { cursor: z.number().int().min(0).optional() },
       outputSchema: { changes: z.array(boardChangeSchema), cursor: z.number().int().min(0) },
     },
-    async ({ cursor = 0 }, extra) => {
-      if (cursor > log.length) {
-        return refusal(
-          `cursor is ${cursor}, and the board's changes end at cursor ${log.length} in this run of the helper: give a cursor that read_changes answered, or 0 to read from the start.`,
-        );
-      }
-      return answer(await log.next(cursor, extra.signal));
-    },
+    ({ cursor = 0 }, extra) =>
+      running(server, async () => {
+        if (cursor > log.length) {
+          return refusal(
+            `cursor is ${cursor}, and the board's changes end at cursor ${log.length} in this run of the helper: give a cursor that read_changes answered, or 0 to read from the start.`,
+          );
+        }
+        // The time the call waits for a change doesn't count as working.
+        return answer(await waiting(server, log.next(cursor, extra.signal)));
+      }),
   );
 
   return log;

@@ -4,6 +4,7 @@ import {
   connectDoc,
   CONVERTS,
   MemoryNetwork,
+  mermaidConverters,
   readRequest,
   REQUESTS,
   type MermaidRequest,
@@ -274,6 +275,30 @@ describe('bindRequests', () => {
     expect(highConverter.calls).toEqual([]);
     expect(readRequest(high.requests.get('r'))?.status).toBe('done');
     expect(high.elements.size).toBe(5);
+  });
+
+  it("leaves an agent's helper out of the converters, though it shares the room's awareness", async () => {
+    const agent = page(1);
+    const low = page(2);
+    const high = page(3);
+    const network = room([agent, low, high], true);
+    // The helper has the lowest client id, and converts nothing: the page with the next one converts.
+    agent.awareness.setLocalState({ name: 'Claude', agent: true, status: 'working' });
+    const lowConverter = counting(flowchart);
+    const highConverter = counting(flowchart);
+    bindRequests(high.doc, high.awareness, highConverter.convert);
+    bindRequests(low.doc, low.awareness, lowConverter.convert);
+    network.flush();
+    expect(mermaidConverters(high.awareness.getStates())).toEqual([2, 3]);
+
+    agent.requests.set('r', request('flowchart LR\n  A --> B'));
+    network.flush();
+    await settled(low.doc, 'r');
+    network.flush();
+
+    expect(lowConverter.calls).toHaveLength(1);
+    expect(highConverter.calls).toEqual([]);
+    expect(readRequest(agent.requests.get('r'))?.status).toBe('done');
   });
 
   it('converts on the next page once the converter stops before it carries out a request', async () => {

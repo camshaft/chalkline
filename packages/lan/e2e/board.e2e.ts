@@ -389,6 +389,45 @@ describe('the local-network mode, end to end', () => {
 
     client = new Client({ name: CLIENT, version: '0.0.0' });
     await client.connect(new StdioClientTransport({ command: process.execPath, args: [HELPER, link.href] }));
+    // The helper shows among the first browser's participants, by its client's name with the Agent badge,
+    // once it reaches the room.
+    const [watcher] = boards;
+    await watcher.page.waitForFunction(
+      (name) =>
+        Array.from(document.querySelectorAll('#participants .chalkline-participant')).some(
+          (entry) =>
+            entry.querySelector('.chalkline-participant-name')?.textContent?.startsWith(name) === true &&
+            entry.querySelector('.chalkline-participant-badge')?.textContent === 'Agent',
+        ),
+      CLIENT,
+      { timeout: WAIT_MS },
+    );
+    // The agent shows as drawing only while add_shapes runs, so the first browser records, on each change
+    // of its list, whether the list shows that line.
+    await watcher.page.evaluate(
+      ({ line, waitMs }) => {
+        const list = document.getElementById('participants');
+        const shown = new Promise<boolean>((resolve) => {
+          if (list === null) {
+            resolve(false);
+            return;
+          }
+          // The list's text holds the line while the agent draws, so each change of the list reads it again.
+          const observer = new MutationObserver(() => {
+            if (list.textContent?.includes(line) !== true) return;
+            observer.disconnect();
+            resolve(true);
+          });
+          observer.observe(list, { childList: true, subtree: true, characterData: true });
+          setTimeout(() => {
+            observer.disconnect();
+            resolve(false);
+          }, waitMs);
+        });
+        (window as unknown as { drawingShown?: Promise<boolean> }).drawingShown = shown;
+      },
+      { line: `${CLIENT} is drawing...`, waitMs: WAIT_MS },
+    );
     const added = await call(client, 'add_shapes', {
       shapes: [
         { type: 'rectangle', x: 100, y: 100, width: 240, height: 80, label: { text: 'Drawn by the helper' } },
@@ -396,6 +435,9 @@ describe('the local-network mode, end to end', () => {
       ],
     });
     const [box, next] = added.ids as string[];
+    expect(
+      await watcher.page.evaluate(() => (window as unknown as { drawingShown?: Promise<boolean> }).drawingShown),
+    ).toBe(true);
     const connected = await call(client, 'connect', { start: box, end: next, label: { text: 'then' } });
     const arrow = connected.id as string;
 

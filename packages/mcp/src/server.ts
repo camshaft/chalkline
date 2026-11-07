@@ -10,6 +10,7 @@ import type { Creator } from './creator';
 import { connect, deleteShapes, moveGroup, reorderShapes, scaleShapes, updateShape } from './edit';
 import { listedFeedback, listedFeedbackSchema, registerFeedback } from './feedback';
 import { addImage, flatten } from './picture';
+import { trackPresence } from './presence';
 import { renderBoard, RenderError } from './render';
 import { pendingRequests, RequestError, waitForRequest, writeMermaidRequest } from './requests';
 import {
@@ -55,11 +56,16 @@ const LONGEST_TIMEOUT = 2147483;
 /**
  * chalkline-mcp's MCP server, whose tools read and draw on the board that `doc` holds. `awareness`
  * holds the room's participants, which tell the helper whether a page is in the room to convert a
- * Mermaid request.
+ * Mermaid request, and the helper's own presence among them: its client's name, its status, and a
+ * pointer at the shapes it last added or changed.
  */
 export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
   const server = new McpServer({ name: 'chalkline', version: '0.0.0' });
   const elements = doc.getMap<unknown>(ELEMENTS);
+  // Each tool call runs through the helper's presence, which shows the agent working while one runs.
+  const presence = trackPresence(server, doc, awareness);
+  // A call that adds, changes or deletes shapes, which answers a refusal where the work refuses them.
+  const drawing = (work: () => Promise<CallToolResult>) => presence.run(() => refusing(work));
 
   // The agent whose shapes these are: its client, by the name it gave as it connected.
   const creator = (): Creator => ({
@@ -81,12 +87,14 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       },
     },
     () =>
-      answer({
-        shapes: readBoard(elements.values()),
-        pending: pendingRequests(doc),
-        feedback: listedFeedback(doc),
-        frames: readFrames(elements.values()),
-      }),
+      presence.run(() =>
+        answer({
+          shapes: readBoard(elements.values()),
+          pending: pendingRequests(doc),
+          feedback: listedFeedback(doc),
+          frames: readFrames(elements.values()),
+        }),
+      ),
   );
 
   server.registerTool(
@@ -111,29 +119,30 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       },
       outputSchema: { region: regionSchema, width: z.number().int(), height: z.number().int() },
     },
-    async ({ region, max_width, max_height, timeout }, extra) => {
-      try {
-        const drawn = await renderBoard(doc, {
-          region,
-          maxWidth: max_width ?? PICTURE_SIZE,
-          maxHeight: max_height ?? PICTURE_SIZE,
-          timeout,
-          signal: extra.signal,
-        });
-        const content = { region: drawn.region, width: drawn.width, height: drawn.height };
-        const result: CallToolResult = {
-          content: [
-            { type: 'image', data: drawn.png.toString('base64'), mimeType: 'image/png' },
-            { type: 'text', text: JSON.stringify(content) },
-          ],
-          structuredContent: content,
-        };
-        return result;
-      } catch (error) {
-        if (error instanceof RenderError) return refusal(error.message);
-        throw error;
-      }
-    },
+    ({ region, max_width, max_height, timeout }, extra) =>
+      presence.run(async () => {
+        try {
+          const drawn = await renderBoard(doc, {
+            region,
+            maxWidth: max_width ?? PICTURE_SIZE,
+            maxHeight: max_height ?? PICTURE_SIZE,
+            timeout,
+            signal: extra.signal,
+          });
+          const content = { region: drawn.region, width: drawn.width, height: drawn.height };
+          const result: CallToolResult = {
+            content: [
+              { type: 'image', data: drawn.png.toString('base64'), mimeType: 'image/png' },
+              { type: 'text', text: JSON.stringify(content) },
+            ],
+            structuredContent: content,
+          };
+          return result;
+        } catch (error) {
+          if (error instanceof RenderError) return refusal(error.message);
+          throw error;
+        }
+      }),
   );
 
   server.registerTool(
@@ -173,10 +182,11 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       },
     },
     ({ shapes, group, place, frame }) =>
-      refusing(async () => {
+      drawing(async () => {
         const id = group === true ? newId() : undefined;
         const framed = frame === undefined || frame === null ? undefined : { id: newId(), name: frame.name };
         const ids = await addShapes(doc, shapes, creator(), id, place ?? undefined, framed);
+        await presence.drew(framed === undefined ? ids : [...ids, framed.id]);
         return answer({
           ids,
           ...(id === undefined ? {} : { group: id }),
@@ -198,7 +208,12 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       inputSchema: connectionSchema.shape,
       outputSchema: { id: z.string() },
     },
-    (connection) => refusing(async () => answer({ id: await connect(doc, connection, creator()) })),
+    (connection) =>
+      drawing(async () => {
+        const id = await connect(doc, connection, creator());
+        await presence.drew([id]);
+        return answer({ id });
+      }),
   );
 
   server.registerTool(
@@ -219,11 +234,16 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       outputSchema: { shape: boardShapeSchema.optional(), shapes: z.array(boardShapeSchema).optional() },
     },
     (change) =>
-      refusing(async () =>
-        change.group === undefined || change.group === null
-          ? answer({ shape: await updateShape(doc, change, creator()) })
-          : answer({ shapes: await moveGroup(doc, change, creator()) }),
-      ),
+      drawing(async () => {
+        if (change.group === undefined || change.group === null) {
+          const shape = await updateShape(doc, change, creator());
+          await presence.drew([shape.id]);
+          return answer({ shape });
+        }
+        const shapes = await moveGroup(doc, change, creator());
+        await presence.drew(shapes.map((shape) => shape.id));
+        return answer({ shapes });
+      }),
   );
 
   server.registerTool(
@@ -238,7 +258,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       inputSchema: deletionSchema.shape,
       outputSchema: { ids: z.array(z.string()) },
     },
-    ({ ids, groups }) => refusing(async () => answer({ ids: deleteShapes(doc, ids ?? [], groups ?? [], creator()) })),
+    ({ ids, groups }) => drawing(async () => answer({ ids: deleteShapes(doc, ids ?? [], groups ?? [], creator()) })),
   );
 
   server.registerTool(
@@ -254,7 +274,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       inputSchema: reorderSchema.shape,
       outputSchema: { ids: z.array(z.string()) },
     },
-    ({ ids, place }) => refusing(async () => answer({ ids: reorderShapes(doc, ids, place, creator()) })),
+    ({ ids, place }) => drawing(async () => answer({ ids: reorderShapes(doc, ids, place, creator()) })),
   );
 
   server.registerTool(
@@ -271,7 +291,12 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       inputSchema: scalingSchema.shape,
       outputSchema: { shapes: z.array(boardShapeSchema) },
     },
-    (scaling) => refusing(async () => answer({ shapes: await scaleShapes(doc, scaling, creator()) })),
+    (scaling) =>
+      drawing(async () => {
+        const shapes = await scaleShapes(doc, scaling, creator());
+        await presence.drew(shapes.map((shape) => shape.id));
+        return answer({ shapes });
+      }),
   );
 
   server.registerTool(
@@ -289,8 +314,9 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       outputSchema: { id: z.string(), file: z.string(), width: z.number(), height: z.number() },
     },
     (request) =>
-      refusing(async () => {
+      drawing(async () => {
         const { id, file, width, height } = await addImage(doc, request, creator());
+        await presence.drew([id]);
         return answer({ id, file, width, height });
       }),
   );
@@ -318,8 +344,10 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       },
     },
     (request, extra) =>
-      refusing(async () => {
+      drawing(async () => {
         const { id, file, ids, region, width, height } = await flatten(doc, request, creator(), extra.signal);
+        // The picture takes the place of the shapes it deleted, so the helper points at the picture.
+        await presence.drew([id]);
         return answer({ id, file, ids, region, width, height });
       }),
   );
@@ -341,11 +369,15 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       },
       outputSchema: requestAnswerSchema,
     },
-    async ({ text, at }, extra) => {
-      // The request says who wrote it, and the page marks the diagram's shapes with that name.
-      const id = writeMermaidRequest(doc, text, creator().name, at);
-      return answer(await waitForRequest(doc, awareness, id, extra.signal));
-    },
+    ({ text, at }, extra) =>
+      presence.run(async () => {
+        // The request says who wrote it, and the page marks the diagram's shapes with that name.
+        const id = writeMermaidRequest(doc, text, creator().name, at);
+        // The helper points at the diagram's shapes once a page adds them, whether or not this call still waits.
+        presence.wrote(id);
+        // The time the call waits for a page doesn't count as working.
+        return answer(await presence.waiting(waitForRequest(doc, awareness, id, extra.signal)));
+      }),
   );
 
   server.registerTool(
@@ -357,14 +389,15 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       inputSchema: { id: z.string().min(1) },
       outputSchema: requestAnswerSchema,
     },
-    async ({ id }, extra) => {
-      try {
-        return answer(await waitForRequest(doc, awareness, id, extra.signal));
-      } catch (error) {
-        if (error instanceof RequestError) return refusal(error.message);
-        throw error;
-      }
-    },
+    ({ id }, extra) =>
+      presence.run(async () => {
+        try {
+          return answer(await presence.waiting(waitForRequest(doc, awareness, id, extra.signal)));
+        } catch (error) {
+          if (error instanceof RequestError) return refusal(error.message);
+          throw error;
+        }
+      }),
   );
 
   // read_changes, which answers the shapes added, changed and deleted after a cursor.

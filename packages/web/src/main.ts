@@ -42,6 +42,7 @@ import { ChalklineMenu, type FileCommands } from './menu';
 import { bindRequests, mermaidConverter } from './mermaid';
 import { bindMissedReleases } from './missed-release';
 import { bindPenSideButton, sideButtonSetting } from './pen';
+import { bindParticipants } from './participants';
 import {
   bindPresence,
   keepName,
@@ -338,6 +339,24 @@ async function start(): Promise<ChalklineHandle> {
       return () => {
         pointerHandlers.delete(handler);
       };
+    },
+  });
+  // The participants list (participants.ts) shows each other participant by name among the controls: an
+  // agent with the Agent badge, "<name> is drawing..." while it works, and Go to, which scrolls and zooms
+  // the canvas to the shapes it last added or changed.
+  bindParticipants(pageElement('participants'), awareness, {
+    holds: (id) => {
+      const element = shared.get(id);
+      return element !== undefined && !element.isDeleted;
+    },
+    goTo: (ids) => {
+      const wanted = new Set(ids);
+      const drawn = api.getSceneElements().filter((element) => wanted.has(element.id));
+      if (drawn.length > 0) api.scrollToContent(drawn, { fitToContent: true, animate: true });
+    },
+    onShapes: (handler) => {
+      shared.observe(handler);
+      return () => shared.unobserve(handler);
     },
   });
   // The page converts each Mermaid request that the agent's helper writes, since the conversion
