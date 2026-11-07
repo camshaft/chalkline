@@ -98,10 +98,12 @@ export function agentWordsOf(element: unknown): string | undefined {
 
 /**
  * The words mark: the words of a text, as Excalidraw keeps them unwrapped, and when a page last
- * changed them, in milliseconds since the epoch. Each page's binding records it on the board's
- * copy of each text it writes, so that a reader that receives only the newest copy of a text, as a
- * peer's copy of the board holds it, tells a change of its words from a change that leaves them as
- * they are, such as a person's move of the text.
+ * changed them, in milliseconds since the epoch. Where a page that didn't record the mark wrote the
+ * words, a page that saves the text again with the same words records the time of the board's
+ * copy it saves over, which comes at or after the change of the words. Each page's binding records
+ * the mark on the board's copy of each text it writes, so that a reader that receives only the
+ * newest copy of a text, as a peer's copy of the board holds it, tells a change of its words from a
+ * change that leaves them as they are, such as a person's move of the text.
  */
 export interface WordsChanged {
   words: string;
@@ -127,11 +129,15 @@ export function wordsChangedOf(element: unknown): number | undefined {
  * A copy of the text `element`, which a page writes over `current`, the board's copy of the
  * element before the change, or undefined where the board doesn't hold one, whose words mark
  * records when its words last changed: the time the mark of `current` records, where the words are
- * those of `current`, and else the element's `updated`, the time of the change that wrote them. It
- * answers `element` itself where the element isn't a text or doesn't hold an `updated` time, and
- * where its words are those of `current` and `current` doesn't record when they changed, since the
- * page can't tell. The other members of the element, of its `customData` and of Chalkline's member
- * there stay as they are, and `element` itself doesn't change.
+ * those of `current`, and else the element's `updated`, the time of the change that wrote them.
+ * Where the words are those of `current` and `current` doesn't record when they changed, as where
+ * a page that didn't record the mark wrote them, the mark records the `updated` of `current`: the
+ * words changed at or before that time, so a reader that receives only this copy, as a peer's copy
+ * of the board holds it, tells it from a change of the words. It answers `element` itself where the
+ * element isn't a text or doesn't hold an `updated` time, and where its words are those of `current`
+ * and `current` holds neither a mark of them nor an `updated` time, since the page can't tell. The
+ * other members of the element, of its `customData` and of Chalkline's member there stay as they
+ * are, and `element` itself doesn't change.
  */
 export function withWordsChanged<T extends object>(element: T, current: unknown): T {
   const words = wordsOf(element);
@@ -140,8 +146,9 @@ export function withWordsChanged<T extends object>(element: T, current: unknown)
   const changed = (at: number): T => withFields(element, { wordsChanged: { words, at } satisfies WordsChanged });
   const before = recordOf(current);
   if (before === undefined || wordsOf(before) !== words) return changed(updated);
-  const at = wordsChangedOf(before);
-  return at === undefined ? element : changed(at);
+  // Where the board's copy doesn't record when its words changed, they changed at or before its last change.
+  const at = wordsChangedOf(before) ?? before.updated;
+  return finite(at) ? changed(at) : element;
 }
 
 /** A copy of `element` whose Chalkline member of `customData` holds `fields` beside its other members. */

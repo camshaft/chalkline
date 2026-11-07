@@ -323,14 +323,19 @@ describe("the map's copy of a text", () => {
     expect(wordsChangedOf(shared.get('note'))).toBe(1000);
   });
 
-  it("leaves the mark out where the map's copy doesn't record when the same words changed", () => {
+  it("records the time of the map's copy where that copy holds the same words without recording when they changed", () => {
     const { doc, shared, canvas } = bound();
     // A page that doesn't write the mark wrote the text.
     fromPeer(doc, text('note', 1, 'first words', 1000));
 
+    // The page measures the text again, with the same words.
     canvas.edit([{ ...canvas.current[0], version: 2, versionNonce: 5, updated: 2000 }]);
 
     expect(shared.get('note')?.version).toBe(2);
-    expect(shared.get('note')?.customData).toBeUndefined();
+    expect(wordsChangedOf(shared.get('note'))).toBe(1000);
+
+    // A change of the words records its own time.
+    canvas.edit([{ ...canvas.current[0], version: 3, versionNonce: 6, updated: 3000, text: 'other words', originalText: 'other words' }]);
+    expect(wordsChangedOf(shared.get('note'))).toBe(3000);
   });
 });
