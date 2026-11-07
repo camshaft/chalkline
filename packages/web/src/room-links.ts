@@ -32,12 +32,12 @@ export function boardInAddress(address: PageAddress): RoomSecrets | null {
 }
 
 /**
- * The room's name and password in the link of a board that a person pasted:
- * the whole link, or its fragment alone, read against `base`, the page's
- * address. Null where the text isn't a link, or where its fragment lacks
- * either part.
+ * The board in the link that a person pasted: the whole link, or its fragment
+ * alone, read against `base`, the page's address. Null where the text isn't a
+ * link, or where its fragment lacks the room's name or its password. Its
+ * fragment is the link's whole fragment, with the TURN servers it carries.
  */
-export function secretsFromLink(text: string, base: string): RoomSecrets | null {
+export function boardFromLink(text: string, base: string): { secrets: RoomSecrets; fragment: string } | null {
   const trimmed = text.trim();
   if (trimmed === '') return null;
   let link: URL;
@@ -46,7 +46,13 @@ export function secretsFromLink(text: string, base: string): RoomSecrets | null 
   } catch {
     return null;
   }
-  return parseRoomFragment(link.hash);
+  const secrets = parseRoomFragment(link.hash);
+  return secrets === null ? null : { secrets, fragment: link.hash };
+}
+
+/** The room's name and password in the link of a board that a person pasted, as `boardFromLink` reads them. */
+export function secretsFromLink(text: string, base: string): RoomSecrets | null {
+  return boardFromLink(text, base)?.secrets ?? null;
 }
 
 /** What the join screen does with the board a person chooses. */
@@ -56,8 +62,8 @@ export interface JoinScreenOptions {
    * board's link, and reads a pasted fragment against it.
    */
   address: string;
-  /** Opens the board the person chose. */
-  onJoin(secrets: RoomSecrets): void;
+  /** Opens the board the person chose, whose link's fragment is `fragment`. */
+  onJoin(secrets: RoomSecrets, fragment: string): void;
 }
 
 /**
@@ -84,7 +90,10 @@ export function joinScreen(doc: Document, options: JoinScreenOptions): HTMLEleme
 
   const newBoard = make('button', 'New board');
   newBoard.type = 'button';
-  newBoard.addEventListener('click', () => options.onJoin(newRoomSecrets()));
+  newBoard.addEventListener('click', () => {
+    const secrets = newRoomSecrets();
+    options.onJoin(secrets, roomFragment(secrets));
+  });
 
   const link = make('input');
   link.name = 'link';
@@ -105,9 +114,9 @@ export function joinScreen(doc: Document, options: JoinScreenOptions): HTMLEleme
   form.append(linkLabel, join);
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    const secrets = secretsFromLink(link.value, options.address);
-    error.hidden = secrets !== null;
-    if (secrets !== null) options.onJoin(secrets);
+    const board = boardFromLink(link.value, options.address);
+    error.hidden = board !== null;
+    if (board !== null) options.onJoin(board.secrets, board.fragment);
   });
 
   const screen = make('section');
@@ -129,8 +138,9 @@ export function joinScreen(doc: Document, options: JoinScreenOptions): HTMLEleme
 
 /**
  * Shows the join screen in `holder` until a person chooses a board, and
- * resolves with that board. New board and a pasted link put the board's
- * fragment in the address; a board's link put in the address bar, which
+ * resolves with that board. New board puts the board's fragment in the
+ * address, and a pasted link puts its whole fragment there, with the TURN
+ * servers it carries; a board's link put in the address bar, which
  * changes the fragment without a load, chooses that board too. The screen
  * leaves `holder` once a board is chosen, and later choices change nothing.
  */
@@ -151,9 +161,9 @@ export function chooseRoom(holder: HTMLElement, address: PageAddress): Promise<R
     holder.replaceChildren(
       joinScreen(holder.ownerDocument, {
         address: address.href(),
-        onJoin: (secrets) => {
+        onJoin: (secrets, fragment) => {
           if (chosen) return;
-          address.replaceFragment(roomFragment(secrets));
+          address.replaceFragment(fragment);
           choose(secrets);
         },
       }),

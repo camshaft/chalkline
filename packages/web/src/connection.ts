@@ -1,12 +1,8 @@
 import type { JoinRoomConfig, TurnServerConfig } from '@trystero-p2p/nostr';
-import { APP_ID, type RoomSecrets } from './room';
+import { APP_ID, type RoomSecrets, type TurnServer } from './room';
 
-/** One TURN server: its addresses, and the username and password it asks for, where it asks for them. */
-export interface TurnServer {
-  urls: string[];
-  username?: string;
-  credential?: string;
-}
+/** A TURN server, or a STUN server that a board's link carries, as `@chalkline/sync` reads them. */
+export type { TurnServer } from './room';
 
 /**
  * The connection settings a person keeps in their browser, for every board it
@@ -110,11 +106,21 @@ export function saveSettings(storage: SettingsStorage, settings: ConnectionSetti
   storage.setItem(SETTINGS_KEY, JSON.stringify({ turnServers: settings.turnServers, relays: settings.relays }));
 }
 
-/** The config a page joins the room with: the room's password, and each connection setting that is set. */
-export function roomOptions(secrets: RoomSecrets, settings: ConnectionSettings): JoinRoomConfig {
+/**
+ * The config a page joins the room with: the room's password, each connection
+ * setting that is set, and `linkServers`, the servers of the board's link that
+ * the settings don't hold, which the page uses beside the settings' TURN
+ * servers for that board alone.
+ */
+export function roomOptions(
+  secrets: RoomSecrets,
+  settings: ConnectionSettings,
+  linkServers: readonly TurnServer[] = [],
+): JoinRoomConfig {
   const config: JoinRoomConfig = { appId: APP_ID, password: secrets.key };
-  if (settings.turnServers.length > 0) {
-    config.turnConfig = settings.turnServers.map((server): TurnServerConfig => ({ ...server, urls: [...server.urls] }));
+  const turnServers = [...settings.turnServers, ...linkServers];
+  if (turnServers.length > 0) {
+    config.turnConfig = turnServers.map((server): TurnServerConfig => ({ ...server, urls: [...server.urls] }));
   }
   if (settings.relays.length > 0) config.relayConfig = { urls: [...settings.relays] };
   return config;
@@ -171,10 +177,65 @@ export function settingsFromForm(
 /**
  * The status line for a peer that couldn't connect, which says what the
  * person can do about it. Trystero's error is text, so the line depends on
- * the settings alone, and the page logs the error itself to the console.
+ * the settings and on `fromLink` alone, whether the page uses TURN servers
+ * that its board's link carries, and the page logs the error itself to the
+ * console.
  */
-export function joinErrorText(settings: ConnectionSettings): string {
+export function joinErrorText(settings: ConnectionSettings, fromLink = false): string {
+  if (fromLink) {
+    return "A peer couldn't connect through the TURN servers in use. The passwords of the servers this board's link carries may have expired: ask the person who shared the link for a fresh link.";
+  }
   return settings.turnServers.length === 0
     ? "A peer couldn't connect. Where this keeps happening with the same people, a network between you may block direct connections: add a TURN server in Connection settings."
     : "A peer couldn't connect with this browser's TURN servers in use. Check their addresses, usernames and passwords in Connection settings.";
+}
+
+/** The servers of a board's link that a page uses, and why it can't read the link's `turn` parameter, where it can't. */
+export interface FromLink {
+  /** The link's servers that the browser's settings don't hold already. */
+  servers: TurnServer[];
+  /** Why the page doesn't use the link's servers, or null where it reads them. */
+  error: string | null;
+}
+
+/** Whether `a` and `b` are one server: the same addresses, in order, with the same username and password. */
+export function sameTurnServer(a: TurnServer, b: TurnServer): boolean {
+  return (
+    a.username === b.username &&
+    a.credential === b.credential &&
+    a.urls.length === b.urls.length &&
+    a.urls.every((url, index) => url === b.urls[index])
+  );
+}
+
+/**
+ * The part of `server` that the settings keep: its turn: and turns:
+ * addresses, with its username and password, or null where it has none, as a
+ * STUN server, which a browser uses without a setting, has none.
+ */
+export function turnPartOf(server: TurnServer): TurnServer | null {
+  const urls = server.urls.filter((url) => turnUrlError(url) === null);
+  if (urls.length === 0) return null;
+  const part: TurnServer = { urls };
+  if (server.username !== undefined) part.username = server.username;
+  if (server.credential !== undefined) part.credential = server.credential;
+  return part;
+}
+
+/** The servers of a board's link, `link`, that `settings` doesn't hold: each one whose TURN part the settings don't keep already. */
+export function linkOnlyServers(settings: ConnectionSettings, link: readonly TurnServer[]): TurnServer[] {
+  return link.filter((server) => {
+    const part = turnPartOf(server);
+    return part === null || !settings.turnServers.some((kept) => sameTurnServer(kept, part));
+  });
+}
+
+/** The TURN servers a page uses for its board: the browser's own, then `linkServers`, the link's that the browser doesn't hold. */
+export function boardTurnServers(settings: ConnectionSettings, linkServers: readonly TurnServer[]): TurnServer[] {
+  return [...settings.turnServers, ...linkServers];
+}
+
+/** What the page says where it can't read the TURN servers of its link: `error`, and what it does then. */
+export function linkErrorText(error: string): string {
+  return `${error} The page joins the board without the link's TURN servers: ask the person who shared the link to copy it again.`;
 }

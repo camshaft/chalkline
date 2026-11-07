@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { defaultSettings, joinErrorText, type ConnectionSettings } from './connection';
+import { defaultSettings, joinErrorText, linkErrorText, type ConnectionSettings } from './connection';
 import { statusLine, watchedPeerConnection, watchForFailure, type ConnectionFailure, type StatusElement } from './status';
 
 /** An `icecandidate` event: one of this browser's candidates, or null at the end of them. */
@@ -140,6 +140,40 @@ describe('the status line', () => {
         localCandidates: 1,
       },
     ]);
+  });
+
+  it("says that the TURN servers of the board's link may have expired, where the page uses them", () => {
+    const element: StatusElement = { textContent: null };
+    const fromLink = { servers: [{ urls: ['turn:turn.example.com:3478'], username: 'alice', credential: 'secret' }], error: null };
+    const line = statusLine(element, defaultSettings(), fromLink);
+    line.showPeers(0);
+    expect(element.textContent).toBe(nobodyHere);
+    line.showFailure();
+    expect(element.textContent).toBe(joinErrorText(defaultSettings(), true));
+    expect(element.textContent).toContain('may have expired: ask the person who shared the link for a fresh link');
+    // The same link on a browser with TURN servers of its own says the same.
+    const withOwn = statusLine(element, withTurn, fromLink);
+    withOwn.showFailure();
+    expect(element.textContent).toBe(joinErrorText(withTurn, true));
+  });
+
+  it("points to the browser's own TURN servers where the link carries a STUN server alone", () => {
+    const element: StatusElement = { textContent: null };
+    const line = statusLine(element, withTurn, { servers: [{ urls: ['stun:stun.example.com'] }], error: null });
+    line.showFailure();
+    expect(element.textContent).toBe(joinErrorText(withTurn));
+  });
+
+  it("says beside the count of people that the page can't read the TURN servers of its link", () => {
+    const element: StatusElement = { textContent: null };
+    const error = "The link's turn parameter isn't base64url text.";
+    const line = statusLine(element, defaultSettings(), { servers: [], error });
+    line.showPeers(0);
+    expect(element.textContent).toBe(`${nobodyHere} ${linkErrorText(error)}`);
+    line.showPeers(2);
+    expect(element.textContent).toBe(`2 other people are on this board. ${linkErrorText(error)}`);
+    line.showFailure();
+    expect(element.textContent).toBe(joinErrorText(defaultSettings()));
   });
 });
 

@@ -3,17 +3,14 @@
 import './log';
 import { parseArgs } from 'node:util';
 import {
-  APP_ID,
   Awareness,
   connectAwareness,
   connectDoc,
-  parseRoomFragment,
-  relaysFromAddress,
   trysteroTransport,
-  type RoomSecrets,
 } from '@chalkline/sync';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import * as Y from 'yjs';
+import { joinConfig, joinErrorLine, readBoardLink, routeText } from './board-link';
 import { runListen } from './listen-cli';
 import { createServer } from './server';
 import { loadExcalidraw } from './skeleton';
@@ -30,8 +27,10 @@ and deleted on the board, read_transcript reads what the people on the board sai
 post_message posts a message in the board's chat, read_feedback reads the feedback people
 write on areas of the board, and answer_feedback answers one.
 The link is the board's address, with its #room=<name>&key=<password> fragment, and with its
-?relay= parameters where the board's participants meet through a relay. Each line the helper
-logs goes to standard error.
+?relay= parameters where the board's participants meet through a relay. Where its fragment
+holds a turn parameter, as the page's Copy link with TURN servers writes it, the helper
+connects to the board's peers through the TURN servers it lists. Each line the helper logs
+goes to standard error.
 
 Options:
   --help  print this text
@@ -40,18 +39,6 @@ chalkline-mcp listen <board link> joins the board too, and prints on standard ou
 line for each group of words people on the board say, each text they write and each sketch they
 draw, for an agent client that turns each line a command prints into a message to its agent,
 such as Claude Code's Monitor tool: chalkline-mcp listen --help says more.`;
-
-function roomOf(link: string): RoomSecrets {
-  let address: URL;
-  try {
-    address = new URL(link);
-  } catch {
-    throw new Error(`${link} isn't a link.\n\n${USAGE}`);
-  }
-  const secrets = parseRoomFragment(address.hash);
-  if (secrets === null) throw new Error(`The link lacks the #room=<name>&key=<password> fragment.\n\n${USAGE}`);
-  return secrets;
-}
 
 /** Resolves once the client closes the helper's standard input, or the helper is stopped. */
 function ended(): Promise<void> {
@@ -76,8 +63,7 @@ async function main(): Promise<void> {
   }
   if (positionals.length !== 1) throw new Error(USAGE);
   const [link] = positionals;
-  const secrets = roomOf(link);
-  const relays = relaysFromAddress(link);
+  const board = readBoardLink(link, USAGE);
 
   // The server answers the client at once, and its tools work on the helper's copy of the board
   // while the helper joins the room.
@@ -98,10 +84,10 @@ async function main(): Promise<void> {
     werift.RTCPeerConnection ?? (werift as unknown as { default: typeof werift }).default.RTCPeerConnection;
   const { joinBoardRoom } = await import('@chalkline/sync/join');
   const room = joinBoardRoom(
-    { appId: APP_ID, password: secrets.key, rtcPolyfill: PeerConnection as unknown as typeof RTCPeerConnection },
-    secrets.room,
-    relays,
-    { onJoinError: ({ peerId, error }) => console.error(`${peerId} couldn't connect: ${error}`) },
+    joinConfig(board, PeerConnection as unknown as typeof RTCPeerConnection),
+    board.room.room,
+    board.relays,
+    { onJoinError: ({ peerId, error }) => console.error(joinErrorLine(board, peerId, String(error))) },
   );
   const transport = trysteroTransport(room);
   connectDoc(doc, transport, {
@@ -114,7 +100,7 @@ async function main(): Promise<void> {
   transport.onPeerJoin((peerId) => console.error(`connected to ${peerId}`));
   transport.onPeerLeave((peerId) => console.error(`${peerId} left`));
   console.error(
-    `joined room ${secrets.room} through ${relays.length > 0 ? relays.join(', ') : 'the public Nostr relays'}`,
+    `joined room ${board.room.room} through ${routeText(board)}`,
   );
 
   await closed;
