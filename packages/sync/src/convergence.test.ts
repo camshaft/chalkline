@@ -62,8 +62,7 @@ const meshes: Mesh[] = [
  * In each round one participant changes a shape, deletes one, adds to the
  * transcript or moves its cursor, and the network runs a few events. The last
  * participant joins a third of the way through. Then the network heals, and
- * every queued event runs, and where `mesh` keeps a pair apart, each
- * participant renews its awareness state once.
+ * every queued event runs.
  */
 function chaos({ count, apart }: Mesh, seed: number) {
   const network = new MemoryNetwork({ seed, drop: 0.1, delay: 4 });
@@ -85,13 +84,6 @@ function chaos({ count, apart }: Mesh, seed: number) {
   }
   network.drop = 0;
   network.flush();
-  if (apart.length > 0) {
-    // y-protocols renews each participant's state every 15 seconds, which
-    // carries a state that a broken link lost on to the participants that
-    // don't connect to its sender. Renew each state once, as that renewal does.
-    for (const { awareness } of participants) awareness.setLocalState(awareness.getLocalState());
-    network.flush();
-  }
   return { network, participants };
 }
 

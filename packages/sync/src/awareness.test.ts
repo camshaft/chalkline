@@ -131,6 +131,102 @@ describe('connectAwareness', () => {
     expect(others(a.awareness)).toEqual(['b']);
   });
 
+  it("sends a peer that joins every state it holds, the state of a departed peer that another peer's list still holds among them", () => {
+    const network = new MemoryNetwork();
+    const a = participant(network, 'a');
+    network.flush();
+    const b = participant(network, 'b');
+    network.flush();
+    const c = participant(network, 'c');
+    network.flush();
+    a.awareness.setLocalStateField('cursor', { x: 1, y: 2 });
+    network.flush();
+    const aId = a.awareness.clientID;
+    // b and c hold a's state at the same clock, so a copy of it that c sends to b doesn't change b's copy.
+    expect(b.awareness.meta.get(aId)?.clock).toBe(c.awareness.meta.get(aId)?.clock);
+
+    network.keepApart('a', 'b');
+    network.run(2);
+    // b's link to a has ended, and b keeps a's state, since c's list still holds a.
+    expect(others(b.awareness)).toEqual(['a', 'c']);
+    network.keepApart('e', 'a');
+    network.keepApart('e', 'c');
+    const e = participant(network, 'e');
+    network.flush();
+
+    expect(e.awareness.getStates().get(aId)).toEqual({ name: 'a', cursor: { x: 1, y: 2 } });
+    expect(others(e.awareness)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('removes the state of a peer that leaves from each peer that holds it, a peer that a second relay sent it to among them', () => {
+    const network = new MemoryNetwork();
+    network.keepApart('a', 'c');
+    network.keepApart('a', 'd');
+    const [, b, c, d] = ['a', 'b', 'c', 'd'].map((id) => {
+      const joined = participant(network, id);
+      network.flush();
+      return joined;
+    });
+    // a connects only to b, and b, c and d each hold a's state.
+    for (const peer of [b, c, d]) expect(others(peer.awareness)).toContain('a');
+
+    network.leave('a');
+    network.flush();
+
+    expect(others(b.awareness)).toEqual(['c', 'd']);
+    expect(others(c.awareness)).toEqual(['b', 'd']);
+    expect(others(d.awareness)).toEqual(['b', 'c']);
+  });
+
+  it("shows each participant's latest state at every peer of a line once its middle link breaks and comes back, with messages out of order", () => {
+    let reordered = 0;
+    for (let seed = 1; seed <= 200; seed += 1) {
+      const network = new MemoryNetwork({ seed });
+      network.keepApart('a', 'c');
+      network.keepApart('a', 'd');
+      network.keepApart('b', 'd');
+      const line = ['a', 'b', 'c', 'd'].map((id) => participant(network, id));
+      network.flush();
+      // Before the break, each peer shows the other three.
+      for (const viewer of line) expect(others(viewer.awareness), `seed ${seed}`).toHaveLength(3);
+
+      network.delay = 10;
+      network.disconnect('b', 'c');
+      network.flush();
+      reordered += network.reordered;
+
+      for (const viewer of line) {
+        for (const shown of line) {
+          if (viewer === shown) continue;
+          expect(viewer.awareness.getStates().get(shown.awareness.clientID), `seed ${seed}`).toEqual(
+            shown.awareness.getLocalState(),
+          );
+        }
+      }
+    }
+    expect(reordered).toBeGreaterThan(0);
+  });
+
+  it('shows a peer that joins again on a new connection, whose messages are numbered again from the first', () => {
+    const network = new MemoryNetwork();
+    const a = participant(network, 'a');
+    const b = participant(network, 'b');
+    network.flush();
+    for (let x = 1; x <= 3; x += 1) {
+      a.awareness.setLocalStateField('cursor', { x, y: 0 });
+      network.flush();
+    }
+    a.stop();
+    network.leave('a');
+    network.flush();
+    expect(others(b.awareness)).toEqual([]);
+
+    connectAwareness(a.awareness, network.join('a'));
+    network.flush();
+
+    expect(b.awareness.getStates().get(a.awareness.clientID)).toEqual({ name: 'a', cursor: { x: 3, y: 0 } });
+  });
+
   it("keeps a participant's state that a peer removes while the participant's own peer is still connected", () => {
     const network = new MemoryNetwork();
     const a = participant(network, 'a');
