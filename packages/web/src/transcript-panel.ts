@@ -32,6 +32,9 @@ export interface ChatOptions {
   now?: () => Date;
 }
 
+/** The most lines the message field grows to; past them, its text scrolls inside the field. */
+export const MESSAGE_LINES = 6;
+
 /** What the panel says under its title for each state. */
 export function statusText(state: SpeechState): string {
   switch (state.kind) {
@@ -66,6 +69,62 @@ export function micText(state: SpeechState): string {
   }
 }
 
+/**
+ * Fits the height of the panel's message field to its text: an empty field has the one line of its one
+ * row, and a field with text a line for each line its text needs, up to `maxLines`, past which the text
+ * scrolls inside the field. It reads the height of a line, the padding and the border from the field's
+ * style.
+ */
+export function fitMessageField(field: HTMLTextAreaElement, maxLines = MESSAGE_LINES): void {
+  field.style.height = 'auto';
+  const needed = field.scrollHeight;
+  // An empty field, and one the page doesn't show, go back to their one row.
+  if (field.value === '' || needed === 0) {
+    field.style.height = '';
+    field.style.overflowY = '';
+    return;
+  }
+  const style = field.ownerDocument.defaultView?.getComputedStyle(field);
+  const px = (value: string | undefined): number => Number.parseFloat(value ?? '') || 0;
+  const padding = px(style?.paddingTop) + px(style?.paddingBottom);
+  const line = px(style?.lineHeight);
+  const most = line > 0 ? maxLines * line + padding : Number.POSITIVE_INFINITY;
+  // scrollHeight holds the text and the padding; a border-box height holds the border as well, and a
+  // content-box height holds neither the padding nor the border.
+  const outside = style?.boxSizing === 'border-box' ? px(style.borderTopWidth) + px(style.borderBottomWidth) : -padding;
+  field.style.height = `${Math.min(needed, most) + outside}px`;
+  field.style.overflowY = needed > most ? 'auto' : 'hidden';
+}
+
+/** The part of the window's visual viewport that `followKeyboard` reads: where the visible part of the page ends. */
+export interface KeyboardViewport extends EventTarget {
+  /** The visible part's height. */
+  readonly height: number;
+  /** How far the visible part's top lies below the page's top. */
+  readonly offsetTop: number;
+}
+
+/**
+ * Keeps `panel` above a phone's on-screen keyboard: on each resize and scroll of `viewport`, the visible
+ * part of the page, it sets `--keyboard-inset` on the panel to the height of the page below that part, which
+ * the keyboard covers, and which the page's stylesheet adds to the panel's distance from the page's bottom.
+ * `layoutHeight` is the page's height, which the keyboard doesn't change. Returns `stop`, which stops
+ * following the viewport.
+ */
+export function followKeyboard(panel: HTMLElement, viewport: KeyboardViewport, layoutHeight: () => number): () => void {
+  const update = (): void => {
+    const covered = Math.max(0, Math.round(layoutHeight() - (viewport.offsetTop + viewport.height)));
+    panel.style.setProperty('--keyboard-inset', `${covered}px`);
+  };
+  viewport.addEventListener('resize', update);
+  viewport.addEventListener('scroll', update);
+  update();
+  return () => {
+    viewport.removeEventListener('resize', update);
+    viewport.removeEventListener('scroll', update);
+  };
+}
+
 function entryItem(doc: Document, { id, speaker, at, text, via }: TranscriptEntry): HTMLLIElement {
   const item = doc.createElement('li');
   item.dataset.id = id;
@@ -90,9 +149,11 @@ function entryItem(doc: Document, { id, speaker, at, text, via }: TranscriptEntr
  * line; the words not yet final; every entry of `transcript`, which it shows
  * again on each change of the transcript, a peer's among them; and a message
  * field with Send, which, as Enter does, appends the words typed there to
- * `transcript` as a typed entry under `chat.speaker()`. `opener` opens and
- * closes the panel, and counts the entries. The panel opens as speech starts
- * to turn on, so that the person reads the question.
+ * `transcript` as a typed entry under `chat.speaker()`. Shift+Enter adds a line
+ * break to the message, and the field grows with its text up to
+ * `MESSAGE_LINES` lines, and goes back to one line once the message is sent.
+ * `opener` opens and closes the panel, and counts the entries. The panel opens
+ * as speech starts to turn on, so that the person reads the question.
  *
  * Returns `show`, which shows a state of the speech, and `stop`, which stops
  * following the transcript.
@@ -131,21 +192,26 @@ export function bindTranscriptPanel(
   heard.hidden = true;
   const entries = make('ol', 'transcript-entries');
   const empty = make('p', 'transcript-empty', 'No one has said or typed anything yet.');
-  const field = make('input', 'chat-field');
-  field.type = 'text';
+  const field = make('textarea', 'chat-field');
+  field.rows = 1;
   field.placeholder = 'Type a message';
   field.autocomplete = 'off';
+  // A phone's keyboard labels its Enter key Send, which Enter does here.
+  field.setAttribute('enterkeyhint', 'send');
   field.setAttribute('aria-label', 'Message');
   const send = (): void => {
     const words = field.value.trim();
     if (words === '') return;
     appendEntry(transcript, { id: newId(), speaker: chat.speaker(), at: now().toISOString(), text: words, via: 'typed' });
     field.value = '';
+    fitMessageField(field);
     // Show the person's own message, though they scrolled up to read earlier ones.
     entries.scrollTop = entries.scrollHeight;
   };
+  field.addEventListener('input', () => fitMessageField(field));
   field.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' || event.isComposing) return;
+    // Shift+Enter, and Enter while an input method composes a character, go to the field as other keys do.
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
     event.preventDefault();
     send();
   });

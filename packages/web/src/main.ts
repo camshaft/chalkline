@@ -43,7 +43,7 @@ import {
 import { connectSettingsButton } from './settings-panel';
 import { recognitionClass, recognitionLanguage, speechControl, type Speech } from './speech';
 import { statusLine, watchedPeerConnection } from './status';
-import { bindTranscriptPanel } from './transcript-panel';
+import { bindTranscriptPanel, followKeyboard } from './transcript-panel';
 
 /** What the page shows on `window.chalkline`, for the live probe and for debugging. */
 export interface ChalklineHandle {
@@ -298,6 +298,10 @@ async function start(): Promise<ChalklineHandle> {
   );
   panel.show(speech.state());
   speech.onState((state) => panel.show(state));
+  // On a phone, the chat stays above the on-screen keyboard, which covers the bottom of the page.
+  if (window.visualViewport !== null) {
+    followKeyboard(pageElement('transcript'), window.visualViewport, () => document.documentElement.clientHeight);
+  }
   // The bar's Save file, Open file, microphone and Chat buttons show once the board they act on is open,
   // and stay hidden on the join screen.
   pageElement('save-button').hidden = false;
