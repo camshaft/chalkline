@@ -479,7 +479,7 @@ describe('the local-network mode, end to end', () => {
       await page.mouse.up();
 
       // Send in the text box beside the area writes the feedback to the board, and ends the mode.
-      const dialog = page.locator('.feedback-box');
+      const dialog = page.locator('.feedback-box:not(.ask-box)');
       await dialog.locator('.feedback-field').fill(FEEDBACK);
       await dialog.getByRole('button', { name: 'Send', exact: true }).click();
       expect(await button.getAttribute('aria-pressed')).toBe('false');
