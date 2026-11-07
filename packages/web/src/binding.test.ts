@@ -8,6 +8,7 @@ interface Shape {
   versionNonce: number;
   index: string | null;
   label?: string;
+  isDeleted?: boolean;
 }
 
 function shape(id: string, version: number, versionNonce = 1, index: string | null = 'a0', label?: string): Shape {
@@ -159,5 +160,69 @@ describe('bindElements', () => {
 
     expect(shared.has('mine')).toBe(false);
     expect(canvas.current.map((element) => element.id)).toEqual(['mine']);
+  });
+});
+
+/** Sends `to` each update of `from` that `to` lacks, as the connection between two pages does. */
+function deliver(from: Y.Doc, to: Y.Doc): void {
+  Y.applyUpdate(to, Y.encodeStateAsUpdate(from, Y.encodeStateVector(to)), 'peer');
+}
+
+/**
+ * What Excalidraw's Reset the canvas does to the scene of the page that chooses it: in one change, it
+ * marks each element deleted, one version later and with a new nonce, and keeps it in the scene
+ * (actionClearCanvas calls newElementWith with isDeleted on each element).
+ */
+function resetCanvas(canvas: FakeCanvas): void {
+  canvas.edit(
+    canvas.current.map((element) => ({
+      ...element,
+      version: element.version + 1,
+      versionNonce: element.versionNonce + 100,
+      isDeleted: true,
+    })),
+  );
+}
+
+/** The ids of the elements a canvas shows, which are those that aren't deleted. */
+function shown(canvas: FakeCanvas): string[] {
+  return canvas.current.filter((element) => element.isDeleted !== true).map((element) => element.id);
+}
+
+describe("Excalidraw's Reset the canvas", () => {
+  it('clears every page: each deleted copy goes to the shared map, and wins on the other page', () => {
+    const first = bound();
+    const second = bound();
+    first.canvas.edit([shape('box', 1, 1, 'a0'), shape('text', 3, 1, 'a1')]);
+    deliver(first.doc, second.doc);
+    expect(shown(second.canvas)).toEqual(['box', 'text']);
+
+    resetCanvas(first.canvas);
+    deliver(first.doc, second.doc);
+
+    const copies = [...first.shared.values()].map((element) => `${element.id}@${element.version}:${element.isDeleted}`);
+    expect(copies.sort()).toEqual(['box@2:true', 'text@4:true']);
+    expect(shown(first.canvas)).toEqual([]);
+    expect(shown(second.canvas)).toEqual([]);
+    expect(second.canvas.current).toEqual(first.canvas.current);
+  });
+
+  it("doesn't bring the shapes back with a peer's next change, made before or after the reset reaches it", () => {
+    const first = bound();
+    const second = bound();
+    first.canvas.edit([shape('box', 1, 1, 'a0')]);
+    deliver(first.doc, second.doc);
+
+    resetCanvas(first.canvas);
+    // The other page adds a shape before the reset reaches it, and another once it has.
+    second.canvas.edit([...second.canvas.current, shape('note', 1, 1, 'a1')]);
+    deliver(second.doc, first.doc);
+    deliver(first.doc, second.doc);
+    second.canvas.edit([...second.canvas.current, shape('later', 1, 1, 'a2')]);
+    deliver(second.doc, first.doc);
+
+    expect(shown(first.canvas)).toEqual(['note', 'later']);
+    expect(shown(second.canvas)).toEqual(['note', 'later']);
+    expect(first.canvas.current).toEqual(second.canvas.current);
   });
 });
