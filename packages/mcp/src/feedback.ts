@@ -54,6 +54,7 @@ const feedbackSchema = z.object({
   shapes: z.array(z.string()),
   status: z.enum(['open', 'answered']),
   answer: z.object({ by: z.string(), at: z.string(), text: z.string() }).nullable(),
+  reopened: z.string().nullable(),
 });
 
 /** An open feedback as get_board lists it. */
@@ -201,7 +202,7 @@ export function registerFeedback(server: McpServer, doc: Y.Doc): FeedbackLog {
       title: "Read the people's feedback on areas of the board",
       description: [
         'Reads the feedback that people write on areas of the board: each feedback that became open after `cursor`, a new one or one a person reopened, in the order the helper received them.',
-        "Each comes with its record as the helper read it when it became open: its id, its writer as `by`, its time (ISO 8601), its text, its region in the units get_board reads, the ids of the shapes that met the region when the person sent it, its status, and the agent's last answer or null; and with the board's shapes that meet its region now, as get_board lists them.",
+        "Each comes with its record as the helper read it when it became open: its id, its writer as `by`, its time (ISO 8601), its text, its region in the units get_board reads, the ids of the shapes that met the region when the person sent it, its status, the agent's last answer or null, and when a person last reopened it (ISO 8601) or null; and with the board's shapes that meet its region now, as get_board lists them.",
         'It answers the cursor to pass to the next call. Where no feedback became open after the cursor, it answers once a person writes or reopens one, or with none once the client cancels the call.',
         "Left out, the cursor is 0, the log's start, which holds each feedback that was open when the helper joined the board.",
         'A cursor counts the openings this run of the helper has received, so it holds within one run of the helper.',

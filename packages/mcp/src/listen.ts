@@ -121,8 +121,9 @@ export type Sketched = {
 export type FeedbackOpened = {
   /**
    * When the feedback became open (ISO 8601): its time, as its writer's page recorded it, for a new
-   * feedback, and the time the listener received the reopening for a feedback a person reopened,
-   * since the board doesn't record when a person reopens a feedback.
+   * feedback, and the time a person reopened it, as their page recorded it, for a reopened feedback.
+   * Where the page that reopened it doesn't record that time, it is the time the listener received
+   * the reopening.
    */
   at: string;
   kind: 'feedback';
@@ -415,14 +416,17 @@ export function listenSketches(doc: Y.Doc, options: BoardListenOptions<Sketched>
 }
 
 /**
- * The time `record`, an open feedback, became open, where the listener first receives it open: its
- * time where no agent answered it, and now where a person reopened it after an agent's answer,
- * since the board doesn't record when a person reopens a feedback. It returns undefined where the
- * feedback became open at or before `after`: a new feedback written at or before `after`, and a
- * reopened one whose answer came at or before `after`, since a person may have reopened it before
- * `after` too.
+ * The time `record`, an open feedback, became open, or undefined where it became open at or before
+ * `after`. Where the record holds `reopened`, it became open then, as the page of the person who
+ * reopened it recorded it. Otherwise, where `wasClosed`, as where the listener read it as answered
+ * before, it became open now, as the listener receives it. Where the listener first receives it,
+ * it became open at its time where no agent answered it, and now where a person reopened it after
+ * an agent's answer on a page that doesn't record when; such a feedback whose answer came at or
+ * before `after` returns undefined, since a person may have reopened it before `after` too.
  */
-function firstOpenedAt(record: Feedback, after: number): string | undefined {
+function openedAt(record: Feedback, wasClosed: boolean, after: number): string | undefined {
+  if (record.reopened !== null) return Date.parse(record.reopened) > after ? record.reopened : undefined;
+  if (wasClosed) return new Date().toISOString();
   if (record.answer === null) return Date.parse(record.at) > after ? record.at : undefined;
   return Date.parse(record.answer.at) > after ? new Date().toISOString() : undefined;
 }
@@ -443,14 +447,16 @@ export interface FeedbackListenOptions {
 /**
  * Listens to the feedback people write on the board that `doc` holds. Each feedback that becomes
  * open sends its line to `options.onLine` at once: a new feedback, by its time, and a feedback a
- * person reopens after an agent's answer, by the time the listener receives the reopening. A
- * feedback's other changes, such as an agent's answer, and a peer's copy of a record the listener
- * read already, don't make a line. A feedback written at or before `options.after` is left out,
- * though the listener receives it later, as a peer's copy of the board brings it, and so is a
- * reopened feedback that the listener first receives open, where its answer came at or before
- * `options.after`, since the board doesn't record when the person reopened it. A change that
- * deletes a feedback, or that writes a value under its id that doesn't read as a feedback, makes
- * the listener read it as not open, so that its next open copy makes a line.
+ * person reopens after an agent's answer, by the time of the reopen that its record holds, or,
+ * where the page that reopened it doesn't record that time, by the time the listener receives the
+ * reopening. A feedback's other changes, such as an agent's answer, and a peer's copy of a record
+ * the listener read already, don't make a line. A feedback written at or before `options.after` is
+ * left out, though the listener receives it later, as a peer's copy of the board brings it, and so
+ * is one reopened at or before `options.after`. So is a feedback reopened on a page that doesn't
+ * record when, which the listener first receives open, where its answer came at or before
+ * `options.after`, since a person may have reopened it before then too. A change that deletes a
+ * feedback, or that writes a value under its id that doesn't read as a feedback, makes the listener
+ * read it as not open, so that its next open copy makes a line.
  */
 export function listenFeedback(doc: Y.Doc, options: FeedbackListenOptions): Listener {
   const feedback = feedbackOf(doc);
@@ -468,7 +474,7 @@ export function listenFeedback(doc: Y.Doc, options: FeedbackListenOptions): List
       }
       open.set(id, record.status === 'open');
       if (record.status !== 'open' || wasOpen === true) continue;
-      const at = wasOpen === false ? new Date().toISOString() : firstOpenedAt(record, options.after);
+      const at = openedAt(record, wasOpen === false, options.after);
       if (at === undefined) continue;
       lines.push({ at, kind: 'feedback', id, by: record.by, text: record.text, shapes: record.shapes });
     }

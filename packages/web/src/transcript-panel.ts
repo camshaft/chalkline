@@ -1,10 +1,9 @@
 import {
   appendEntry,
-  getFeedback,
   listFeedback,
   newEntryId,
   readTranscript,
-  writeFeedback,
+  reopenFeedback,
   type Feedback,
   type FeedbackAnswer,
   type TranscriptEntry,
@@ -278,9 +277,10 @@ function feedbackItem(doc: Document, record: Feedback, buttons: FeedbackButtons)
  * the entries, in the order of their times, with its writer, its time, its
  * text, how many shapes its area covers and a Show button, which calls
  * `feedback.show`. Under an answered feedback it shows the agent's answer
- * and a Reopen button, which sets the feedback open again and keeps the
- * answer, so that the agent reads it again; a reopened feedback shows its
- * earlier answer. The panel opens when a feedback arrives.
+ * and a Reopen button, which sets the feedback open again, with the time of
+ * the press, and keeps the answer, so that the agent reads it again; a
+ * reopened feedback shows its earlier answer. The panel opens when a
+ * feedback arrives.
  * `opener` opens and closes the panel, and counts the entries and the
  * feedback; the panel's Close button, as Escape in the panel does, closes it
  * with one press and puts the focus back on `opener`. The panel opens as
@@ -394,11 +394,10 @@ export function bindTranscriptPanel(
   const feedbackButtons: FeedbackButtons = {
     show: (record) => feedback?.show(record),
     // Reopen reads the feedback as the board holds it at the press, and writes it open again only while the
-    // board holds it answered, so that a press doesn't undo a peer's newer change of it.
+    // board holds it answered, so that a press doesn't undo a peer's newer change of it. It records the
+    // press's time, so that a listener that receives the reopening later tells when the person reopened it.
     reopen: ({ id }) => {
-      if (feedback === undefined) return;
-      const current = getFeedback(feedback.map, id);
-      if (current?.status === 'answered') writeFeedback(feedback.map, { ...current, status: 'open' });
+      if (feedback !== undefined) reopenFeedback(feedback.map, id, now().toISOString());
     },
   };
   let entryCount = 0;

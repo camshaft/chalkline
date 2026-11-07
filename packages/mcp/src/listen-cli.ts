@@ -33,7 +33,8 @@ what people on the board say, write and draw, and for each feedback they open:
       becomes open, a new one or one a person reopens after an agent's answer: "id" holds its
       id, as read_feedback lists it, to pass to answer_feedback, "by" its writer, "text" what
       they wrote, "shapes" the ids of the shapes under its area, and "at" when the person wrote
-      it, or, for a reopened feedback, when the listener received the reopening.
+      it, or, for a reopened feedback, when the person reopened it, and where the page that
+      reopened it doesn't record that time, when the listener received the reopening.
 
 What was said, written or drawn before the listener started is left out, and so is each change
 that an agent's helper makes, which it marks on each element it adds or changes, each freehand
@@ -54,10 +55,11 @@ Options:
                            listener printed. A text or a freehand stroke whose copy doesn't
                            record when its words, or its place and points, last changed, as
                            one written before Chalkline's pages recorded it, is left out where
-                           its last change came before the listener started. A reopened
-                           feedback that the listener first receives open is left out where
-                           the agent's answer came at or before this time, since the board
-                           doesn't record when a person reopens a feedback
+                           its last change came before the listener started. A feedback
+                           reopened on a page that doesn't record when, which the listener
+                           first receives open, is left out where the agent's answer came at
+                           or before this time, since the person may have reopened it before
+                           then too
   --help                   print this text`;
 
 /** What the arguments after `chalkline-mcp listen` ask for. */

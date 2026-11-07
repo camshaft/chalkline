@@ -254,6 +254,7 @@ export function bindFeedback(
       shapes: canvas.shapesIn(region),
       status: 'open',
       answer: null,
+      reopened: null,
     });
     end();
   };
