@@ -10,8 +10,9 @@ export interface TurnServer {
 
 /**
  * The connection settings a person keeps in their browser, for every board it
- * opens. Both are unset by default, and a setting left unset leaves
- * Trystero's own in use: its STUN servers, and the public Nostr relays.
+ * opens. Both are unset by default, and a setting left unset leaves the
+ * defaults in use: Trystero's STUN servers, and the public Nostr relays that
+ * `PUBLIC_RELAYS` in `@chalkline/sync/join` lists.
  */
 export interface ConnectionSettings {
   /**
@@ -32,7 +33,7 @@ export const SETTINGS_KEY = 'chalkline.connection';
 /** The part of `Storage` that the settings read and write. */
 export type SettingsStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
-/** The settings of a browser that hasn't saved any: every default as Trystero sets it. */
+/** The settings of a browser that hasn't saved any: each setting unset, so that the defaults apply. */
 export function defaultSettings(): ConnectionSettings {
   return { turnServers: [], relays: [] };
 }
