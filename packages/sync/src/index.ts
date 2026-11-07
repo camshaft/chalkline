@@ -1,6 +1,19 @@
 export { Awareness } from 'y-protocols/awareness';
 export { connectAwareness, type AwarenessOptions } from './awareness';
 export {
+  answerFeedback,
+  FEEDBACK,
+  feedbackOf,
+  getFeedback,
+  listFeedback,
+  readFeedback,
+  writeFeedback,
+  type Feedback,
+  type FeedbackAnswer,
+  type FeedbackStatus,
+  type Region,
+} from './feedback';
+export {
   MemoryNetwork,
   MemoryPeer,
   seededRandom,
