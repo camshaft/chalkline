@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
 import type * as Y from 'yjs';
+import { indicesAbove } from './order';
 import type { BoardShape, Shape } from './shapes';
 import { convertSkeletons, type Skeleton } from './skeleton';
 
@@ -121,7 +121,7 @@ export async function addShapes(doc: Y.Doc, shapes: readonly Shape[]): Promise<s
       throw new Error(`convertToExcalidrawElements didn't make the shape ${id}: ${JSON.stringify(elements)}`);
     }
   }
-  const indices = indicesAbove(shared, elements.length);
+  const indices = indicesAbove(shared.values(), elements.length);
   doc.transact(() => {
     elements.forEach((element, place) => shared.set(element.id, { ...structuredClone(element), index: indices[place] }));
   });
@@ -138,25 +138,6 @@ function skeleton(shape: Shape, id: string): Skeleton {
     ...(start === undefined ? {} : { start: { id: start } }),
     ...(end === undefined ? {} : { end: { id: end } }),
   } as unknown as Skeleton;
-}
-
-/** `count` fractional indices, in order, above the index of every element on the board. */
-function indicesAbove(shared: Y.Map<unknown>, count: number): string[] {
-  let top: string | null = null;
-  for (const value of shared.values()) {
-    const index = typeof value === 'object' && value !== null ? (value as { index?: unknown }).index : undefined;
-    if (typeof index === 'string' && (top === null || index > top) && validIndex(index)) top = index;
-  }
-  return generateNKeysBetween(top, null, count);
-}
-
-function validIndex(index: string): boolean {
-  try {
-    generateKeyBetween(index, null);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function boardElement(value: unknown): BoardElement | null {
