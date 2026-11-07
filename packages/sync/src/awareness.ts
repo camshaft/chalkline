@@ -117,10 +117,11 @@ export interface AwarenessOptions {
  * state goes to every connected peer, and a peer that joins gets every state
  * this participant holds. A change from a peer goes on to each connected peer
  * that the sender's newest list of peers leaves out, and a removal from a peer
- * goes on to every connected peer but the sender; where another connected peer
+ * goes on to every connected peer but the sender. Where another connected peer
  * sent the removed state too, the removal doesn't apply, and goes on to that
- * peer instead, so that two peers that each sent the other the state don't
- * keep it. As a peer leaves, the states
+ * peer instead. It goes on once: where the same removal arrives again, it
+ * applies, so that peers that each sent the next one the state don't keep it.
+ * As a peer leaves, the states
  * that it sent are removed once no connected peer's list holds it, and the
  * removal goes to every connected peer. A participant that is still connected
  * through another peer answers the removal of its state with a newer one, and
@@ -152,6 +153,8 @@ export function connectAwareness(
   const departed = new Map<string, Set<number>>();
   // The number of the newest message from each connected peer that held each client's entry.
   const newest = new Map<string, Map<number, number>>();
+  // The clock of the newest removal of each client that this participant sent on instead of applying it.
+  const sentOn = new Map<number, number>();
   let stopped = false;
 
   /** Whether a connected peer other than `except` sent `client`'s state. */
@@ -226,10 +229,11 @@ export function connectAwareness(
     const sent = clients.get(from) ?? new Set<number>();
     // A removal of another client's state applies only where no other connected peer sent that state. Where one
     // did, the removal goes on to that peer instead, which then doesn't count this peer as a sender of the state,
-    // so that two peers that each sent the other the state don't both keep it.
+    // so that two peers that each sent the other the state don't both keep it. A removal goes on once: where it
+    // arrives again, it applies, so that it doesn't circle among peers that each sent the next one the state.
     const held: Entry[] = [];
     const kept = fresh.filter((entry) => {
-      const { client, removal } = entry;
+      const { client, clock, removal } = entry;
       if (client === self) return true;
       if (!removal) {
         sent.add(client);
@@ -237,7 +241,8 @@ export function connectAwareness(
       }
       sent.delete(client);
       if (!states.has(client)) return false;
-      if (!heardFrom(client, from)) return true;
+      if (!heardFrom(client, from) || clock <= (sentOn.get(client) ?? -1)) return true;
+      sentOn.set(client, clock);
       held.push(entry);
       return false;
     });
@@ -245,7 +250,6 @@ export function connectAwareness(
     else clients.set(from, sent);
     if (held.length > 0) {
       for (const [peerId, sources] of [...clients]) {
-        if (peerId === from) continue;
         const removals = held.filter(({ client }) => sources.has(client));
         if (removals.length > 0) sendUpdate(writeEntries(removals), peerId);
       }
@@ -271,6 +275,7 @@ export function connectAwareness(
       for (const client of removed) sent.delete(client);
       if (sent.size === 0) clients.delete(peerId);
     }
+    for (const client of removed) sentOn.delete(client);
     if (origin === UNREACHED) return;
     if (origin instanceof FromPeer) {
       const from = origin.peerId;

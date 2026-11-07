@@ -42,6 +42,16 @@ function removal(awareness: Awareness, client: number): Uint8Array {
   return encodeAwarenessUpdate(writer, [client], new Map());
 }
 
+/** An awareness message that sets `client`'s entry to `state` at `clock`, or removes it where `state` is null. */
+function awarenessMessage(client: number, clock: number, state: Record<string, unknown> | null): Uint8Array {
+  const writer = new Awareness(new Y.Doc());
+  made.push(writer);
+  writer.meta.set(client, { clock, lastUpdated: 0 });
+  const states = new Map<number, Record<string, unknown>>();
+  if (state !== null) states.set(client, state);
+  return encodeAwarenessUpdate(writer, [client], states);
+}
+
 describe('connectAwareness', () => {
   it("shows each participant the others' states, a participant that joins later among them", () => {
     const network = new MemoryNetwork();
@@ -285,6 +295,42 @@ describe('connectAwareness', () => {
     network.flush();
 
     expect(others(b.awareness)).toEqual(['a']);
+  });
+
+  it('sends a removal on once, applies it where it arrives again, and sends it on again once the state shows again', () => {
+    const network = new MemoryNetwork();
+    const b = participant(network, 'b');
+    const x = network.join('x');
+    const y = network.join('y');
+    network.flush();
+    const client = 99;
+    /** x and y each send b the state of `client`, a participant that isn't on the network. */
+    const show = () => {
+      y.send('awareness', awarenessMessage(client, 1, { name: 'z' }), 'b');
+      x.send('awareness', awarenessMessage(client, 1, { name: 'z' }), 'b');
+      network.flush();
+    };
+    /** x sends b the removal of that state; returns each message sent after it. */
+    const remove = (): string[] => {
+      x.send('awareness', awarenessMessage(client, 2, null), 'b');
+      const before = network.sent.length;
+      network.flush();
+      return sentSince(network, before);
+    };
+
+    // b holds the state from y too, so the removal goes on to y and doesn't apply.
+    show();
+    expect(remove()).toEqual(['b->y awareness']);
+    expect(b.awareness.getStates().has(client)).toBe(true);
+    // The same removal arrives again, as among peers that each sent the next one the state: it applies.
+    expect(remove()).toEqual(['b->y awareness']);
+    expect(b.awareness.getStates().has(client)).toBe(false);
+
+    // Once the state shows again, the next removal goes on to y again.
+    show();
+    expect(b.awareness.getStates().has(client)).toBe(true);
+    expect(remove()).toEqual(['b->y awareness']);
+    expect(b.awareness.getStates().has(client)).toBe(true);
   });
 
   it('answers a removal of its own state with that state at a later clock, once', () => {
