@@ -8,8 +8,10 @@
 // the area's outline gone and the rectangle in its new place. A third test opens the board in a
 // desktop's window and in a phone's, 390 px wide, checks that the page's controls sit in
 // Excalidraw's own UI over a canvas that fills the window, uses each of them there, and keeps a
-// screenshot of each layout; on the desktop it also presses the pen's side button. It needs the
-// page and the helper that `npm run build` writes, and `npm run test:e2e` runs it.
+// screenshot of each layout; on the desktop it also presses the pen's side button. A fourth test
+// presses a pen's tip with each tool, also after a press whose release the page didn't receive,
+// and checks that it draws, selects and pans as a mouse's press does. It needs the page and the
+// helper that `npm run build` writes, and `npm run test:e2e` runs it.
 import { randomBytes } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -103,7 +105,7 @@ interface ShownFeedback {
   y: number | null;
 }
 
-/** The parts of the page's handle that the layout and feedback tests read. */
+/** The parts of the page's handle that the layout, feedback and pen tests read. */
 interface Handle {
   room: string;
   awareness: { getLocalState(): Record<string, unknown> | null };
@@ -117,8 +119,11 @@ interface Handle {
       zoom: { value: number };
       offsetLeft: number;
       offsetTop: number;
+      selectedElementIds: Record<string, boolean>;
     };
     updateScene(scene: { appState: Record<string, unknown> }): void;
+    getSceneElements(): { id: string; type: string }[];
+    setActiveTool(tool: { type: string }): void;
   };
 }
 
@@ -254,6 +259,33 @@ async function pressSideButton(page: Page, x: number, y: number): Promise<void> 
         pointerType: 'pen',
       });
     }
+  } finally {
+    await cdp.detach();
+  }
+}
+
+/**
+ * Presses the pen's tip at `start` on `page`, with half its pressure, moves it through each of `moves` and lifts it
+ * at the last. As with `pressSideButton`, the pen goes through Chromium's DevTools protocol.
+ */
+async function penStroke(page: Page, start: [number, number], ...moves: [number, number][]): Promise<void> {
+  const cdp = await page.context().newCDPSession(page);
+  const send = (type: 'mouseMoved' | 'mousePressed' | 'mouseReleased', [x, y]: [number, number], pressed: boolean) =>
+    cdp.send('Input.dispatchMouseEvent', {
+      type,
+      x,
+      y,
+      button: type === 'mouseMoved' && !pressed ? 'none' : 'left',
+      buttons: pressed ? 1 : 0,
+      clickCount: type === 'mouseMoved' ? 0 : 1,
+      force: pressed ? 0.5 : 0,
+      pointerType: 'pen',
+    });
+  try {
+    await send('mouseMoved', start, false);
+    await send('mousePressed', start, true);
+    for (const point of moves) await send('mouseMoved', point, true);
+    await send('mouseReleased', moves.at(-1) ?? start, false);
   } finally {
     await cdp.detach();
   }
@@ -660,4 +692,101 @@ describe('the local-network mode, end to end', () => {
       await page.context().close();
     }
   }, 180_000);
+
+  it("acts on a pen tip's press as on a mouse's with each tool, also after a press whose release the page didn't receive", async () => {
+    const lan = server;
+    const chrome = browser;
+    if (lan === undefined || chrome === undefined) throw new Error('the server or the browser did not start');
+    const { page } = await openBoard(chrome, boardLink(lan.port), 'pen');
+    try {
+      const pick = (type: string) =>
+        page.evaluate((tool) => (window as unknown as E2eWindow).chalkline?.api.setActiveTool({ type: tool }), type);
+      const shapesAre = (types: string[]) =>
+        page.waitForFunction(
+          (expected) =>
+            JSON.stringify((window as unknown as E2eWindow).chalkline?.api.getSceneElements().map(({ type }) => type)) ===
+            expected,
+          JSON.stringify(types),
+        );
+      const selectedAre = (ids: string[]) =>
+        page.waitForFunction(
+          (expected) =>
+            JSON.stringify(Object.keys((window as unknown as E2eWindow).chalkline?.api.getAppState().selectedElementIds ?? {})) ===
+            expected,
+          JSON.stringify(ids),
+        );
+
+      // Free draw and the rectangle draw where the pen presses and moves.
+      await pick('freedraw');
+      await penStroke(page, [300, 300], [340, 320], [380, 340], [420, 360]);
+      await shapesAre(['freedraw']);
+      await pick('rectangle');
+      await penStroke(page, [600, 300], [650, 340], [700, 380]);
+      await shapesAre(['freedraw', 'rectangle']);
+      const rectangle = await page.evaluate(() => (window as unknown as E2eWindow).chalkline?.api.getSceneElements()[1].id);
+      if (rectangle === undefined) throw new Error("the page didn't answer the rectangle's id");
+      // With the selection tool, a tap on the empty canvas clears the selection, and a drag around the rectangle
+      // selects it.
+      await pick('selection');
+      await penStroke(page, [300, 650]);
+      await selectedAre([]);
+      await penStroke(page, [570, 270], [650, 340], [730, 410]);
+      await selectedAre([rectangle]);
+      // The hand pans the canvas as the pen drags.
+      await pick('hand');
+      const before = await page.evaluate(() => {
+        const state = (window as unknown as E2eWindow).chalkline?.api.getAppState();
+        return { x: state?.scrollX, y: state?.scrollY };
+      });
+      await penStroke(page, [400, 500], [450, 525], [500, 550]);
+      await page.waitForFunction((scroll) => {
+        const state = (window as unknown as E2eWindow).chalkline?.api.getAppState();
+        return state !== undefined && state.scrollX !== scroll.x && state.scrollY !== scroll.y;
+      }, before);
+
+      // A release the page doesn't receive: a listener on the window stops the next release before the page's
+      // listeners, as where the browser doesn't send it.
+      await page.evaluate(() => {
+        const drop = window as unknown as { chalklineDropRelease?: boolean };
+        window.addEventListener(
+          'pointerup',
+          (event) => {
+            if (drop.chalklineDropRelease !== true) return;
+            drop.chalklineDropRelease = false;
+            event.stopImmediatePropagation();
+          },
+          true,
+        );
+      });
+      const dropNextRelease = () =>
+        page.evaluate(() => {
+          (window as unknown as { chalklineDropRelease?: boolean }).chalklineDropRelease = true;
+        });
+      const dropped = () =>
+        page.waitForFunction(() => (window as unknown as { chalklineDropRelease?: boolean }).chalklineDropRelease === false);
+      // After a pen's press whose release didn't come, a mouse's press draws, where Excalidraw would count two
+      // pointers and pan the canvas.
+      await pick('selection');
+      await dropNextRelease();
+      await penStroke(page, [300, 650]);
+      await dropped();
+      await pick('freedraw');
+      await page.mouse.move(300, 450);
+      await page.mouse.down();
+      await page.mouse.move(400, 490, { steps: 5 });
+      await page.mouse.up();
+      await shapesAre(['freedraw', 'rectangle', 'freedraw']);
+      // After a mouse's press whose release didn't come, the pen's press draws.
+      await pick('selection');
+      await dropNextRelease();
+      await page.mouse.click(300, 650);
+      await dropped();
+      await pick('freedraw');
+      await penStroke(page, [300, 550], [350, 570], [400, 590]);
+      await shapesAre(['freedraw', 'rectangle', 'freedraw', 'freedraw']);
+    } finally {
+      await page.screenshot({ path: join(SCREENSHOTS, 'e2e-pen.png') }).catch(() => undefined);
+      await page.context().close();
+    }
+  }, 120_000);
 });
