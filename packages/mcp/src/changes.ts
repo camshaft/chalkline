@@ -30,11 +30,11 @@ export type ChangesRead = {
  * deleted between the two, with the shape as get_board lists it, and a cursor counts these
  * entries. The log compares the board where a read needs it, and on each change of the board while
  * a read waits, so a change of what get_board doesn't list, such as an element's version, doesn't
- * add an entry.
+ * add an entry, and neither does a change of only a text's place, size or font.
  */
 export class ChangeLog {
   readonly #elements: Y.Map<unknown>;
-  /** The shapes of the last comparison, by id, each with its JSON. */
+  /** The shapes of the last comparison, by id, each with the JSON its comparison reads. */
   #shapes = new Map<string, { shape: BoardShape; json: string }>();
   readonly #entries: BoardChange[] = [];
   /** Whether the board changed since the last comparison. */
@@ -93,7 +93,7 @@ export class ChangeLog {
     this.#stale = false;
     const shapes = new Map<string, { shape: BoardShape; json: string }>();
     for (const shape of readBoard(this.#elements.values())) {
-      const json = JSON.stringify(shape);
+      const json = comparedOf(shape);
       shapes.set(shape.id, { shape, json });
       const before = this.#shapes.get(shape.id);
       if (before === undefined) this.#entries.push({ change: 'added', ...shape });
@@ -104,6 +104,16 @@ export class ChangeLog {
     }
     this.#shapes = shapes;
   }
+}
+
+/**
+ * The JSON that the comparison of `shape` with its last copy reads: the shape as get_board lists
+ * it, but of a text without its place, size and font, so that a change of only those, as where a
+ * page measures the text again, isn't a change of the text.
+ */
+function comparedOf(shape: BoardShape): string {
+  if (shape.kind !== 'text') return JSON.stringify(shape);
+  return JSON.stringify({ ...shape, x: undefined, y: undefined, width: undefined, height: undefined, fontFamily: undefined });
 }
 
 /**
@@ -143,6 +153,7 @@ export function registerChanges(server: McpServer, doc: Y.Doc): ChangeLog {
       description: [
         'Reads what changed on the board: each shape added, changed or deleted after `cursor`, once, as get_board lists it, with `change` saying which, and the cursor to give the next call.',
         "A deleted shape is listed as it was before its deletion, and a change of a shape's label is a change of the shape.",
+        "A change of only a text's place, size or font isn't listed, since a page changes them as it measures the text again; the text's next listed change shows them as they are then.",
         "A shape an agent added lists the agent as its creator, so a shape without a creator is a person's.",
         'Where no shape changed after the cursor, it answers on the next change of a shape, or with no changes once the client cancels the call.',
         'Left out, the cursor is 0, and the call lists each shape on the board as added.',
