@@ -1,7 +1,7 @@
 // `chalkline-mcp listen`: joins the Chalkline board that its link opens, and prints on standard
-// output one JSON line for each group of words people on the board say between two pauses, for an
-// agent client that turns each line a command prints into a message to its agent, such as Claude
-// Code's Monitor tool.
+// output one JSON line for each group of words people on the board say between two pauses, each
+// text they write and each sketch they draw, for an agent client that turns each line a command
+// prints into a message to its agent, such as Claude Code's Monitor tool.
 import { parseArgs } from 'node:util';
 import {
   APP_ID,
@@ -12,30 +12,42 @@ import {
   type RoomSecrets,
 } from '@chalkline/sync';
 import * as Y from 'yjs';
-import { listen, PAUSE_MS, watchRoom } from './listen';
-import { TranscriptLog } from './transcript';
+import { BOARD_PAUSE_MS, listenToBoard, PAUSE_MS, watchRoom } from './listen';
 
 export const LISTEN_USAGE = `Usage: chalkline-mcp listen <board link> [options]
 
-Joins the Chalkline board that the link opens, and prints on standard output one JSON line,
-{"at", "speakers", "text"}, for each group of words people on the board say with no pause of
---pause's length between them: "text" holds the group's words, "speakers" who said them, and
-"at" when its last words were said. What was said before the listener started is left out.
-Each line it logs goes to standard error, such as where it loses the room and where it joins it
-again. It listens until Ctrl-C or SIGTERM stops it, and then prints the words that wait for their
-pause before it leaves the room.
+Joins the Chalkline board that the link opens, and prints on standard output one JSON line for
+what people on the board say, write and draw:
+
+  {"at", "speakers", "text"}  for each group of words people say with no pause of --pause's
+      length between them: "text" holds the group's words, "speakers" who said them, and "at"
+      when its last words were said;
+  {"at", "kind": "text", "text"}  for each text a person writes or changes, a shape's label
+      among them, once it stays unchanged for --board-pause's length: "text" holds its words,
+      and "at" when the person last changed it;
+  {"at", "kind": "sketch", "ids", "box"}  for the freehand strokes a person draws, once they
+      stay unchanged for --board-pause's length: "ids" holds the strokes' ids, "box" the part of
+      the board they cover, as {"x", "y", "width", "height"}, and "at" when the person last
+      changed one.
+
+What was said, written or drawn before the listener started is left out, and so is each shape
+an agent added, which holds the agent's creator mark. Each line it logs goes to standard error,
+such as where it loses the room and where it joins it again. It listens until Ctrl-C or SIGTERM
+stops it, and then prints the lines that wait for their pause before it leaves the room.
 
 Options:
-  --pause <seconds>  how long a pause ends a group (default: 1)
-  --after <time>     leave out what was said at or before this ISO 8601 time, in place of the
-                     time the listener starts, such as the "at" of the last line an earlier
-                     listener printed
-  --help             print this text`;
+  --pause <seconds>        how long a pause ends a group of words (default: 1)
+  --board-pause <seconds>  how long a text or a sketch stays unchanged before its line
+                           (default: 3)
+  --after <time>           leave out what was said, written or drawn at or before this ISO 8601
+                           time, in place of the time the listener starts, such as the "at" of
+                           the last line an earlier listener printed
+  --help                   print this text`;
 
 /** What the arguments after `chalkline-mcp listen` ask for. */
 export type ListenArgs =
   | { help: true }
-  | { help: false; room: RoomSecrets; relays: string[]; pauseMs: number; after: number };
+  | { help: false; room: RoomSecrets; relays: string[]; pauseMs: number; boardPauseMs: number; after: number };
 
 function roomOf(link: string): RoomSecrets {
   let address: URL;
@@ -49,13 +61,13 @@ function roomOf(link: string): RoomSecrets {
   return secrets;
 }
 
-/** The pause that `--pause` sets in seconds, in milliseconds. */
-function pauseOf(text: string | undefined): number {
-  if (text === undefined) return PAUSE_MS;
+/** The pause that the option `--<name>` sets in seconds, or `fallback` where it is left out, in milliseconds. */
+function pauseOf(name: string, text: string | undefined, fallback: number): number {
+  if (text === undefined) return fallback;
   const seconds = Number(text);
   if (!Number.isFinite(seconds) || seconds <= 0) {
     throw new Error(
-      `--pause is ${JSON.stringify(text)}: give the pause's length in seconds, above 0, such as 0.5.\n\n${LISTEN_USAGE}`,
+      `--${name} is ${JSON.stringify(text)}: give the pause's length in seconds, above 0, such as 0.5.\n\n${LISTEN_USAGE}`,
     );
   }
   return seconds * 1000;
@@ -80,6 +92,7 @@ export function parseListenArgs(args: string[], now: number): ListenArgs {
     allowPositionals: true,
     options: {
       pause: { type: 'string' },
+      'board-pause': { type: 'string' },
       after: { type: 'string' },
       help: { type: 'boolean', default: false },
     },
@@ -91,7 +104,8 @@ export function parseListenArgs(args: string[], now: number): ListenArgs {
     help: false,
     room: roomOf(link),
     relays: relaysFromAddress(link),
-    pauseMs: pauseOf(values.pause),
+    pauseMs: pauseOf('pause', values.pause, PAUSE_MS),
+    boardPauseMs: pauseOf('board-pause', values['board-pause'], BOARD_PAUSE_MS),
     after: afterOf(values.after, now),
   };
 }
@@ -114,14 +128,15 @@ export async function runListen(args: string[]): Promise<void> {
     await new Promise<void>((resolve) => process.stdout.write(`${LISTEN_USAGE}\n`, () => resolve()));
     return;
   }
-  const { room: secrets, relays, pauseMs, after } = parsed;
+  const { room: secrets, relays, pauseMs, boardPauseMs, after } = parsed;
 
   const doc = new Y.Doc();
-  const listener = listen(new TranscriptLog(doc), {
+  const listener = listenToBoard(doc, {
     after,
     pauseMs,
-    onHeard: (heard) => {
-      process.stdout.write(`${JSON.stringify(heard)}\n`);
+    boardPauseMs,
+    print: (line) => {
+      process.stdout.write(`${JSON.stringify(line)}\n`);
     },
   });
   const done = stopped();
@@ -145,7 +160,7 @@ export async function runListen(args: string[]): Promise<void> {
   });
   watchRoom(transport, (line) => console.error(line));
   console.error(
-    `listening in room ${secrets.room} through ${relays.length > 0 ? relays.join(', ') : 'the public Nostr relays'}, for what is said after ${new Date(after).toISOString()}`,
+    `listening in room ${secrets.room} through ${relays.length > 0 ? relays.join(', ') : 'the public Nostr relays'}, for what is said, written or drawn after ${new Date(after).toISOString()}`,
   );
 
   await done;

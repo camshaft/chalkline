@@ -1,7 +1,24 @@
 import { appendEntry, connectDoc, MemoryNetwork, transcriptOf, type TranscriptEntry } from '@chalkline/sync';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
-import { listen, LOST, PAUSE_MS, watchRoom, type Heard, type Listener } from './listen';
+import { ELEMENTS } from './board';
+import { withCreator, type Creator } from './creator';
+import {
+  BOARD_PAUSE_MS,
+  listen,
+  listenSketches,
+  listenTexts,
+  listenToBoard,
+  LOST,
+  PAUSE_MS,
+  watchRoom,
+  type BoardListenOptions,
+  type Heard,
+  type Line,
+  type Listener,
+  type Sketched,
+  type Written,
+} from './listen';
 import { LISTEN_USAGE, parseListenArgs } from './listen-cli';
 import { TranscriptLog } from './transcript';
 
@@ -148,6 +165,212 @@ describe('listen', () => {
   });
 });
 
+/** An element of a person's page, changed `seconds` after the listener starts. */
+const element = (fields: Record<string, unknown>, seconds: number): Record<string, unknown> => ({
+  type: 'rectangle',
+  x: 0,
+  y: 0,
+  width: 100,
+  height: 20,
+  isDeleted: false,
+  version: 1,
+  versionNonce: 1,
+  updated: START + seconds * 1000,
+  ...fields,
+});
+
+/** A text of a person's page that holds `words`, changed `seconds` after the listener starts. */
+const text = (id: string, words: string, seconds: number, fields: Record<string, unknown> = {}): Record<string, unknown> =>
+  element({ id, type: 'text', text: words, originalText: words, ...fields }, seconds);
+
+/** A freehand stroke of a person's page at `x` and `y` through `points`, changed `seconds` after the listener starts. */
+const stroke = (id: string, x: number, y: number, points: number[][], seconds: number): Record<string, unknown> =>
+  element({ id, type: 'freedraw', x, y, points }, seconds);
+
+/** The agent whose creator mark the agent's shapes of these tests hold. */
+const claude: Creator = { kind: 'agent', name: 'Claude' };
+
+interface Watching<T> {
+  elements: Y.Map<unknown>;
+  /** Each line the listener would print, in order. */
+  lines: T[];
+  listener: Listener;
+}
+
+/** A board's copy that holds `values`, and a listener of `kind` of it that starts at `START`. */
+function watching<T>(
+  kind: (doc: Y.Doc, options: BoardListenOptions<T>) => Listener,
+  values: Record<string, unknown>[] = [],
+  pauseMs = BOARD_PAUSE_MS,
+): Watching<T> {
+  const doc = new Y.Doc();
+  const elements = doc.getMap<unknown>(ELEMENTS);
+  for (const value of values) elements.set(String(value.id), value);
+  const lines: T[] = [];
+  const listener = kind(doc, { after: START, pauseMs, onLine: (line) => lines.push(line) });
+  return { elements, lines, listener };
+}
+
+describe('listenTexts', () => {
+  it('prints a text a person types once it stays unchanged for the pause, and again only where its words change', () => {
+    const { elements, lines } = watching<Written>(listenTexts);
+    // Excalidraw adds the text empty, then changes it as the person types.
+    elements.set('note', text('note', '', 1));
+    elements.set('note', text('note', 'Claude', 2));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS - 1);
+    elements.set('note', text('note', 'Claude are you listening?', 3));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS - 1);
+    expect(lines).toEqual([]);
+
+    vi.advanceTimersByTime(1);
+    expect(lines).toEqual([{ at: at(3), kind: 'text', text: 'Claude are you listening?' }]);
+
+    // The person moves the text, which leaves its words as they were.
+    elements.set('note', text('note', 'Claude are you listening?', 10, { x: 200 }));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toHaveLength(1);
+
+    elements.set('note', text('note', 'Claude, draw a box', 20, { x: 200 }));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([
+      { at: at(3), kind: 'text', text: 'Claude are you listening?' },
+      { at: at(20), kind: 'text', text: 'Claude, draw a box' },
+    ]);
+  });
+
+  it("prints the label a person writes on a shape, and the text's words as Excalidraw keeps them unwrapped", () => {
+    const { elements, lines } = watching<Written>(listenTexts);
+    elements.set('box', element({ id: 'box' }, 1));
+    elements.set('label', text('label', 'start\nhere', 2, { containerId: 'box', originalText: 'start here' }));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(2), kind: 'text', text: 'start here' }]);
+  });
+
+  it("leaves out an agent's text and shape, a deleted text, and a text written before the listener started", () => {
+    const { elements, lines } = watching<Written>(listenTexts, [text('old', 'an old note', -60)]);
+    // A peer's copy of the board brings a text written before the start.
+    elements.set('late', text('late', 'written before', -5));
+    elements.set('mine', withCreator(text('mine', 'I wrote this', 1), claude));
+    elements.set('box', withCreator(element({ id: 'box' }, 1), claude));
+    elements.set('gone', text('gone', 'a typo', 2));
+    elements.set('gone', text('gone', 'a typo', 3, { isDeleted: true }));
+    // The person moves the old note, which leaves its words as they were.
+    elements.set('old', text('old', 'an old note', 4, { x: 50 }));
+    vi.advanceTimersByTime(10 * BOARD_PAUSE_MS);
+    expect(lines).toEqual([]);
+  });
+
+  it('prints the text that waits for its pause at once on flush, and drops it on stop', () => {
+    const { elements, lines, listener } = watching<Written>(listenTexts);
+    elements.set('note', text('note', 'draw a box', 1));
+    listener.flush();
+    expect(lines).toEqual([{ at: at(1), kind: 'text', text: 'draw a box' }]);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toHaveLength(1);
+
+    elements.set('note', text('note', 'draw a circle', 2));
+    listener.stop();
+    elements.set('other', text('other', 'and an arrow', 3));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    listener.flush();
+    expect(lines).toHaveLength(1);
+  });
+});
+
+describe('listenSketches', () => {
+  it('prints the strokes a person draws as one line once they stay unchanged for the pause, with the part of the board they cover', () => {
+    const { elements, lines } = watching<Sketched>(listenSketches);
+    // Excalidraw changes a stroke as the person draws it, one point at a time.
+    elements.set('one', stroke('one', 10, 20, [[0, 0]], 1));
+    elements.set('one', stroke('one', 10, 20, [[0, 0], [30, 40]], 1.5));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS - 1);
+    elements.set('two', stroke('two', 100, 0, [[0, 0], [-20, 10], [10, 50]], 2));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS - 1);
+    expect(lines).toEqual([]);
+
+    vi.advanceTimersByTime(1);
+    // The first stroke covers 10 to 40 across and 20 to 60 down, the second 80 to 110 and 0 to 50.
+    expect(lines).toEqual([
+      { at: at(2), kind: 'sketch', ids: ['one', 'two'], box: { x: 10, y: 0, width: 100, height: 60 } },
+    ]);
+
+    elements.set('three', stroke('three', 0, 0, [[0, 0], [5, 5]], 10));
+    elements.set('one', stroke('one', 10, 25, [[0, 0], [30, 40]], 11));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([
+      { at: at(2), kind: 'sketch', ids: ['one', 'two'], box: { x: 10, y: 0, width: 100, height: 60 } },
+      { at: at(11), kind: 'sketch', ids: ['three', 'one'], box: { x: 0, y: 0, width: 40, height: 65 } },
+    ]);
+  });
+
+  it("reads a stroke whose points don't read as points by its x, y, width and height", () => {
+    const { elements, lines } = watching<Sketched>(listenSketches);
+    elements.set('odd', element({ id: 'odd', type: 'freedraw', x: 5, y: 6, width: 7, height: 8, points: [[0, 'up']] }, 1));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(1), kind: 'sketch', ids: ['odd'], box: { x: 5, y: 6, width: 7, height: 8 } }]);
+  });
+
+  it("leaves out an agent's stroke, a deleted stroke, a stroke drawn before the listener started, and other shapes", () => {
+    const { elements, lines } = watching<Sketched>(listenSketches, [stroke('old', 0, 0, [[0, 0], [9, 9]], -60)]);
+    elements.set('mine', withCreator(stroke('mine', 0, 0, [[0, 0], [9, 9]], 1), claude));
+    elements.set('box', element({ id: 'box' }, 1));
+    elements.set('gone', stroke('gone', 0, 0, [[0, 0], [9, 9]], 2));
+    elements.set('gone', { ...stroke('gone', 0, 0, [[0, 0], [9, 9]], 3), isDeleted: true });
+    vi.advanceTimersByTime(10 * BOARD_PAUSE_MS);
+    expect(lines).toEqual([]);
+  });
+
+  it('prints the strokes that wait for their pause at once on flush, and drops them on stop', () => {
+    const { elements, lines, listener } = watching<Sketched>(listenSketches);
+    elements.set('one', stroke('one', 0, 0, [[0, 0], [9, 9]], 1));
+    listener.flush();
+    expect(lines).toEqual([{ at: at(1), kind: 'sketch', ids: ['one'], box: { x: 0, y: 0, width: 9, height: 9 } }]);
+
+    elements.set('two', stroke('two', 0, 0, [[0, 0], [9, 9]], 2));
+    listener.stop();
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    listener.flush();
+    expect(lines).toHaveLength(1);
+  });
+});
+
+describe('listenToBoard', () => {
+  it("prints what people say, write and draw, each as its line, and nothing for an agent's shape", () => {
+    const doc = new Y.Doc();
+    const transcript = transcriptOf(doc);
+    const elements = doc.getMap<unknown>(ELEMENTS);
+    const lines: Line[] = [];
+    const listener = listenToBoard(doc, {
+      after: START,
+      pauseMs: PAUSE_MS,
+      boardPauseMs: BOARD_PAUSE_MS,
+      print: (line) => lines.push(line),
+    });
+    appendEntry(transcript, said('one', 1, 'draw a box'));
+    elements.set('note', text('note', 'a box here', 1));
+    elements.set('one', stroke('one', 0, 0, [[0, 0], [9, 9]], 1));
+    elements.set('mine', withCreator(text('mine', 'I drew this', 1), claude));
+    vi.advanceTimersByTime(PAUSE_MS);
+    expect(lines).toEqual([{ at: at(1), speakers: ['Ada'], text: 'draw a box' }]);
+
+    vi.advanceTimersByTime(BOARD_PAUSE_MS - PAUSE_MS);
+    expect(lines).toEqual([
+      { at: at(1), speakers: ['Ada'], text: 'draw a box' },
+      { at: at(1), kind: 'text', text: 'a box here' },
+      { at: at(1), kind: 'sketch', ids: ['one'], box: { x: 0, y: 0, width: 9, height: 9 } },
+    ]);
+
+    appendEntry(transcript, said('two', 5, 'and a circle'));
+    elements.set('note', text('note', 'a circle here', 5));
+    listener.flush();
+    expect(lines.slice(3)).toEqual([
+      { at: at(5), speakers: ['Ada'], text: 'and a circle' },
+      { at: at(5), kind: 'text', text: 'a circle here' },
+    ]);
+    listener.stop();
+  });
+});
+
 describe('watchRoom', () => {
   it('logs where the listener loses the room as its last peer leaves, and where it joins the room again', () => {
     const network = new MemoryNetwork();
@@ -188,15 +411,18 @@ describe('parseListenArgs', () => {
       room: { room: 'board', key: 'secret' },
       relays: [],
       pauseMs: 1000,
+      boardPauseMs: 3000,
       after: START,
     });
   });
 
-  it("reads --pause in seconds, --after as an ISO 8601 time, and the relay a local network's link holds", () => {
+  it("reads --pause and --board-pause in seconds, --after as an ISO 8601 time, and the relay a local network's link holds", () => {
     const args = [
       'http://192.168.1.2:8080/?relay=/relay#room=board&key=secret',
       '--pause',
       '0.5',
+      '--board-pause',
+      '5',
       '--after',
       '2026-11-07T02:59:00.000Z',
     ];
@@ -205,6 +431,7 @@ describe('parseListenArgs', () => {
       room: { room: 'board', key: 'secret' },
       relays: ['ws://192.168.1.2:8080/relay'],
       pauseMs: 500,
+      boardPauseMs: 5000,
       after: Date.parse('2026-11-07T02:59:00.000Z'),
     });
   });
@@ -217,6 +444,7 @@ describe('parseListenArgs', () => {
   it("refuses a pause, a time or a link it can't read, and a call that doesn't give one link", () => {
     expect(() => parseListenArgs([link, '--pause', 'soon'], START)).toThrow('--pause is "soon"');
     expect(() => parseListenArgs([link, '--pause', '0'], START)).toThrow('--pause is "0"');
+    expect(() => parseListenArgs([link, '--board-pause', 'later'], START)).toThrow('--board-pause is "later"');
     expect(() => parseListenArgs([link, '--after', 'yesterday'], START)).toThrow('--after is "yesterday"');
     expect(() => parseListenArgs(['https://camshaft.github.io/chalkline/'], START)).toThrow(
       'The link lacks the #room=<name>&key=<password> fragment.',
