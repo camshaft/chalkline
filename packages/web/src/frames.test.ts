@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { bindFramesList, framesOf, LIST_PROMPT, UNNAMED_FRAME, type FramesBoard, type ListedFrame } from './frames';
+import {
+  bindFramesList,
+  framesOf,
+  LIST_PROMPT,
+  UNNAMED_FRAME,
+  type FramesBoard,
+  type ListedFrame,
+  type SceneElement,
+} from './frames';
 
-function frame(id: string, fields: Record<string, unknown> = {}) {
+function frame(id: string, fields: Partial<SceneElement> = {}): SceneElement {
   return { id, type: 'frame', x: 0, y: 0, width: 100, height: 50, isDeleted: false, name: id, ...fields };
 }
 
@@ -27,7 +35,7 @@ function testBoard(initial: ListedFrame[] = []) {
 }
 
 function options(select: HTMLSelectElement): [string, string | null][] {
-  return [...select.options].map((option) => [option.value, option.textContent]);
+  return Array.from(select.options, (option): [string, string | null] => [option.value, option.textContent]);
 }
 
 const ONE: ListedFrame = { id: 'one', name: 'One', x: 0, y: 0, width: 200, height: 100 };

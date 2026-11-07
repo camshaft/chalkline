@@ -494,7 +494,7 @@ describe('the local-network mode, end to end', () => {
         (names) => {
           const select = document.querySelector<HTMLSelectElement>('#frames-list');
           if (select === null || select.hidden) return false;
-          const listed = [...select.options].slice(1).map((option) => option.textContent);
+          const listed = Array.from(select.options, (option) => option.textContent).slice(1);
           return JSON.stringify(listed) === JSON.stringify(names);
         },
         FRAMES,
