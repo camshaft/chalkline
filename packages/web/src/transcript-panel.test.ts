@@ -74,8 +74,19 @@ function laidOut(field: HTMLTextAreaElement) {
   field.style.setProperty('line-height', '20px');
   field.style.setProperty('padding-top', '4px');
   field.style.setProperty('padding-bottom', '4px');
+  field.style.setProperty('border-top-style', 'solid');
+  field.style.setProperty('border-bottom-style', 'solid');
   field.style.setProperty('border-top-width', '1px');
   field.style.setProperty('border-bottom-width', '1px');
+  const style = getComputedStyle(field);
+  expect([style.boxSizing, style.lineHeight, style.paddingTop, style.paddingBottom, style.borderTopWidth, style.borderBottomWidth]).toEqual([
+    'border-box',
+    '20px',
+    '4px',
+    '4px',
+    '1px',
+    '1px',
+  ]);
   Object.defineProperty(field, 'scrollHeight', {
     configurable: true,
     get: () => 8 + 20 * field.value.split('\n').reduce((lines, line) => lines + Math.max(1, Math.ceil(line.length / 30)), 0),
