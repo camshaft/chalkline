@@ -12,7 +12,15 @@ import { bindElements } from './binding';
 import { joinErrorText, loadSettings, roomOptions, type ConnectionSettings, type SettingsStorage } from './connection';
 import { bindPresence, keepName, participantName, setName, type Button, type NameStorage, type Pointer } from './presence';
 import { connectionReport, type ConnectionReport } from './report';
-import { newRoomSecrets, parseRoomFragment, roomFragment, type RoomSecrets } from './room';
+import type { RoomSecrets } from './room';
+import {
+  boardInAddress,
+  chooseRoom,
+  connectNewBoardButton,
+  reloadOnRoomChange,
+  windowAddress,
+  type PageAddress,
+} from './room-links';
 import { connectSettingsButton } from './settings-panel';
 
 /** What the page shows on `window.chalkline`, for the live probe and for debugging. */
@@ -51,13 +59,17 @@ function pageInput(id: string): HTMLInputElement {
   return found;
 }
 
-/** The room the link names, or a new room, whose link then replaces the page's address. */
-function roomFromLink(): RoomSecrets {
-  const secrets = parseRoomFragment(window.location.hash);
-  if (secrets !== null) return secrets;
-  const fresh = newRoomSecrets();
-  window.history.replaceState(null, '', roomFragment(fresh));
-  return fresh;
+/**
+ * Shows the join screen in the board's place until a person chooses a board,
+ * and hides the bar's New board button meanwhile, since the screen holds one.
+ */
+async function boardFromJoinScreen(address: PageAddress, status: HTMLElement, newBoard: HTMLElement): Promise<RoomSecrets> {
+  newBoard.hidden = true;
+  status.textContent = 'Start a new board, or join one from its link.';
+  const secrets = await chooseRoom(pageElement('app'), address);
+  newBoard.hidden = false;
+  status.textContent = 'Joining the room...';
+  return secrets;
 }
 
 /** The browser's `localStorage`, or null where the browser doesn't let the page use it. */
@@ -92,7 +104,6 @@ function bindNameField(field: HTMLInputElement, awareness: Awareness, storage: N
 
 async function start(): Promise<ChalklineHandle> {
   const status = pageElement('status');
-  const secrets = roomFromLink();
   const storage = browserStorage();
   const settings = loadSettings(storage);
   connectSettingsButton(pageElement('settings-button'), pageElement('settings'), {
@@ -100,9 +111,18 @@ async function start(): Promise<ChalklineHandle> {
     storage,
     reload: () => window.location.reload(),
   });
+  const address = windowAddress(window);
+  const newBoard = pageElement('new-board');
+  // Setting the fragment adds a history entry, so the Back button returns to the board before.
+  connectNewBoardButton(newBoard, (fragment) => {
+    window.location.hash = fragment;
+  });
   const doc = new Y.Doc();
   const awareness = new Awareness(doc);
   bindNameField(pageInput('name'), awareness, storage ?? undefined);
+  const secrets = boardInAddress(address) ?? (await boardFromJoinScreen(address, status, newBoard));
+  // The page joins its board only as it loads, so an address that names another board, or none, loads it again.
+  reloadOnRoomChange(address, secrets, () => window.location.reload());
   // A page that the local-network mode serves names that machine's relay in its address, and finds
   // the other participants through it in place of the Nostr relays.
   const relays = relaysFromAddress(window.location.href);
@@ -113,7 +133,7 @@ async function start(): Promise<ChalklineHandle> {
     },
   });
   const transport = trysteroTransport(room);
-  // Connect the document and the awareness before anything awaits, so that a peer's first messages find their handlers.
+  // Connect the document and the awareness before anything awaits after the join, so that a peer's first messages find their handlers.
   const onSendError = (error: unknown) => console.warn('chalkline: a send failed', error);
   connectDoc(doc, transport, { onSendError });
   connectAwareness(awareness, transport, { onSendError });
