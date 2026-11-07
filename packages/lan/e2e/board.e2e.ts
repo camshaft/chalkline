@@ -17,6 +17,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { chromium, type Browser, type Page } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { DRAWING_SPACE_KEY } from '../../web/src/drawing-space';
 import { RELAY_PATH, startLanServer, type LanServer } from '../src/server';
 
 /** The built page, which `npm run build --workspace @chalkline/web` writes. */
@@ -390,6 +391,13 @@ describe('the local-network mode, end to end', () => {
         await page.evaluate(() =>
           (window as unknown as E2eWindow).chalkline?.api.updateScene({ appState: { viewBackgroundColor: '#fff9db' } }),
         );
+        // updateScene returns before React applies the new background, and the page keeps the drawing space
+        // only once Excalidraw reports the change, so the test waits until the browser keeps the background
+        // before the reload.
+        await page.waitForFunction((key) => {
+          const space: unknown = JSON.parse(window.localStorage.getItem(key) ?? 'null');
+          return (space as { viewBackgroundColor?: unknown } | null)?.viewBackgroundColor === '#fff9db';
+        }, DRAWING_SPACE_KEY);
         await page.reload();
         await ready(page);
         const kept = await page.evaluate(() => {
