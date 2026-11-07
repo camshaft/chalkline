@@ -7,7 +7,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { agentChangesOf, listAgentChanges, recordAgentChange } from './agent-changes';
+import { agentChangesOf, listAgentChanges, olderChangesDropped, recordAgentChange } from './agent-changes';
 import { ELEMENTS } from './board';
 import { createServer } from './server';
 
@@ -101,9 +101,18 @@ async function addRectangle(client: Client): Promise<{ id: string; change: strin
 describe('undo_change', () => {
   it("answers the id of each change, and the page lists the agent's changes newest first", async () => {
     const { network, doc, client } = await board();
-    const { id, change: added } = await addRectangle(client);
-    const deleted = answered<{ ids: string[]; change: string }>(await call(client, 'delete_shapes', { ids: [id] }));
-    expect(deleted.ids).toEqual([id]);
+    const { ids, change: added } = answered<{ ids: string[]; change: string }>(
+      await call(client, 'add_shapes', {
+        shapes: [
+          { type: 'rectangle', x: 10, y: 20, width: 200, height: 80 },
+          { type: 'rectangle', x: 300, y: 20, width: 200, height: 80 },
+        ],
+      }),
+    );
+    expect(ids).toHaveLength(2);
+    // The add stays on the list while the board shows the first rectangle as the add left it.
+    const deleted = answered<{ ids: string[]; change: string }>(await call(client, 'delete_shapes', { ids: [ids[1]] }));
+    expect(deleted.ids).toEqual([ids[1]]);
     expect(typeof deleted.change).toBe('string');
     expect(deleted.change).not.toBe(added);
 
@@ -111,8 +120,33 @@ describe('undo_change', () => {
     const listed = listAgentChanges(agentChangesOf(doc));
     expect(listed.map((change) => [change.id, change.by.name, change.tool, change.summary, change.undo])).toEqual([
       [deleted.change, 'chalkline-test', 'delete_shapes', 'chalkline-test deleted 1 shape', null],
-      [added, 'chalkline-test', 'add_shapes', 'chalkline-test added 1 shape', null],
+      [added, 'chalkline-test', 'add_shapes', 'chalkline-test added 2 shapes', null],
     ]);
+  });
+
+  it("drops a change from the board's list on every peer once the board no longer shows anything it wrote, and the newest still undoes", async () => {
+    const { network, doc, elements, helper, client } = await board();
+    const { id, change: added } = await addRectangle(client);
+    network.flush();
+    const shape = elements.get(id) as Element;
+    const { change: moved } = answered<{ change: string }>(await call(client, 'update_shape', { id, x: Number(shape.x) + 300 }));
+    network.flush();
+
+    // The rectangle is no longer where the add left it, so the add leaves the list, on the page and on
+    // chalkline-mcp's copy alike, and the list says that older changes aren't kept.
+    for (const peer of [doc, helper]) {
+      const changes = agentChangesOf(peer);
+      expect(changes.toArray().some((value) => (value as Element).id === added)).toBe(false);
+      expect(listAgentChanges(changes).map((change) => change.id)).toEqual([moved]);
+      expect(olderChangesDropped(changes)).toBe(true);
+    }
+    const refused = await call(client, 'undo_change', { id: added });
+    expect(refused.isError).toBe(true);
+    expect(text(refused)).toContain('no longer shows anything it wrote');
+
+    answered(await call(client, 'undo_change', { id: moved }));
+    network.flush();
+    expect(elements.get(id)).toMatchObject({ x: shape.x, y: shape.y, isDeleted: false });
   });
 
   it('undoes a deletion for the page, which shows the shape again, and records the undo', async () => {
