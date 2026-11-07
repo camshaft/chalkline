@@ -1,6 +1,8 @@
 // Runs the built chalkline-mcp as an agent client runs it: starts it over stdio on a new room's
-// link, checks the tools it lists, adds a labelled rectangle with add_shapes, and reads it back
-// with get_board. CI runs it after the build.
+// link, checks the tools it lists, adds a labelled rectangle with add_shapes, and asks for a
+// Mermaid diagram with add_mermaid, which answers pending since no page is in the new room. It reads
+// the request back with get_request, and the rectangle and the pending request with get_board. CI
+// runs it after the build.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +18,7 @@ const client = new Client({ name: 'chalkline-smoke', version: '0.0.0' });
 await client.connect(new StdioClientTransport({ command: process.execPath, args: [helper, link] }));
 
 const { tools } = await client.listTools();
-assert.deepEqual(tools.map((tool) => tool.name).sort(), ['add_shapes', 'get_board']);
+assert.deepEqual(tools.map((tool) => tool.name).sort(), ['add_mermaid', 'add_shapes', 'get_board', 'get_request']);
 
 const added = await client.callTool({
   name: 'add_shapes',
@@ -25,11 +27,21 @@ const added = await client.callTool({
 assert.notEqual(added.isError, true, JSON.stringify(added.content));
 const [id] = added.structuredContent.ids;
 
+const asked = await client.callTool({ name: 'add_mermaid', arguments: { text: 'flowchart LR\n  A[Smoke] --> B[test]' } });
+assert.notEqual(asked.isError, true, JSON.stringify(asked.content));
+assert.equal(asked.structuredContent.status, 'pending');
+const request = await client.callTool({ name: 'get_request', arguments: { id: asked.structuredContent.id } });
+assert.notEqual(request.isError, true, JSON.stringify(request.content));
+assert.equal(request.structuredContent.status, 'pending');
+
 const board = await client.callTool({ name: 'get_board', arguments: {} });
 assert.notEqual(board.isError, true, JSON.stringify(board.content));
 const shape = board.structuredContent.shapes.find((candidate) => candidate.id === id);
 assert.equal(shape?.kind, 'rectangle');
 assert.equal(shape?.label, 'Smoke test');
+assert.deepEqual(board.structuredContent.pending, [{ id: asked.structuredContent.id, kind: 'mermaid' }]);
 
 await client.close();
-console.log(`chalkline-mcp added the rectangle ${id} labelled "Smoke test" and read it back with get_board`);
+console.log(
+  `chalkline-mcp added the rectangle ${id} labelled "Smoke test", wrote the Mermaid request ${asked.structuredContent.id}, and read both back`,
+);
