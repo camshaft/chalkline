@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type * as Y from 'yjs';
 import { creatorOf, withCreator, type Creator } from './creator';
 import { indicesAbove } from './order';
-import type { BoardShape, Shape } from './shapes';
+import { DEFAULT_FONT, DEFAULT_STYLE, FONT_FAMILY, type BoardShape, type FontName, type Shape } from './shapes';
 import { convertSkeletons, type Skeleton } from './skeleton';
 
 /** The shared map that holds the board's elements by id, as the page keeps them. */
@@ -33,6 +33,15 @@ interface BoardElement {
   start: string | undefined;
   end: string | undefined;
   creator: Creator | undefined;
+  strokeColor: string | undefined;
+  backgroundColor: string | undefined;
+  strokeWidth: number | undefined;
+  strokeStyle: string | undefined;
+  fillStyle: string | undefined;
+  roughness: number | undefined;
+  opacity: number | undefined;
+  fontFamily: number | undefined;
+  textAlign: string | undefined;
 }
 
 /**
@@ -40,7 +49,9 @@ interface BoardElement {
  * that shape's label, an arrow's start and end are the shapes its ends are bound to, and a shape
  * an agent added lists the agent as its creator. A line's or an arrow's width and height say how
  * far its last point lies right of and below its first, which is where the pages draw it to.
- * Deleted elements, and values that aren't elements, are left out.
+ * Each shape answers its stroke and background colors, and each style field and its text's font
+ * and alignment that aren't Excalidraw's defaults. Deleted elements, and values that aren't
+ * elements, are left out.
  */
 export function readBoard(values: Iterable<unknown>): BoardShape[] {
   const elements = new Map<string, BoardElement>();
@@ -49,13 +60,13 @@ export function readBoard(values: Iterable<unknown>): BoardShape[] {
     if (element !== null) elements.set(element.id, element);
   }
 
-  const labels = new Map<string, string>();
+  const labels = new Map<string, BoardElement>();
   const labelIds = new Set<string>();
   for (const element of elements.values()) {
     if (element.type !== 'text' || element.containerId === null || element.text === undefined) continue;
     const container = elements.get(element.containerId);
     if (container === undefined || container.type === 'text') continue;
-    labels.set(container.id, element.text);
+    labels.set(container.id, element);
     labelIds.add(element.id);
   }
 
@@ -70,13 +81,34 @@ export function readBoard(values: Iterable<unknown>): BoardShape[] {
       width: element.width,
       height: element.height,
     };
-    const label = element.type === 'text' ? element.text : labels.get(element.id);
-    if (label !== undefined) shape.label = label;
+    const text = element.type === 'text' ? element : labels.get(element.id);
+    if (text?.text !== undefined) shape.label = text.text;
     if (element.start !== undefined && listed.has(element.start)) shape.start = element.start;
     if (element.end !== undefined && listed.has(element.end)) shape.end = element.end;
     if (element.creator !== undefined) shape.creator = element.creator;
+    addStyle(shape, element, text);
     return shape;
   });
+}
+
+/**
+ * Sets on `shape` the stroke and background colors of `element`, each style field of `element`
+ * that isn't Excalidraw's default, and the font and alignment of `text`, the element's text or its
+ * label, that aren't Excalidraw's defaults: a text aligns left, and a label centers.
+ */
+function addStyle(shape: BoardShape, element: BoardElement, text: BoardElement | undefined): void {
+  if (element.strokeColor !== undefined) shape.strokeColor = element.strokeColor;
+  if (element.backgroundColor !== undefined) shape.backgroundColor = element.backgroundColor;
+  if (element.strokeWidth !== undefined && element.strokeWidth !== DEFAULT_STYLE.strokeWidth) shape.strokeWidth = element.strokeWidth;
+  if (element.strokeStyle !== undefined && element.strokeStyle !== DEFAULT_STYLE.strokeStyle) shape.strokeStyle = element.strokeStyle;
+  if (element.fillStyle !== undefined && element.fillStyle !== DEFAULT_STYLE.fillStyle) shape.fillStyle = element.fillStyle;
+  if (element.roughness !== undefined && element.roughness !== DEFAULT_STYLE.roughness) shape.roughness = element.roughness;
+  if (element.opacity !== undefined && element.opacity !== DEFAULT_STYLE.opacity) shape.opacity = element.opacity;
+  if (text === undefined) return;
+  const font = fontName(text.fontFamily);
+  if (font !== undefined && font !== DEFAULT_FONT) shape.fontFamily = font;
+  const align = text === element ? 'left' : 'center';
+  if (text.textAlign !== undefined && text.textAlign !== align) shape.textAlign = text.textAlign;
 }
 
 /** A random id for a new element: 20 characters of base64url, as Excalidraw's are. */
@@ -142,13 +174,19 @@ export async function addShapes(doc: Y.Doc, shapes: readonly Shape[], creator?: 
   return ids;
 }
 
-/** The skeleton that `convertToExcalidrawElements` reads for `shape`, with the id `id`. */
+/**
+ * The skeleton that `convertToExcalidrawElements` reads for `shape`, with the id `id`. A text's and
+ * a label's font is the number Excalidraw's element holds instead of the font's name.
+ */
 function skeleton(shape: Shape, id: string): Skeleton {
   if (shape.type === 'line') return { ...shape, ...linePoints(shape.width, shape.height), id } as unknown as Skeleton;
-  if (shape.type !== 'arrow') return { ...shape, id } as unknown as Skeleton;
+  const font = shape.type === 'text' ? fontNumber(shape) : {};
+  const label = 'label' in shape && shape.label !== undefined ? { label: { ...shape.label, ...fontNumber(shape.label) } } : {};
+  if (shape.type !== 'arrow') return { ...shape, ...font, ...label, id } as unknown as Skeleton;
   const { start, end, ...arrow } = shape;
   return {
     ...arrow,
+    ...label,
     ...linePoints(arrow.width, arrow.height),
     id,
     ...(start === undefined ? {} : { start: { id: start } }),
@@ -178,6 +216,11 @@ function linePoints(width = DEFAULT_LINE.width, height = DEFAULT_LINE.height): R
   };
 }
 
+/** The number of the font that `fields` names, as Excalidraw's element holds it, where it names one. */
+function fontNumber(fields: { fontFamily?: FontName }): { fontFamily?: number } {
+  return fields.fontFamily === undefined ? {} : { fontFamily: FONT_FAMILY[fields.fontFamily] };
+}
+
 function boardElement(value: unknown): BoardElement | null {
   if (typeof value !== 'object' || value === null) return null;
   const fields = value as Record<string, unknown>;
@@ -198,6 +241,15 @@ function boardElement(value: unknown): BoardElement | null {
     start: boundTo(fields.startBinding),
     end: boundTo(fields.endBinding),
     creator: creatorOf(value),
+    strokeColor: stringOf(fields.strokeColor),
+    backgroundColor: stringOf(fields.backgroundColor),
+    strokeWidth: numberOf(fields.strokeWidth),
+    strokeStyle: stringOf(fields.strokeStyle),
+    fillStyle: stringOf(fields.fillStyle),
+    roughness: numberOf(fields.roughness),
+    opacity: numberOf(fields.opacity),
+    fontFamily: numberOf(fields.fontFamily),
+    textAlign: stringOf(fields.textAlign),
   };
 }
 
@@ -227,6 +279,15 @@ export function finite(value: unknown): value is number {
 
 export function stringOf(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+function numberOf(value: unknown): number | undefined {
+  return finite(value) ? value : undefined;
+}
+
+/** The name of the font whose number `family` is, where Excalidraw has a font of that number. */
+function fontName(family: number | undefined): FontName | undefined {
+  return (Object.keys(FONT_FAMILY) as FontName[]).find((name) => FONT_FAMILY[name] === family);
 }
 
 /** The id of the element that the binding of an arrow's end names. */
