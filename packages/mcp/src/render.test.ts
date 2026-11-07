@@ -714,17 +714,22 @@ describe('rasterize', () => {
   it("answers a RenderError where Node can't start resvg's process", async () => {
     // A path that doesn't hold a program, in place of Node's, so that Node can't start the process.
     const dir = mkdtempSync(join(tmpdir(), 'chalkline-rasterize-'));
-    const node = process.execPath;
     const missing = join(dir, 'node');
-    process.execPath = missing;
-    try {
-      const error = await rasterize(SQUARE).catch((caught: unknown) => caught);
-      expect(error).toBeInstanceOf(RenderError);
-      expect((error as Error).message).toBe(`render_board couldn't start resvg's process: spawn ${missing} ENOENT`);
-    } finally {
-      process.execPath = node;
-      rmSync(dir, { recursive: true });
-    }
+    const node = process.execPath;
+    // rasterize starts the process as it is called, so Node's path comes back before the call
+    // answers, and the tests after this one start Node's process whatever this one answers.
+    const drawing = (() => {
+      process.execPath = missing;
+      try {
+        return rasterize(SQUARE);
+      } finally {
+        process.execPath = node;
+        rmSync(dir, { recursive: true });
+      }
+    })();
+    const error = await drawing.catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RenderError);
+    expect((error as Error).message).toBe(`render_board couldn't start resvg's process: spawn ${missing} ENOENT`);
   });
 
   it("doesn't start resvg's process where the signal aborted already", async () => {
