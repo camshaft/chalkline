@@ -1,13 +1,7 @@
 import '@excalidraw/excalidraw/index.css';
-import { Awareness, connectAwareness, connectDoc, relaysFromAddress, trysteroTransport } from '@chalkline/sync';
+import { Awareness, connectAwareness, connectDoc, relaysFromAddress, transcriptOf, trysteroTransport } from '@chalkline/sync';
 import { joinBoardRoom } from '@chalkline/sync/join';
-import {
-  CaptureUpdateAction,
-  convertToExcalidrawElements,
-  Excalidraw,
-  loadFromBlob,
-  serializeAsJSON,
-} from '@excalidraw/excalidraw';
+import { CaptureUpdateAction, Excalidraw, loadFromBlob, serializeAsJSON } from '@excalidraw/excalidraw';
 import type { OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type { BinaryFileData, Collaborator, ExcalidrawImperativeAPI, SocketId } from '@excalidraw/excalidraw/types';
 import { selfId } from '@trystero-p2p/nostr';
@@ -19,8 +13,16 @@ import { addOpened, boardFileName, connectFileControls, OPENED } from './board-f
 import { loadSettings, roomOptions, type ConnectionSettings, type SettingsStorage } from './connection';
 import { bindFiles, writeFiles } from './files';
 import { keepBoard, storeName, type KeptBoard } from './keep';
-import { bindRequests, mermaidConverter } from './mermaid';
-import { bindPresence, keepName, participantName, setName, type Button, type NameStorage, type Pointer } from './presence';
+import {
+  bindPresence,
+  keepName,
+  participantName,
+  readPresence,
+  setName,
+  type Button,
+  type NameStorage,
+  type Pointer,
+} from './presence';
 import { connectionReport, type ConnectionReport } from './report';
 import type { RoomSecrets } from './room';
 import {
@@ -32,7 +34,9 @@ import {
   type PageAddress,
 } from './room-links';
 import { connectSettingsButton } from './settings-panel';
+import { recognitionClass, recognitionLanguage, speechControl, type Speech } from './speech';
 import { statusLine, watchedPeerConnection } from './status';
+import { bindTranscriptPanel } from './transcript-panel';
 
 /** What the page shows on `window.chalkline`, for the live probe and for debugging. */
 export interface ChalklineHandle {
@@ -46,6 +50,10 @@ export interface ChalklineHandle {
   settings: ConnectionSettings;
   /** The copy of the board that this browser keeps, or null where the browser doesn't let the page keep one. */
   kept: KeptBoard | null;
+  /** The board's transcript: each participant's final speech results, in order. */
+  transcript: Y.Array<unknown>;
+  /** This browser's speech, which the microphone button turns on and off. */
+  speech: Speech;
   peers(): string[];
   onPeerLeave(handler: (peerId: string) => void): () => void;
   /** The connection to each peer, by peer id. */
@@ -69,6 +77,12 @@ function pageElement(id: string): HTMLElement {
 function pageInput(id: string): HTMLInputElement {
   const found = pageElement(id);
   if (!(found instanceof HTMLInputElement)) throw new Error(`the page's #${id} isn't an input`);
+  return found;
+}
+
+function pageButton(id: string): HTMLButtonElement {
+  const found = pageElement(id);
+  if (!(found instanceof HTMLButtonElement)) throw new Error(`the page's #${id} isn't a button`);
   return found;
 }
 
@@ -221,20 +235,6 @@ async function start(): Promise<ChalklineHandle> {
       };
     },
   });
-  // The page converts each Mermaid request that the agent's helper writes, since the conversion
-  // runs in a browser. mermaid-to-excalidraw loads with the first request, so a board without one
-  // doesn't load it.
-  bindRequests(
-    doc,
-    awareness,
-    mermaidConverter(
-      async (text) => (await import('@excalidraw/mermaid-to-excalidraw')).parseMermaidToExcalidraw(text),
-      (skeletons) =>
-        convertToExcalidrawElements(skeletons as Parameters<typeof convertToExcalidrawElements>[0], {
-          regenerateIds: true,
-        }),
-    ),
-  );
   connectFileControls(
     {
       save: pageElement('save-button'),
@@ -258,9 +258,28 @@ async function start(): Promise<ChalklineHandle> {
       },
     },
   );
-  // The bar's Save file and Open file buttons show once the board they act on is open, and stay hidden on the join screen.
+  // The board's transcript holds each participant's final speech results. Speech stays off until the person
+  // presses the microphone button, and each final result goes on the transcript under the name the others see.
+  const transcript = transcriptOf(doc);
+  const speech = speechControl({
+    Class: recognitionClass(window),
+    lang: recognitionLanguage(navigator.language),
+    transcript,
+    speaker: () => readPresence(awareness.getLocalState())?.name ?? 'Someone',
+  });
+  const panel = bindTranscriptPanel(
+    { mic: pageButton('mic'), opener: pageButton('transcript-button'), panel: pageElement('transcript') },
+    transcript,
+    { toggle: () => void speech.toggle(), agree: () => void speech.agree(), decline: () => speech.decline() },
+  );
+  panel.show(speech.state());
+  speech.onState((state) => panel.show(state));
+  // The bar's Save file, Open file, microphone and Transcript buttons show once the board they act on is open,
+  // and stay hidden on the join screen.
   pageElement('save-button').hidden = false;
   pageElement('open-button').hidden = false;
+  pageElement('mic').hidden = false;
+  pageElement('transcript-button').hidden = false;
 
   const handle: ChalklineHandle = {
     room: secrets.room,
@@ -270,6 +289,8 @@ async function start(): Promise<ChalklineHandle> {
     api,
     settings,
     kept,
+    transcript,
+    speech,
     peers: () => transport.peers(),
     onPeerLeave: (handler) => transport.onPeerLeave(handler),
     connectionReports: async () => {
