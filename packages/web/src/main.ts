@@ -46,6 +46,7 @@ import {
   type NameStorage,
   type Pointer,
 } from './presence';
+import { offerReadAloud, voiceOf } from './read-aloud';
 import { connectionReport, type ConnectionReport } from './report';
 import type { RoomSecrets } from './room';
 import {
@@ -402,6 +403,9 @@ async function start(): Promise<ChalklineHandle> {
   pageElement('mic').hidden = false;
   pageElement('transcript-button').hidden = false;
   pageElement('feedback-button').hidden = false;
+  // Where the browser can speak, the Read agent messages aloud button shows too: it reads each message an
+  // agent posts in the chat aloud, and live speech stops listening while the page speaks.
+  offerReadAloud(pageButton('read-aloud'), voiceOf(window), { transcript, listening: speech });
 
   const handle: ChalklineHandle = {
     room: secrets.room,
