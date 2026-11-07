@@ -21,7 +21,7 @@ describe('joinBoardRoom', () => {
     expect(joinRelayRoom).not.toHaveBeenCalled();
   });
 
-  it('joins through the public relays where the config doesn't list a Nostr relay', () => {
+  it("joins through the public relays where the config doesn't list a Nostr relay", () => {
     const callbacks = { onJoinError: vi.fn() };
 
     expect(joinBoardRoom({ appId: 'chalkline', password: 'key' }, 'room', [], callbacks)).toBe('the Nostr room');
