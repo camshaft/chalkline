@@ -66,7 +66,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
     {
       title: 'Read the board',
       description:
-        `Reads the board: every shape on it, from back to front, with its id, kind, position, size and label, its stroke and background colors, each style field, font and alignment that isn't Excalidraw's default, for a shape in a group the ids of its groups, the innermost first, for an arrow the ids of the shapes it starts and ends at, for a line, an arrow or a freehand stroke its points, and for a shape an agent added, its creator; in pending, each Mermaid request that no page has converted yet; and, in feedback, each open feedback that people wrote on an area of the board, with its id, its writer as by, its text and its region, which read_feedback answers with the shapes the region meets, and answer_feedback answers. An arrow's or a line's width and height say how far its last point lies right of and below its first, as add_shapes reads them. Of a stroke that holds more than ${LISTED_POINTS} points, it lists ${LISTED_POINTS} of them, evenly spaced from its first to its last, and their count in pointCount.`,
+        `Reads the board: every shape on it, from back to front, with its id, kind, position, size and label, its stroke and background colors, each style field, font and alignment that isn't Excalidraw's default, its link, where it has one, for a shape in a group the ids of its groups, the innermost first, for an arrow the ids of the shapes it starts and ends at, for a line, an arrow or a freehand stroke its points, and for a shape an agent added, its creator; in pending, each Mermaid request that no page has converted yet; and, in feedback, each open feedback that people wrote on an area of the board, with its id, its writer as by, its text and its region, which read_feedback answers with the shapes the region meets, and answer_feedback answers. An arrow's or a line's width and height say how far its last point lies right of and below its first, as add_shapes reads them. Of a stroke that holds more than ${LISTED_POINTS} points, it lists ${LISTED_POINTS} of them, evenly spaced from its first to its last, and their count in pointCount.`,
       outputSchema: {
         shapes: z.array(boardShapeSchema),
         pending: z.array(z.object({ id: z.string(), kind: z.literal('mermaid') })),
@@ -139,6 +139,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         "An arrow's start and end name shapes of the same call, which it binds to.",
         "An arrow that sets start and end and none of width, height and points runs between those two shapes, from the edge of start to the edge of end along the line between their centers, as connect draws an arrow.",
         'Every shape may set strokeColor, strokeWidth (1, 2 or 4), strokeStyle (solid, dashed or dotted), fillStyle (solid, hachure, cross-hatch or zigzag), roughness (0, 1 or 2) and opacity (0 to 100), and a rectangle, an ellipse, a diamond or a line its backgroundColor.',
+        'Every shape may set link, an http or https URL that the page opens from a link icon on the shape. Where a shape stands for code, such as a box of an architecture diagram or a state of a state machine, link it to a permalink of that code, which keeps showing the same lines as the code changes: a GitHub URL with a commit and a line range, such as https://github.com/<owner>/<repo>/blob/<commit>/<path>#L10-L42, rather than one with a branch.',
         "A text and a label may set fontFamily (Excalifont, Nunito, Comic Shanns or another of Excalidraw's fonts) and textAlign (left, center or right).",
         'Each new shape records the agent as its creator, which get_board lists.',
         "With group true, the call's shapes go into one new group, whose id the answer holds: update_shape moves the group by that id, and delete_shapes deletes it with groups.",
@@ -185,11 +186,12 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
     {
       title: 'Change a shape on the board',
       description: [
-        'Moves, resizes, relabels or recolors one shape on the board, a rectangle, an ellipse, a diamond, a text, an arrow or a line, and answers the shape as get_board lists it.',
+        'Moves, resizes, relabels or recolors one shape on the board, a rectangle, an ellipse, a diamond, a text, an arrow or a line, or sets the link of any shape, and answers the shape as get_board lists it.',
         'A field left out, or given as null, stays as it is.',
         "A shape's label moves with it, and each arrow bound to it follows it.",
         "A straight arrow's or line's width and height say where it ends from its first point; an arrow bound to a shape follows that shape, so move the shape in its place.",
         'An empty label removes the label.',
+        'link sets the URL that the page opens from a link icon on the shape, an http or https URL such as a permalink to code with a commit and a line range, on any shape, a freehand stroke, an image or a frame among them, of which update_shape changes nothing else; an empty link removes the link.',
         "To move a group, give group, the id get_board lists in its shapes' groups, instead of id, with x, y or both: the group's left and top edges go there, every shape of it moves with its label, each arrow bound to it follows it, and the answer holds the group's shapes.",
       ].join(' '),
       inputSchema: changeSchema.shape,

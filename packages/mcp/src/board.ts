@@ -54,6 +54,7 @@ interface BoardElement {
   opacity: number | undefined;
   fontFamily: number | undefined;
   textAlign: string | undefined;
+  link: string | undefined;
   groups: string[];
 }
 
@@ -66,8 +67,8 @@ interface BoardElement {
  * line, an arrow or a freehand stroke lists its points, and a stroke that holds more than
  * LISTED_POINTS lists LISTED_POINTS of them, evenly spaced, with the count of all. Each shape
  * answers its stroke and background colors, and each style field and its text's font and
- * alignment that aren't Excalidraw's defaults. Deleted elements, and values that aren't
- * elements, are left out.
+ * alignment that aren't Excalidraw's defaults, and a shape that links to a URL answers its link.
+ * Deleted elements, and values that aren't elements, are left out.
  */
 export function readBoard(values: Iterable<unknown>): BoardShape[] {
   const elements = new Map<string, BoardElement>();
@@ -104,6 +105,7 @@ export function readBoard(values: Iterable<unknown>): BoardShape[] {
     if (element.creator !== undefined) shape.creator = element.creator;
     if (element.points !== null) Object.assign(shape, listedPoints(element.points));
     addStyle(shape, element, text);
+    if (element.link !== undefined && element.link !== '') shape.link = element.link;
     if (element.groups.length > 0) shape.groups = element.groups;
     return shape;
   });
@@ -143,8 +145,9 @@ export function newId(): string {
  * `creator`, where given, as its creator, and goes into the group `group`, where given, as
  * Excalidraw groups elements. An arrow that sets start and end and none of width, height and points
  * runs between those two shapes, as laidBetween lays it out, whatever its x and y. A text that an
- * arrow starts or ends at stays at its x and y, as laidBetween binds the arrow to it. Throws a
- * ShapeError, and adds nothing, where two shapes set one id, a shape sets an id the board holds
+ * arrow starts or ends at stays at its x and y, as laidBetween binds the arrow to it. A shape that
+ * sets a link holds it as its element's link, which its label doesn't hold. Throws a ShapeError,
+ * and adds nothing, where two shapes set one id, a shape sets an id the board holds
  * already, an arrow's start or end isn't a rectangle, an ellipse, a diamond or a text of the same
  * call, a line or an arrow sets both points and a width or a height, a closed line has fewer than
  * three points, an arrow leaves out its x or its y and doesn't run between two shapes, the two
@@ -216,9 +219,14 @@ export async function addShapes(
   }
   const elements = await laidBetween(shapes, ids, skeletons, converted, texts);
   const indices = indicesAt(shared, where, elements.length);
+  const links = new Map<string, string>();
+  shapes.forEach((shape, place) => {
+    if (shape.link !== undefined) links.set(ids[place], shape.link);
+  });
   doc.transact(() => {
     elements.forEach((element, place) => {
-      const copy = { ...structuredClone(element), index: indices[place] };
+      const link = links.get(element.id);
+      const copy = { ...structuredClone(element), index: indices[place], ...(link === undefined ? {} : { link }) };
       const placed = group === undefined ? copy : { ...copy, groupIds: [group] };
       shared.set(element.id, creator === undefined ? placed : withCreator(placed, creator));
     });
@@ -487,6 +495,7 @@ function boardElement(value: unknown): BoardElement | null {
     opacity: numberOf(fields.opacity),
     fontFamily: numberOf(fields.fontFamily),
     textAlign: stringOf(fields.textAlign),
+    link: stringOf(fields.link),
     groups: groupsOf(fields.groupIds),
   };
 }

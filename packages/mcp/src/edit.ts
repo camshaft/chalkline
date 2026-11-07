@@ -1,5 +1,5 @@
 // The agent's edits of shapes that are on the board already: connect draws an arrow bound to two
-// of them, update_shape moves, resizes, relabels or recolors one, or moves a group of them,
+// of them, update_shape moves, resizes, relabels or recolors one or sets its link, or moves a group of them,
 // delete_shapes deletes some, by their ids or by their groups, reorder_shapes moves some forward
 // or back, and scale_shapes makes some smaller or larger, by their ids or by their groups.
 // Each reads the board as chalkline-mcp's copy holds it, and writes its change in one transaction,
@@ -50,19 +50,22 @@ const BINDABLE: ReadonlySet<string> = new Set([
 type Field = Exclude<keyof ShapeChange, 'id' | 'group'>;
 
 /** Each field that update_shape reads. */
-const FIELDS: readonly Field[] = ['x', 'y', 'width', 'height', 'label', 'text', 'fontSize', 'strokeColor', 'backgroundColor'];
+const FIELDS: readonly Field[] = ['x', 'y', 'width', 'height', 'label', 'text', 'fontSize', 'strokeColor', 'backgroundColor', 'link'];
 
-const BOX_FIELDS: readonly Field[] = ['x', 'y', 'width', 'height', 'label', 'strokeColor', 'backgroundColor'];
+const BOX_FIELDS: readonly Field[] = ['x', 'y', 'width', 'height', 'label', 'strokeColor', 'backgroundColor', 'link'];
 
 /** The kinds of shape that update_shape changes, by Excalidraw's type, with the fields it changes of each. */
 const CHANGES = new Map<string, readonly Field[]>([
   ['rectangle', BOX_FIELDS],
   ['ellipse', BOX_FIELDS],
   ['diamond', BOX_FIELDS],
-  ['text', ['x', 'y', 'text', 'fontSize', 'strokeColor']],
-  ['arrow', ['x', 'y', 'width', 'height', 'label', 'strokeColor']],
-  ['line', ['x', 'y', 'width', 'height', 'strokeColor']],
+  ['text', ['x', 'y', 'text', 'fontSize', 'strokeColor', 'link']],
+  ['arrow', ['x', 'y', 'width', 'height', 'label', 'strokeColor', 'link']],
+  ['line', ['x', 'y', 'width', 'height', 'strokeColor', 'link']],
 ]);
+
+/** The fields update_shape changes of any other kind of shape, such as a freehand stroke, an image or a frame. */
+const LINK_FIELDS: readonly Field[] = ['link'];
 
 /** The fields of a text that set its style, which a new layout of it keeps. */
 const TEXT_STYLE = ['fontSize', 'fontFamily', 'textAlign', 'verticalAlign', 'lineHeight'] as const;
@@ -147,11 +150,13 @@ export async function connect(doc: Y.Doc, connection: Connection, creator?: Crea
  * text or font size. A straight arrow or line takes a new end from its width and height. Each
  * straight arrow bound to a shape that moves or changes size is laid out again between the shapes
  * it binds. A label the change adds records `creator`, where given, as its creator, and goes into
- * the groups its shape is in. Throws a ShapeError, and changes nothing, where `change` leaves the
- * id out, where the id isn't a shape on the board, is a label or is a kind of shape update_shape
- * doesn't change, where the change doesn't change anything or sets a field that doesn't apply to
- * the shape, where a size isn't above 0, or where it moves an arrow bound to a shape or gives a
- * width or a height to an arrow or a line of more than two points.
+ * the groups its shape is in. A link sets the link of the shape, and an empty link removes it; of a
+ * kind of shape it doesn't otherwise change, such as a freehand stroke, an image or a frame, it
+ * changes the link alone. Throws a ShapeError, and changes nothing, where `change` leaves the id
+ * out, where the id isn't a shape on the board or is a label, where the change doesn't change
+ * anything or sets a field that doesn't apply to the shape, where a size isn't above 0, or where
+ * it moves an arrow bound to a shape or gives a width or a height to an arrow or a line of more
+ * than two points.
  */
 export async function updateShape(doc: Y.Doc, change: ShapeChange, creator?: Creator): Promise<BoardShape> {
   const shared = doc.getMap<unknown>(ELEMENTS);
@@ -159,13 +164,16 @@ export async function updateShape(doc: Y.Doc, change: ShapeChange, creator?: Cre
   if (!present(id)) throw new ShapeError(NO_SHAPE);
   const shape = shapeOf(shared, 'id', id, (container) => `change it with update_shape, the id "${container}" and label`);
   const type = String(shape.type);
-  const fields = CHANGES.get(type);
-  if (fields === undefined) {
+  const given = FIELDS.filter((field) => present(change[field]));
+  // Of a kind of shape that CHANGES leaves out, such as a freehand stroke, an image or a frame,
+  // update_shape changes the link alone.
+  const linkOnly = !CHANGES.has(type);
+  const fields = CHANGES.get(type) ?? LINK_FIELDS;
+  if (linkOnly && (given.length !== 1 || given[0] !== 'link')) {
     throw new ShapeError(
-      `"${id}" is ${article(type)}, which update_shape doesn't change: it changes rectangles, ellipses, diamonds, texts, arrows and lines.`,
+      `"${id}" is ${article(type)}, of which update_shape changes only the link: it changes rectangles, ellipses, diamonds, texts, arrows and lines, and the link of any shape.`,
     );
   }
-  const given = FIELDS.filter((field) => present(change[field]));
   if (given.length === 0) {
     throw new ShapeError(`The call doesn't change "${id}": give ${article(type)}'s ${listed(fields)}, or some of them.`);
   }
@@ -175,7 +183,8 @@ export async function updateShape(doc: Y.Doc, change: ShapeChange, creator?: Cre
   }
 
   const writes = new Writes(shared, creator);
-  if (type === 'text') await changeText(writes, shape, change);
+  if (linkOnly) writes.set(touched(shape, linkOf(change)));
+  else if (type === 'text') await changeText(writes, shape, change);
   else if (type === 'arrow' || type === 'line') await changeLinear(writes, shape, change, creator);
   else await changeBox(writes, shape, change, creator);
   writes.commit(doc);
@@ -558,6 +567,7 @@ async function changeBox(writes: Writes, box: Element, change: ShapeChange, crea
   const strokeColor = change.strokeColor ?? undefined;
   if (strokeColor !== undefined) fields.strokeColor = strokeColor;
   if (present(change.backgroundColor)) fields.backgroundColor = change.backgroundColor;
+  Object.assign(fields, linkOf(change));
 
   const label = labelOf(writes, box);
   const resized = fields.width !== box.width || fields.height !== box.height;
@@ -614,6 +624,7 @@ async function changeText(writes: Writes, text: Element, change: ShapeChange): P
   if (present(change.x)) fields.x = change.x;
   if (present(change.y)) fields.y = change.y;
   if (present(change.strokeColor)) fields.strokeColor = change.strokeColor;
+  Object.assign(fields, linkOf(change));
   if (present(change.text) || present(change.fontSize)) {
     const [measured] = await convert(
       [
@@ -662,6 +673,7 @@ async function changeLinear(writes: Writes, line: Element, change: ShapeChange, 
   if (present(change.y)) fields.y = change.y;
   const strokeColor = change.strokeColor ?? undefined;
   if (strokeColor !== undefined) fields.strokeColor = strokeColor;
+  Object.assign(fields, linkOf(change));
   let laidPoints = points;
   if (reshapes) {
     const [[x0, y0], [x1, y1]] = points;
@@ -878,6 +890,14 @@ function touched(element: Element, changes: Element): Element {
     versionNonce: randomInt(2 ** 31),
     updated: Date.now(),
   };
+}
+
+/**
+ * The link that `change` sets on a shape, where it sets one: its URL, or null, which Excalidraw
+ * holds for a shape without a link, where the change's link is empty.
+ */
+function linkOf(change: ShapeChange): Element {
+  return present(change.link) ? { link: change.link === '' ? null : change.link } : {};
 }
 
 function mark(element: Element, creator: Creator | undefined): Element {
