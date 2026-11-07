@@ -13,7 +13,7 @@ export interface TurnServer {
  * opens. Both are unset by default, and a setting left unset leaves the
  * defaults in use: Trystero's STUN servers, and the public Nostr relays that
  * `joinBoardRoom` in `@chalkline/sync/join` holds: Trystero's default relays,
- * without each one that fails or refuses the board.
+ * without each one that fails, refuses the board or doesn't answer it.
  */
 export interface ConnectionSettings {
   /**
