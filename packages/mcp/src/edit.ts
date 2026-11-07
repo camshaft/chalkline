@@ -291,7 +291,7 @@ function edgesOf(shapes: readonly BoardShape[]): Point {
 }
 
 /** The ids `ids` of shapes, with the id of each label on the board whose shape is one of them. */
-function withLabels(shared: Y.Map<unknown>, ids: Iterable<string>): Set<string> {
+export function withLabels(shared: Y.Map<unknown>, ids: Iterable<string>): Set<string> {
   const chosen = new Set(ids);
   for (const [elementId, value] of shared.entries()) {
     const element = elementOf(value);
@@ -382,7 +382,7 @@ export function deleteShapes(doc: Y.Doc, ids: readonly string[], groups: readonl
  * ends with `forLabel` of the label's shape, or where `groups` holds one group twice, or a group
  * that no shape on the board is in.
  */
-function selected(
+export function selected(
   shared: Y.Map<unknown>,
   ids: readonly string[],
   groups: readonly string[],
