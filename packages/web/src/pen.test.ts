@@ -317,6 +317,19 @@ describe('bindPenSideButton', () => {
     expect(seen).toEqual(['pointerup', 'pointerup']);
   });
 
+  it("lets the board receive the release of the pen's next press, where the side button's release didn't come", () => {
+    const { board, set } = fakeBoard('freedraw');
+    const { canvas, seen } = page(board, () => 'swap');
+    canvas.dispatchEvent(pointer('pointerdown', 'pen', 2));
+    expect(set).toEqual(['selection']);
+    const down = pointer('pointerdown', 'pen', 0);
+    const up = pointer('pointerup', 'pen', 0);
+    canvas.dispatchEvent(down);
+    canvas.dispatchEvent(up);
+    expect(seen).toEqual(['pointerdown', 'pointerup']);
+    expect([down.defaultPrevented, up.defaultPrevented]).toEqual([false, false]);
+  });
+
   it('stops acting on presses and following the board once stopped', () => {
     const { board, set, listeners } = fakeBoard('freedraw');
     const { canvas, seen, stop } = page(board, () => 'swap');

@@ -144,8 +144,8 @@ export function bindPenSideButton(element: Element, board: PenBoard, action: () 
     current = tool;
   };
   const stopFollowing = board.onChange(() => follow(board.tool()));
-  // The pen whose press the page acted on, until its release, and whether the page stops the context menu that
-  // comes next.
+  // The pen whose press the page acted on, until its release or the next press of a pen, and whether the page stops
+  // the context menu that comes next.
   let held: number | null = null;
   let menuStopped = false;
   const stopEvent = (event: Event) => {
@@ -157,6 +157,9 @@ export function bindPenSideButton(element: Element, board: PenBoard, action: () 
     switch (event.type) {
       case 'pointerdown': {
         menuStopped = false;
+        // A tablet has one pen, and the browser sends its `pointerdown` only once each of its buttons is up, so a pen's
+        // press ends the press the page acted on, where the page didn't receive that press's release.
+        if (press.pointerType === 'pen') held = null;
         if (press.pointerType !== 'pen' || press.button !== 2) return;
         if (!(event.target instanceof Node) || !element.contains(event.target)) return;
         // The tool can change without a report to `follow` yet, so the press reads it.
