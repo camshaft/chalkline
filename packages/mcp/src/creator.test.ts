@@ -341,14 +341,24 @@ describe('withDrawingChanged', () => {
     expect(written).toMatchObject({ version: 2, index: 'a5', updated: 2000, strokeColor: '#e03131' });
   });
 
-  it("answers the element itself where the board's copy doesn't record when the same place and points changed", () => {
+  it("records the `updated` of the board's copy where that copy holds the same place and points without recording when they changed", () => {
     const saved = { ...scrawl(10, 20, [[0, 0], [30, 40]], 2000), version: 2 };
-    expect(withDrawingChanged(saved, scrawl(10, 20, [[0, 0], [30, 40]], 1000))).toBe(saved);
+    // A page that doesn't write the mark drew the board's copy at 1000.
+    const written = withDrawingChanged(saved, scrawl(10, 20, [[0, 0], [30, 40]], 1000));
+    expect(drawingChangedOf(written)).toBe(1000);
+    expect(written).toMatchObject({ version: 2, updated: 2000 });
 
     // The board's copy holds a mark of another place, which a page that doesn't write the mark moved
-    // the stroke from.
-    const stale = { ...withDrawingChanged(scrawl(50, 20, [[0, 0], [30, 40]], 500), undefined), x: 10 };
-    expect(withDrawingChanged(saved, stale)).toBe(saved);
+    // the stroke from at 1500.
+    const stale = { ...withDrawingChanged(scrawl(50, 20, [[0, 0], [30, 40]], 500), undefined), x: 10, updated: 1500 };
+    expect(drawingChangedOf(withDrawingChanged(saved, stale))).toBe(1500);
+  });
+
+  it("answers the element itself where the board's copy holds the same place and points without a mark of them or an `updated` time", () => {
+    const saved = { ...scrawl(10, 20, [[0, 0], [30, 40]], 2000), version: 2 };
+    const untimed = { id: 'scrawl', type: 'freedraw', x: 10, y: 20, points: [[0, 0], [30, 40]] };
+    expect(withDrawingChanged(saved, untimed)).toBe(saved);
+    expect(withDrawingChanged(saved, { ...untimed, updated: 'later' })).toBe(saved);
   });
 
   it("answers the element itself where it isn't a freehand stroke or doesn't hold an `updated` time", () => {
