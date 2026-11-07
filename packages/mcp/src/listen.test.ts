@@ -531,6 +531,56 @@ describe('listenTexts', () => {
     expect(lines).toEqual([{ at: at(100), kind: 'text', text: 'a corrected answer' }]);
   });
 
+  it('leaves out a text without a words mark that a page loads and saves again after the start, by the copy it saves over, and prints a later change of its words', () => {
+    const network = new MemoryNetwork();
+    const helper = new Y.Doc();
+    const lines: Written[] = [];
+    // A listener that starts a minute after the time `--after` sets, before any page joins the room.
+    listenTexts(helper, { after: START, start: START + 60_000, pauseMs: BOARD_PAUSE_MS, onLine: (line) => lines.push(line) });
+    connectDoc(helper, network.join('listener'));
+
+    // A page loads a board that holds a person's note from an hour before `--after`, which a page
+    // wrote before the pages recorded the words mark, and measures the note again 90 seconds after
+    // `--after` with the same words, before it joins the room. Its binding writes the measured
+    // copy over the board's copy, as `bindElements` writes it.
+    const page = new Y.Doc();
+    const board = page.getMap<unknown>(ELEMENTS);
+    const note = text('note', 'draw a box', -3600);
+    board.set('note', note);
+    const measured = withWordsChanged(edited(note, { width: 140, height: 30 }, 90), board.get('note'));
+    board.set('note', measured);
+    connectDoc(page, network.join('page'));
+    network.flush();
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([]);
+
+    // A person changes the note's words.
+    board.set('note', withWordsChanged(edited(measured, words('draw a circle'), 120), measured));
+    network.flush();
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(120), kind: 'text', text: 'draw a circle' }]);
+  });
+
+  it("prints a text without a words mark that a person wrote after `--after` and that a page saves again after the start, at the time of the copy it saves over", () => {
+    const network = new MemoryNetwork();
+    const helper = new Y.Doc();
+    const lines: Written[] = [];
+    listenTexts(helper, { after: START, start: START + 60_000, pauseMs: BOARD_PAUSE_MS, onLine: (line) => lines.push(line) });
+    connectDoc(helper, network.join('listener'));
+
+    // A person typed the note 30 seconds after `--after` on a page that doesn't record the words
+    // mark, and a page that does measures it again 90 seconds after `--after`, before it joins.
+    const page = new Y.Doc();
+    const board = page.getMap<unknown>(ELEMENTS);
+    const typed = text('typed', 'and a label', 30);
+    board.set('typed', typed);
+    board.set('typed', withWordsChanged(edited(typed, { width: 140 }, 90), board.get('typed')));
+    connectDoc(page, network.join('page'));
+    network.flush();
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(30), kind: 'text', text: 'and a label' }]);
+  });
+
   it('prints the text that waits for its pause at once on flush, and drops it on stop', () => {
     const { elements, lines, listener } = watching<Written>(listenTexts);
     elements.set('note', text('note', 'draw a box', 1));

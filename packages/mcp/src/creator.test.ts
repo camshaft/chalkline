@@ -219,13 +219,28 @@ describe('withWordsChanged', () => {
     expect(written).toMatchObject({ version: 2, x: 40, updated: 2000, text: 'draw a\nbox' });
   });
 
-  it("answers the element itself where the board's copy doesn't record when the same words changed", () => {
+  it("records the `updated` of the board's copy where that copy holds the same words without recording when they changed", () => {
     const moved = { ...note('draw a box', 2000), version: 2 };
-    expect(withWordsChanged(moved, note('draw a box', 1000))).toBe(moved);
+    // A page that doesn't write the mark wrote the board's copy at 1000.
+    const written = withWordsChanged(moved, note('draw a box', 1000));
+    expect(wordsChangedOf(written)).toBe(1000);
+    expect(written).toMatchObject({ version: 2, updated: 2000 });
 
-    // The board's copy holds a mark of other words, which a page that doesn't write the mark replaced.
-    const stale = { ...withWordsChanged(note('draw it', 500), undefined), text: 'draw a box', originalText: 'draw a box' };
-    expect(withWordsChanged(moved, stale)).toBe(moved);
+    // The board's copy holds a mark of other words, which a page that doesn't write the mark replaced at 1500.
+    const stale = {
+      ...withWordsChanged(note('draw it', 500), undefined),
+      text: 'draw a box',
+      originalText: 'draw a box',
+      updated: 1500,
+    };
+    expect(wordsChangedOf(withWordsChanged(moved, stale))).toBe(1500);
+  });
+
+  it("answers the element itself where the board's copy holds the same words without a mark of them or an `updated` time", () => {
+    const moved = { ...note('draw a box', 2000), version: 2 };
+    const untimed = { id: 'note', type: 'text', text: 'draw a box', originalText: 'draw a box' };
+    expect(withWordsChanged(moved, untimed)).toBe(moved);
+    expect(withWordsChanged(moved, { ...untimed, updated: 'later' })).toBe(moved);
   });
 
   it("answers the element itself where it isn't a text or doesn't hold an `updated` time", () => {
