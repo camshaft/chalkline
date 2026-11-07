@@ -5,7 +5,9 @@
 // arrow, and the test waits until both browsers show each of them. A second test has one browser
 // write a feedback over a rectangle the helper added (A13): the helper reads it, moves the
 // rectangle and answers it, and the test waits until both browsers show the answer in the chat,
-// the area's outline gone and the rectangle in its new place. A third test opens the board in a
+// the area's outline gone and the rectangle in its new place. A third test has the helper add two
+// drawings, each in a frame of its own name, and chooses the second in the page's frames list, which
+// shows that frame whole at the canvas's center. A fourth test opens the board in a
 // desktop's window and in a phone's, 390 px wide, checks that the page's controls sit in
 // Excalidraw's own UI over a canvas that fills the window, uses each of them there, and keeps a
 // screenshot of each layout; on the desktop it also presses the pen's side button. It needs the
@@ -44,6 +46,8 @@ const FEEDBACK = 'Move this box further down';
 const MOVED_Y = 300;
 /** The helper's answer to the feedback. */
 const ANSWER = 'Moved the box down to y 300';
+/** The names of the frames the frames test's helper puts its two drawings into, in the order it adds them. */
+const FRAMES = ['First drawing', 'Second drawing'];
 /** The board file the layout test opens with the main menu's Open file item: one rectangle. */
 const OPENED_FILE = {
   type: 'excalidraw',
@@ -117,6 +121,8 @@ interface Handle {
       zoom: { value: number };
       offsetLeft: number;
       offsetTop: number;
+      width: number;
+      height: number;
     };
     updateScene(scene: { appState: Record<string, unknown> }): void;
   };
@@ -454,6 +460,63 @@ describe('the local-network mode, end to end', () => {
     } finally {
       await helper.close();
       await Promise.all([writer, reader].map((board) => board.page.context().close()));
+    }
+  }, 300_000);
+
+  it("shows the second of two drawings that the helper put in named frames, when the page's frames list chooses it", async () => {
+    const lan = server;
+    const chrome = browser;
+    if (lan === undefined || chrome === undefined) throw new Error('the server or the browser did not start');
+    const link = boardLink(lan.port);
+    const { page } = await openBoard(chrome, link, 'frames');
+    const helper = new Client({ name: CLIENT, version: '0.0.0' });
+    try {
+      await helper.connect(new StdioClientTransport({ command: process.execPath, args: [HELPER, link.href] }));
+      // Two drawings far apart, each in a frame of its own name.
+      await call(helper, 'add_shapes', {
+        shapes: [{ type: 'rectangle', x: 0, y: 0, width: 240, height: 120, label: { text: 'One' } }],
+        frame: { name: FRAMES[0] },
+      });
+      const second = await call(helper, 'add_shapes', {
+        shapes: [
+          { type: 'ellipse', x: 3000, y: 2000, width: 300, height: 200, label: { text: 'Two' } },
+          { type: 'rectangle', x: 3400, y: 2100, width: 200, height: 100 },
+        ],
+        frame: { name: FRAMES[1] },
+      });
+      const frames = (await call(helper, 'get_board', {})).frames as { id: string; name?: string; x: number; y: number; width: number; height: number }[];
+      expect(frames.map(({ name }) => name)).toEqual(FRAMES);
+      const target = frames[1];
+      expect(target.id).toBe(second.frame);
+
+      // The frames list holds both frames' names, in the board's order, once the page holds both frames.
+      await page.waitForFunction(
+        (names) => {
+          const select = document.querySelector<HTMLSelectElement>('#frames-list');
+          if (select === null || select.hidden) return false;
+          const listed = [...select.options].slice(1).map((option) => option.textContent);
+          return JSON.stringify(listed) === JSON.stringify(names);
+        },
+        FRAMES,
+        { timeout: WAIT_MS },
+      );
+      expect(await page.locator('#frames-list').isVisible()).toBe(true);
+      await page.selectOption('#frames-list', { label: FRAMES[1] });
+
+      // The canvas then shows the second frame whole, at its center, and the list goes back to its prompt.
+      const view = await page.evaluate(() => {
+        const state = (window as unknown as E2eWindow).chalkline?.api.getAppState();
+        if (state === undefined) throw new Error("the page doesn't show a board");
+        return { scrollX: state.scrollX, scrollY: state.scrollY, zoom: state.zoom.value, width: state.width, height: state.height };
+      });
+      expect(view.width / 2 / view.zoom - view.scrollX).toBeCloseTo(target.x + target.width / 2, -1);
+      expect(view.height / 2 / view.zoom - view.scrollY).toBeCloseTo(target.y + target.height / 2, -1);
+      expect(target.width * view.zoom).toBeLessThanOrEqual(view.width);
+      expect(target.height * view.zoom).toBeLessThanOrEqual(view.height);
+      expect(await page.locator('#frames-list').inputValue()).toBe('');
+    } finally {
+      await helper.close();
+      await page.context().close();
     }
   }, 300_000);
 

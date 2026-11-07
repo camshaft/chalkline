@@ -4,7 +4,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type * as Y from 'yjs';
 import { answer, refusal } from './answer';
-import { addShapes, ELEMENTS, newId, readBoard, ShapeError } from './board';
+import { addShapes, ELEMENTS, FRAME_MARGIN, newId, readBoard, readFrames, ShapeError } from './board';
 import { registerChanges } from './changes';
 import type { Creator } from './creator';
 import { connect, deleteShapes, moveGroup, reorderShapes, scaleShapes, updateShape } from './edit';
@@ -12,10 +12,12 @@ import { listedFeedback, listedFeedbackSchema, registerFeedback } from './feedba
 import { renderBoard, RenderError } from './render';
 import { pendingRequests, RequestError, waitForRequest, writeMermaidRequest } from './requests';
 import {
+  boardFrameSchema,
   boardShapeSchema,
   changeSchema,
   connectionSchema,
   deletionSchema,
+  frameSchema,
   LISTED_POINTS,
   placeSchema,
   reorderSchema,
@@ -66,15 +68,21 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
     {
       title: 'Read the board',
       description:
-        `Reads the board: every shape on it, from back to front, with its id, kind, position, size and label, its stroke and background colors, each style field, font and alignment that isn't Excalidraw's default, for a shape in a group the ids of its groups, the innermost first, for an arrow the ids of the shapes it starts and ends at, for a line, an arrow or a freehand stroke its points, and for a shape an agent added, its creator; in pending, each Mermaid request that no page has converted yet; and, in feedback, each open feedback that people wrote on an area of the board, with its id, its writer as by, its text and its region, which read_feedback answers with the shapes the region meets, and answer_feedback answers. An arrow's or a line's width and height say how far its last point lies right of and below its first, as add_shapes reads them. Of a stroke that holds more than ${LISTED_POINTS} points, it lists ${LISTED_POINTS} of them, evenly spaced from its first to its last, and their count in pointCount.`,
+        `Reads the board: every shape on it, from back to front, with its id, kind, position, size and label, its stroke and background colors, each style field, font and alignment that isn't Excalidraw's default, for a shape in a group the ids of its groups, the innermost first, for an arrow the ids of the shapes it starts and ends at, for a line, an arrow or a freehand stroke its points, and for a shape an agent added, its creator; in pending, each Mermaid request that no page has converted yet; and, in feedback, each open feedback that people wrote on an area of the board, with its id, its writer as by, its text and its region, which read_feedback answers with the shapes the region meets, and answer_feedback answers; and, in frames, each frame from back to front, with its id, its name, its x, y, width and height, and as members the ids of the shapes in it, each shape's label going with its shape. A frame is among the shapes too, of kind frame, with its name as its label. An arrow's or a line's width and height say how far its last point lies right of and below its first, as add_shapes reads them. Of a stroke that holds more than ${LISTED_POINTS} points, it lists ${LISTED_POINTS} of them, evenly spaced from its first to its last, and their count in pointCount.`,
       outputSchema: {
         shapes: z.array(boardShapeSchema),
         pending: z.array(z.object({ id: z.string(), kind: z.literal('mermaid') })),
         feedback: z.array(listedFeedbackSchema),
+        frames: z.array(boardFrameSchema),
       },
     },
     () =>
-      answer({ shapes: readBoard(elements.values()), pending: pendingRequests(doc), feedback: listedFeedback(doc) }),
+      answer({
+        shapes: readBoard(elements.values()),
+        pending: pendingRequests(doc),
+        feedback: listedFeedback(doc),
+        frames: readFrames(elements.values()),
+      }),
   );
 
   server.registerTool(
@@ -142,6 +150,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         "A text and a label may set fontFamily (Excalifont, Nunito, Comic Shanns or another of Excalidraw's fonts) and textAlign (left, center or right).",
         'Each new shape records the agent as its creator, which get_board lists.',
         "With group true, the call's shapes go into one new group, whose id the answer holds: update_shape moves the group by that id, and delete_shapes deletes it with groups.",
+        `With frame, {"name": name}, the call's shapes go into one new frame of that name, ${FRAME_MARGIN} outside their bounds on each side and just in front of them, whose id the answer holds as frame: get_board lists it among its frames with the ids of its shapes, the page's frames list shows the frame when a person chooses its name, and update_shape moves the frame with its shapes, or renames it, by that id.`,
         'The new shapes go in front of every shape on the board, each in front of the shapes before it in the call; place puts them at the back of the board instead, or just below or just above a shape that get_board lists, as {"below": id} or {"above": id}.',
         'To draw a background behind shapes on the board, set place to {"below": id}, with id the first of those shapes that get_board lists, since it lists the board from back to front.',
         'reorder_shapes moves shapes forward or back once they are on the board.',
@@ -150,17 +159,24 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         shapes: z.array(shapeSchema).min(1),
         group: z.boolean().nullish().describe("Whether the call's shapes go into one new group, whose id the answer holds."),
         place: placeSchema.nullish(),
+        frame: frameSchema.nullish().describe("The frame the call's shapes go into, a new one with this name."),
       },
       outputSchema: {
         ids: z.array(z.string()),
         group: z.string().optional().describe("The id of the group the call's shapes went into, where the call asked for one."),
+        frame: z.string().optional().describe("The id of the frame the call's shapes went into, where the call asked for one."),
       },
     },
-    ({ shapes, group, place }) =>
+    ({ shapes, group, place, frame }) =>
       refusing(async () => {
         const id = group === true ? newId() : undefined;
-        const ids = await addShapes(doc, shapes, creator(), id, place ?? undefined);
-        return answer(id === undefined ? { ids } : { ids, group: id });
+        const framed = frame === undefined || frame === null ? undefined : { id: newId(), name: frame.name };
+        const ids = await addShapes(doc, shapes, creator(), id, place ?? undefined, framed);
+        return answer({
+          ids,
+          ...(id === undefined ? {} : { group: id }),
+          ...(framed === undefined ? {} : { frame: framed.id }),
+        });
       }),
   );
 
@@ -191,6 +207,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         "A straight arrow's or line's width and height say where it ends from its first point; an arrow bound to a shape follows that shape, so move the shape in its place.",
         'An empty label removes the label.',
         "To move a group, give group, the id get_board lists in its shapes' groups, instead of id, with x, y or both: the group's left and top edges go there, every shape of it moves with its label, each arrow bound to it follows it, and the answer holds the group's shapes.",
+        "A frame, by its id, takes x and y, its new left and top edges, and name, its new name: every shape in it moves with it, each with its label, and each arrow bound to them follows them.",
       ].join(' '),
       inputSchema: changeSchema.shape,
       outputSchema: { shape: boardShapeSchema.optional(), shapes: z.array(boardShapeSchema).optional() },

@@ -31,6 +31,7 @@ import { bindStatusBadge, connectControlsToggle, controlsAttacher } from './cont
 import { keepDrawingSpaceChanges, keptDrawingSpace } from './drawing-space';
 import { bindFeedback, type FeedbackCanvas } from './feedback';
 import { bindFiles, writeFiles } from './files';
+import { bindFramesList, framesOf } from './frames';
 import { keepBoard, storeName, type KeptBoard } from './keep';
 import { Followed } from './followed';
 import { ChalklineMenu, type FileCommands } from './menu';
@@ -109,6 +110,12 @@ function pageInput(id: string): HTMLInputElement {
 function pageButton(id: string): HTMLButtonElement {
   const found = pageElement(id);
   if (!(found instanceof HTMLButtonElement)) throw new Error(`the page's #${id} isn't a button`);
+  return found;
+}
+
+function pageSelect(id: string): HTMLSelectElement {
+  const found = pageElement(id);
+  if (!(found instanceof HTMLSelectElement)) throw new Error(`the page's #${id} isn't a select`);
   return found;
 }
 
@@ -398,6 +405,14 @@ async function start(): Promise<ChalklineHandle> {
   if (window.visualViewport !== null) {
     followKeyboard(pageElement('transcript'), window.visualViewport, () => document.documentElement.clientHeight);
   }
+  // The frames list holds each frame of the board, in the board's order, and choosing one scrolls and
+  // zooms the canvas to show that frame whole, as Show does for a feedback's area. It shows once the
+  // board holds a frame.
+  bindFramesList(pageSelect('frames-list'), {
+    frames: () => framesOf(api.getSceneElements()),
+    show: (frame) => canvas.showRegion(frame),
+    onChange: (handler) => api.onChange(() => handler()),
+  });
   // The microphone, Chat and Feedback buttons show once the board they act on is open, and stay hidden on
   // the join screen, as the menu's Save file and Open file items do.
   pageElement('mic').hidden = false;

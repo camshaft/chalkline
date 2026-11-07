@@ -192,7 +192,7 @@ export const boardShapeSchema = z.object({
   height: z
     .number()
     .describe("The shape's height, or for an arrow or a line how far below its first point it ends, or above where negative."),
-  label: z.string().optional().describe("A text's text, or the text inside a shape or on an arrow."),
+  label: z.string().optional().describe("A text's text, the text inside a shape or on an arrow, or a frame's name."),
   start: z.string().optional().describe("The id of the shape an arrow's start is bound to."),
   end: z.string().optional().describe("The id of the shape an arrow's end is bound to."),
   strokeColor: z.string().optional().describe("The shape's stroke color."),
@@ -228,6 +228,24 @@ export const boardShapeSchema = z.object({
     .int()
     .optional()
     .describe('How many points the stroke holds, where points lists only some of them.'),
+});
+
+/** A frame on the board, as get_board lists it among its frames. */
+export const boardFrameSchema = z.object({
+  id: z.string().describe("The frame's id, which update_shape moves or renames it by."),
+  name: z.string().optional().describe("The frame's name, which the page shows above it; a frame without a name has none."),
+  x: z.number().describe("The frame's left edge."),
+  y: z.number().describe("The frame's top edge."),
+  width: z.number(),
+  height: z.number(),
+  members: z
+    .array(z.string())
+    .describe("The ids of the shapes in the frame, from back to front, as get_board lists them in shapes; a shape's label goes with its shape."),
+});
+
+/** The frame that add_shapes puts a call's shapes into. */
+export const frameSchema = z.object({
+  name: z.string().min(1).describe("The frame's name, which the page shows above it and lists in its frames list."),
 });
 
 /** The arrow that connect draws between two shapes on the board. */
@@ -279,6 +297,7 @@ export const changeSchema = z.object({
   fontSize: size.nullish().describe("A text's new font size."),
   strokeColor: color.nullish().describe('The new color of the shape and its label, a CSS color such as #1971c2.'),
   backgroundColor: color.nullish().describe("The new fill of a rectangle, an ellipse or a diamond, a CSS color such as #a5d8ff."),
+  name: z.string().min(1).nullish().describe("A frame's new name."),
 });
 
 /** The shapes that delete_shapes deletes: by their ids, by their groups, or both. */
@@ -330,6 +349,7 @@ export const scalingSchema = z.object({
 
 export type Shape = z.infer<typeof shapeSchema>;
 export type BoardShape = z.infer<typeof boardShapeSchema>;
+export type BoardFrame = z.infer<typeof boardFrameSchema>;
 export type Connection = z.infer<typeof connectionSchema>;
 export type ShapeChange = z.infer<typeof changeSchema>;
 export type Place = z.infer<typeof placeSchema>;

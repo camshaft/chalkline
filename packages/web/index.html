@@ -189,10 +189,26 @@
       .chalkline-host--mobile .chalkline-controls:not(.chalkline-controls--open) .chalkline-controls-more {
         display: none;
       }
+      /* The frames list (frames.ts): each frame of the board, by its name, and a choice shows that frame. */
+      #frames-list {
+        height: var(--default-button-size, 2rem);
+        box-sizing: border-box;
+        padding: 0 0.4rem;
+        font: inherit;
+        color: inherit;
+        background: var(--color-surface-low, #ececf4);
+        border: 1px solid transparent;
+        border-radius: var(--border-radius-md, 0.375rem);
+        cursor: pointer;
+      }
+      #frames-list:focus-visible {
+        outline: 2px solid var(--color-primary, #6965db);
+        outline-offset: 1px;
+      }
       #transcript {
         position: absolute;
-        /* Below the page's controls on a desktop, the Read agent messages aloud button among them. */
-        top: 14.5rem;
+        /* Below the page's controls on a desktop, the Read agent messages aloud button and the frames list among them. */
+        top: 17rem;
         right: 1rem;
         /* --keyboard-inset is the height of the page a phone's on-screen keyboard covers (followKeyboard). */
         bottom: calc(1rem + var(--keyboard-inset, 0px));
@@ -561,6 +577,7 @@
           <button id="settings-button" class="chalkline-button" type="button">Connection settings</button>
         </div>
         <button id="read-aloud" class="chalkline-button" type="button" aria-pressed="false" hidden>Read agent messages aloud</button>
+        <select id="frames-list" aria-label="Frames" title="Go to a frame of the board" hidden></select>
       </div>
     </div>
     <input id="open-file" type="file" accept=".excalidraw,application/json,application/vnd.excalidraw+json" hidden />

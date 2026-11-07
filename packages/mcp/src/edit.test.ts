@@ -367,7 +367,7 @@ describe('update_shape', () => {
       ],
       [
         { id: 'scribble', x: 1 },
-        `"scribble" is a freedraw, which update_shape doesn't change: it changes rectangles, ellipses, diamonds, texts, arrows and lines.`,
+        `"scribble" is a freedraw, which update_shape doesn't change: it changes rectangles, ellipses, diamonds, texts, arrows, lines and frames.`,
       ],
       [
         { id: 'box' },
