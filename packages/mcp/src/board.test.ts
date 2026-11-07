@@ -67,4 +67,21 @@ describe('readBoard', () => {
     ]);
     expect(shapes.map((shape) => shape.id)).toEqual(['kept']);
   });
+
+  it("reads a line's or an arrow's size from its points, as the last point's offset from the first", () => {
+    const shapes = readBoard([
+      element({ id: 'stem', type: 'line', index: 'a0', width: 0, height: 50, points: [[0, 0], [100, -50]] }),
+      element({ id: 'bound', type: 'arrow', index: 'a1', width: 0, height: 50, points: [[0, 0.5], [12, 30], [0, 49.5]] }),
+      element({ id: 'dot', type: 'line', index: 'a2', points: [[0, 0]] }),
+      element({ id: 'odd', type: 'arrow', index: 'a3', points: [[0, 0], ['far', 10]] }),
+      element({ id: 'box', type: 'rectangle', index: 'a4', points: [[0, 0], [5, 5]] }),
+    ]);
+    expect(shapes.map(({ id, width, height }) => ({ id, width, height }))).toEqual([
+      { id: 'stem', width: 100, height: -50 },
+      { id: 'bound', width: 0, height: 49 },
+      { id: 'dot', width: 100, height: 50 },
+      { id: 'odd', width: 100, height: 50 },
+      { id: 'box', width: 100, height: 50 },
+    ]);
+  });
 });
