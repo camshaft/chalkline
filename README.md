@@ -28,7 +28,7 @@ It stays in the room until you press Ctrl-C. `--help` lists its options.
 
 ## Development
 
-The repository is one npm workspace. `packages/sync` holds the board's shared state and the adapter that carries it between participants over Trystero, with an in-memory network for its tests that loses, delays and reorders messages. `packages/web` holds the page and `draw-box`.
+The repository is one npm workspace. `packages/sync` holds the board's shared state and the adapter that carries it between participants over Trystero, with an in-memory network for its tests that loses, delays and reorders messages. `packages/web` holds the page and `draw-box`. `packages/lan` holds the local-network mode, `chalkline-lan`, one command that serves the built page and a Trystero WebSocket relay from one machine. It sends a request for the page to the same address with `?relay=/relay`, and a page whose address names a relay finds the other participants through that relay in place of the public Nostr relays and the relays of Connection settings. The TURN servers of Connection settings still apply.
 
 CI runs `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` on each pull request and on `main`, and the Pages workflow publishes `main` to GitHub Pages.
 

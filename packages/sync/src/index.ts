@@ -7,5 +7,7 @@ export {
   type NetworkOptions,
   type SentMessage,
 } from './memory-transport';
+export { RELAY_PARAM, relaysFromAddress } from './relay';
 export { connectDoc, REMOTE, type Channel, type ConnectOptions, type Transport } from './sync';
 export { toBytes, trysteroTransport, type RoomTransport } from './trystero';
+// joinBoardRoom is at '@chalkline/sync/join', so that importing this index doesn't load a Trystero strategy.
