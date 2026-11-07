@@ -596,7 +596,7 @@ describe('groups', () => {
   it('leaves the shapes of a call without group out of every group', async () => {
     const { elements, client } = await helper();
     const added = ok(await call(client, 'add_shapes', { shapes: [{ type: 'rectangle', id: 'solo', x: 0, y: 0, width: 100, height: 50 }] }));
-    expect(added).toEqual({ ids: ['solo'] });
+    expect(added).toEqual({ ids: ['solo'], change: expect.any(String) });
     expect(elements.get('solo')?.groupIds).toEqual([]);
     const [shape] = await board(client);
     expect(shape).not.toHaveProperty('groups');

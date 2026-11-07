@@ -1,7 +1,7 @@
 // Loaded by the end-to-end test into each of its browsers before the page's own scripts. The test
 // calls it to wait, on the page's change events, until the page shows the shapes that chalkline-mcp
-// added and its answer to a feedback. It is plain JavaScript, outside the test's compiled code, so
-// that the browser runs it as written.
+// added and its answer to a feedback, or no longer shows shapes it deleted. It is plain JavaScript,
+// outside the test's compiled code, so that the browser runs it as written.
 window.chalklineE2e = {
   /**
    * Resolves with each of `expected` as the page shows it: its type, its label, the creator its
@@ -187,6 +187,39 @@ window.chalklineE2e = {
         finish(new Error(`timed out waiting for the helper's picture: ${JSON.stringify(state)}`));
       }, waitMs);
       everyFrame();
+    });
+  },
+  /**
+   * Resolves once the scene shows none of `ids`, on the scene's and the board's change events, and
+   * rejects with the ids the scene still shows where `waitMs` passes first.
+   */
+  async gone(ids, waitMs) {
+    const handle = await window.chalklineReady;
+    const { api, doc } = handle;
+    const shown = () => api.getSceneElements().filter((element) => ids.includes(element.id)).map((element) => element.id);
+    return new Promise((resolve, reject) => {
+      let finished = false;
+      let stopScene = () => {};
+      let timer;
+      const check = () => {
+        if (shown().length === 0) finish(null);
+      };
+      const finish = (error) => {
+        if (finished) return;
+        finished = true;
+        stopScene();
+        doc.off('update', check);
+        clearTimeout(timer);
+        if (error) reject(error);
+        else resolve();
+      };
+      stopScene = api.onChange(check);
+      doc.on('update', check);
+      timer = setTimeout(() => {
+        const state = { shown: shown(), peers: handle.peers() };
+        finish(new Error(`timed out waiting for the deleted shapes to go: ${JSON.stringify(state)}`));
+      }, waitMs);
+      check();
     });
   },
 };
