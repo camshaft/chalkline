@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type * as Y from 'yjs';
+import { creatorOf, withCreator, type Creator } from './creator';
+import { boardPoints, type Point } from './geometry';
 import { indicesAbove } from './order';
 import type { BoardShape, Shape } from './shapes';
 import { convertSkeletons, type Skeleton } from './skeleton';
@@ -10,7 +12,7 @@ export const ELEMENTS = 'elements';
 /** The kinds of shape that an arrow of add_shapes binds to. */
 const BINDABLE: ReadonlySet<Shape['type']> = new Set<Shape['type']>(['rectangle', 'ellipse', 'diamond', 'text']);
 
-/** A refusal of the shapes add_shapes was called with, whose message says what to change. */
+/** A refusal of a tool's call on the board's shapes, whose message says what to change. */
 export class ShapeError extends Error {
   constructor(message: string) {
     super(message);
@@ -31,12 +33,15 @@ interface BoardElement {
   text: string | undefined;
   start: string | undefined;
   end: string | undefined;
+  creator: Creator | undefined;
 }
 
 /**
  * The board's shapes from back to front, as get_board answers them. A text bound to a shape is
- * that shape's label, and an arrow's start and end are the shapes its ends are bound to. Deleted
- * elements, and values that aren't elements, are left out.
+ * that shape's label, an arrow's start and end are the shapes its ends are bound to, and a shape
+ * an agent added lists the agent as its creator. An arrow's or a line's x and y are its first
+ * point, and its width and height how far right of it and below it its last point is, read from
+ * its points. Deleted elements, and values that aren't elements, are left out.
  */
 export function readBoard(values: Iterable<unknown>): BoardShape[] {
   const elements = new Map<string, BoardElement>();
@@ -70,20 +75,27 @@ export function readBoard(values: Iterable<unknown>): BoardShape[] {
     if (label !== undefined) shape.label = label;
     if (element.start !== undefined && listed.has(element.start)) shape.start = element.start;
     if (element.end !== undefined && listed.has(element.end)) shape.end = element.end;
+    if (element.creator !== undefined) shape.creator = element.creator;
     return shape;
   });
+}
+
+/** A random id for a new element: 20 characters of base64url, as Excalidraw's are. */
+export function newId(): string {
+  return randomBytes(15).toString('base64url');
 }
 
 /**
  * Adds `shapes`, in Excalidraw's skeleton format, to the board that `doc` holds, above every
  * element on it, in one transaction, and returns each shape's id in the order of `shapes`. A shape
- * keeps the id it sets, and a shape that leaves it out gets a random one. Throws a ShapeError, and
- * adds nothing, where two shapes set one id, a shape sets an id the board holds already, or an
+ * keeps the id it sets, and a shape that leaves it out gets a random one. Each element it adds, a
+ * shape's label among them, records `creator`, where given, as its creator. Throws a ShapeError,
+ * and adds nothing, where two shapes set one id, a shape sets an id the board holds already, or an
  * arrow's start or end isn't a rectangle, an ellipse, a diamond or a text of the same call.
  */
-export async function addShapes(doc: Y.Doc, shapes: readonly Shape[]): Promise<string[]> {
+export async function addShapes(doc: Y.Doc, shapes: readonly Shape[], creator?: Creator): Promise<string[]> {
   const shared = doc.getMap<unknown>(ELEMENTS);
-  const ids = shapes.map((shape) => shape.id ?? randomBytes(15).toString('base64url'));
+  const ids = shapes.map((shape) => shape.id ?? newId());
 
   const first = new Map<string, number>();
   ids.forEach((id, place) => {
@@ -123,21 +135,49 @@ export async function addShapes(doc: Y.Doc, shapes: readonly Shape[]): Promise<s
   }
   const indices = indicesAbove(shared.values(), elements.length);
   doc.transact(() => {
-    elements.forEach((element, place) => shared.set(element.id, { ...structuredClone(element), index: indices[place] }));
+    elements.forEach((element, place) => {
+      const copy = { ...structuredClone(element), index: indices[place] };
+      shared.set(element.id, creator === undefined ? copy : withCreator(copy, creator));
+    });
   });
   return ids;
 }
 
 /** The skeleton that `convertToExcalidrawElements` reads for `shape`, with the id `id`. */
 function skeleton(shape: Shape, id: string): Skeleton {
-  if (shape.type !== 'arrow') return { ...shape, id } as unknown as Skeleton;
-  const { start, end, ...arrow } = shape;
+  if (shape.type === 'arrow') {
+    const { start, end, ...arrow } = shape;
+    return {
+      ...arrow,
+      ...linePoints(arrow.width, arrow.height),
+      id,
+      ...(start === undefined ? {} : { start: { id: start } }),
+      ...(end === undefined ? {} : { end: { id: end } }),
+    } as unknown as Skeleton;
+  }
+  if (shape.type === 'line') return { ...shape, ...linePoints(shape.width, shape.height), id } as unknown as Skeleton;
+  return { ...shape, id } as unknown as Skeleton;
+}
+
+/**
+ * The width, height and points of a straight arrow or line that ends `width` right of its first
+ * point and `height` below it. convertToExcalidrawElements reads a width of 0 as left out, and
+ * would draw an arrow of width 0 and height 120 to a point 100 to the right, so the points say
+ * where it ends. Where the call leaves both out, or both are 0, the skeleton keeps Excalidraw's
+ * default.
+ */
+function linePoints(width: number | undefined, height: number | undefined): Record<string, unknown> {
+  const dx = width ?? 0;
+  const dy = height ?? 0;
+  if (dx === 0 && dy === 0) return {};
   return {
-    ...arrow,
-    id,
-    ...(start === undefined ? {} : { start: { id: start } }),
-    ...(end === undefined ? {} : { end: { id: end } }),
-  } as unknown as Skeleton;
+    width: Math.abs(dx),
+    height: Math.abs(dy),
+    points: [
+      [0, 0],
+      [dx, dy],
+    ],
+  };
 }
 
 function boardElement(value: unknown): BoardElement | null {
@@ -146,31 +186,53 @@ function boardElement(value: unknown): BoardElement | null {
   const { id, type, x, y, width, height } = fields;
   if (fields.isDeleted === true || typeof id !== 'string' || typeof type !== 'string') return null;
   if (!finite(x) || !finite(y) || !finite(width) || !finite(height)) return null;
+  const ends = type === 'arrow' || type === 'line' ? linearEnds(fields, x, y) : undefined;
   return {
     id,
     type,
-    x,
-    y,
-    width,
-    height,
+    x: ends === undefined ? x : ends.first.x,
+    y: ends === undefined ? y : ends.first.y,
+    width: ends === undefined ? width : ends.last.x - ends.first.x,
+    height: ends === undefined ? height : ends.last.y - ends.first.y,
     index: typeof fields.index === 'string' ? fields.index : null,
     containerId: typeof fields.containerId === 'string' ? fields.containerId : null,
     text: stringOf(fields.originalText) ?? stringOf(fields.text),
     start: boundTo(fields.startBinding),
     end: boundTo(fields.endBinding),
+    creator: creatorOf(value),
   };
 }
 
-function finite(value: unknown): value is number {
+/**
+ * The board positions of the first and the last point of an arrow or a line, read from its points,
+ * which say where it goes whatever its width and height hold, or undefined where it has fewer than
+ * two points or a point that isn't a pair of numbers.
+ */
+function linearEnds(fields: Record<string, unknown>, x: number, y: number): { first: Point; last: Point } | undefined {
+  const points = fields.points;
+  if (!Array.isArray(points)) return undefined;
+  const pairs: [number, number][] = [];
+  for (const point of points) {
+    if (!Array.isArray(point) || !finite(point[0]) || !finite(point[1])) return undefined;
+    pairs.push([point[0], point[1]]);
+  }
+  if (pairs.length < 2) return undefined;
+  const angle = finite(fields.angle) ? fields.angle : 0;
+  const placed =
+    angle === 0 ? pairs.map(([px, py]) => ({ x: x + px, y: y + py })) : boardPoints({ x, y }, pairs, angle);
+  return { first: placed[0], last: placed[placed.length - 1] };
+}
+
+export function finite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
-function stringOf(value: unknown): string | undefined {
+export function stringOf(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
 /** The id of the element that the binding of an arrow's end names. */
-function boundTo(binding: unknown): string | undefined {
+export function boundTo(binding: unknown): string | undefined {
   if (typeof binding !== 'object' || binding === null) return undefined;
   return stringOf((binding as { elementId?: unknown }).elementId);
 }
