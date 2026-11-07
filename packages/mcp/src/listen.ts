@@ -1,7 +1,7 @@
 import type { TranscriptEntry, Transport } from '@chalkline/sync';
 import type * as Y from 'yjs';
 import { ELEMENTS, finite, stringOf } from './board';
-import { agentWordsOf, changerOf, creatorOf } from './creator';
+import { agentWordsOf, changerOf, creatorOf, wordsChangedOf } from './creator';
 import { TranscriptLog } from './transcript';
 
 /**
@@ -150,9 +150,10 @@ function liveElement(value: unknown): (Record<string, unknown> & { updated: numb
 }
 
 /**
- * The words of the text that `value` holds, when its page last changed it, whether an agent's
- * helper made that change, as the element's change mark records it, and whether the words are the
- * ones the mark records an agent wrote, where it holds a text with words.
+ * The words of the text that `value` holds, when they last changed, as its words mark records it,
+ * else when its page last changed the text, whether an agent's helper made that change, as the
+ * element's change mark records it, and whether the words are the ones the mark records an agent
+ * wrote, where it holds a text with words.
  */
 function writtenOf(value: unknown): { words: string; updated: number; byAgent: boolean; agentWrote: boolean } | undefined {
   const fields = liveElement(value);
@@ -161,7 +162,7 @@ function writtenOf(value: unknown): { words: string; updated: number; byAgent: b
   if (words === undefined || words.trim() === '') return undefined;
   return {
     words,
-    updated: fields.updated,
+    updated: wordsChangedOf(value) ?? fields.updated,
     byAgent: changerOf(value) !== undefined,
     agentWrote: words === agentWordsOf(value),
   };
@@ -244,8 +245,9 @@ function watchElements(elements: Y.Map<unknown>, seen: (id: string) => void): ()
  * mark records it, doesn't make a line, and the listener keeps the words the agent wrote as told,
  * so that a person's move of the agent's text doesn't make one either, though the listener first
  * receives the text after that move, as a peer's copy of the board brings it. A deleted text and a
- * text without words are left out, and so is a text that a person last changed at or before
- * `options.after`, though the listener receives it later.
+ * text without words are left out, and so is a text whose words a person last changed at or before
+ * `options.after`, as its words mark records it where the text holds one, though the listener
+ * receives it later, after a move.
  */
 export function listenTexts(doc: Y.Doc, options: BoardListenOptions<Written>): Listener {
   const elements = doc.getMap<unknown>(ELEMENTS);

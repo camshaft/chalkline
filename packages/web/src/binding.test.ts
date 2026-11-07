@@ -1,3 +1,4 @@
+import { withWordsChanged, wordsChangedOf } from '@chalkline/mcp/creator';
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import { bindElements, LOCAL, localChanges, mergeShared, wins, type Canvas } from './binding';
@@ -9,6 +10,12 @@ interface Shape {
   index: string | null;
   label?: string;
   isDeleted?: boolean;
+  type?: string;
+  text?: string;
+  originalText?: string;
+  updated?: number;
+  x?: number;
+  customData?: Record<string, unknown>;
 }
 
 function shape(id: string, version: number, versionNonce = 1, index: string | null = 'a0', label?: string): Shape {
@@ -280,5 +287,50 @@ describe("Excalidraw's Reset the canvas", () => {
     expect(shown(first.canvas)).toEqual(['note', 'later']);
     expect(shown(second.canvas)).toEqual(['note', 'later']);
     expect(first.canvas.current).toEqual(second.canvas.current);
+  });
+});
+
+/** A text of `words`, as a page last changed it at `updated`. */
+function text(id: string, version: number, words: string, updated: number): Shape {
+  return { id, version, versionNonce: 1, index: 'a0', type: 'text', text: words, originalText: words, updated };
+}
+
+describe("the map's copy of a text", () => {
+  it("keeps when the text's words last changed across a local change that leaves them as they are, and sets it at a change of the words", () => {
+    const { shared, canvas } = bound();
+    canvas.edit([text('note', 1, 'first words', 1000)]);
+    expect(wordsChangedOf(shared.get('note'))).toBe(1000);
+
+    // The person moves the text, and the page measures it again: each a new version, with the same words.
+    canvas.edit([{ ...text('note', 2, 'first words', 2000), x: 40 }]);
+    canvas.edit([{ ...text('note', 3, 'first words', 3000), x: 40, text: 'first\nwords' }]);
+    expect(shared.get('note')).toMatchObject({ version: 3, updated: 3000, text: 'first\nwords' });
+    expect(wordsChangedOf(shared.get('note'))).toBe(1000);
+    // The canvas keeps its own object, which doesn't hold the mark.
+    expect(canvas.current[0].customData).toBeUndefined();
+
+    canvas.edit([text('note', 4, 'other words', 4000)]);
+    expect(wordsChangedOf(shared.get('note'))).toBe(4000);
+  });
+
+  it("keeps the time of a peer's copy that the canvas took, across a local move", () => {
+    const { doc, shared, canvas } = bound();
+    fromPeer(doc, withWordsChanged(text('note', 1, 'first words', 1000), undefined));
+
+    canvas.edit([{ ...canvas.current[0], version: 2, versionNonce: 5, updated: 2000, x: 40 }]);
+
+    expect(shared.get('note')).toMatchObject({ version: 2, x: 40 });
+    expect(wordsChangedOf(shared.get('note'))).toBe(1000);
+  });
+
+  it("leaves the mark out where the map's copy doesn't record when the same words changed", () => {
+    const { doc, shared, canvas } = bound();
+    // A page that doesn't write the mark wrote the text.
+    fromPeer(doc, text('note', 1, 'first words', 1000));
+
+    canvas.edit([{ ...canvas.current[0], version: 2, versionNonce: 5, updated: 2000 }]);
+
+    expect(shared.get('note')?.version).toBe(2);
+    expect(shared.get('note')?.customData).toBeUndefined();
   });
 });
