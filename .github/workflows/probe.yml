@@ -5,8 +5,9 @@ name: Probe
 # draw-box script joins it from a third runner. Each browser types its name,
 # draws a rectangle with the mouse, and waits until it shows the other browser's
 # rectangle, the script's labelled box, and the other browser's cursor with its
-# name; the script waits until both browsers mark it seen. The speech job opens
-# a board in each browser with a fake microphone, and records what the browser
+# name; the script waits until both browsers mark it seen. The speech jobs open
+# a board in Playwright's Chromium, the runner's Google Chrome and Microsoft
+# Edge, and Firefox, each with a fake microphone, and record what the browser
 # offers for speech recognition and what the page does with it.
 on:
   pull_request:
@@ -114,7 +115,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [chromium, firefox]
+        include:
+          - name: chromium
+            install: chromium
+          # Google Chrome and Microsoft Edge are on the runner's image, so Playwright doesn't install them.
+          - name: chrome
+          - name: msedge
+          - name: firefox
+            install: firefox
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -122,10 +130,11 @@ jobs:
           node-version: 22
       - name: Install
         run: npm ci
-      - name: Install ${{ matrix.name }}
+      - name: Install ${{ matrix.install }}
+        if: ${{ matrix.install }}
         working-directory: packages/web
         timeout-minutes: 8
-        run: npx playwright install ${{ matrix.name }}
+        run: npx playwright install ${{ matrix.install }}
       - name: Build the page
         if: ${{ !inputs.page_url }}
         run: npm run build --workspace @chalkline/web
