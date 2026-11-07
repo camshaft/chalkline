@@ -1,6 +1,8 @@
 # chalkline
 A distributed whiteboarding and brainstorming tool that doesn't require a server
 
+## Open a board
+
 Open https://camshaft.github.io/chalkline/ and press New board to start a board. The page makes a new room and puts its name and password in the link's fragment, `#room=<name>&key=<password>`: share that link to invite people. A browser doesn't send the fragment to GitHub Pages, so the host never sees either part. A link that lacks either part, such as the page's own address, opens a join screen, where you start a new board or paste the link someone shared with you. The New board button at the top of a board starts another board in the same tab, putting another board's link in the address bar opens that board, and the browser's Back button returns to the board before it.
 
 Browsers find each other through public Nostr relays with [Trystero](https://github.com/dmotz/trystero), which carry only the connection details, encrypted with the room's password, and then connect directly over WebRTC. The board's shapes are [Excalidraw](https://github.com/excalidraw/excalidraw) elements in a [Yjs](https://github.com/yjs/yjs) document, and each participant holds a full copy of it. Reset the canvas, in Excalidraw's menu, clears the board for everyone in the room.
@@ -19,6 +21,17 @@ The Connection settings button above the board opens two settings. They stay in 
 
 - TURN servers. Some networks, such as some office networks and VPNs, block direct connections between browsers, and the page then says that a peer couldn't connect. A TURN server forwards the encrypted traffic between two such browsers. Sign up for a hosted TURN service, such as [Cloudflare's](https://developers.cloudflare.com/calls/turn/), or run your own, such as [coturn](https://github.com/coturn/coturn), and enter its address, such as `turn:turn.example.com:3478`, with its username and password.
 - Relays. Your own Nostr relays, one `wss://` address a line, which the page uses in place of the public relays. Everyone on a board needs at least one relay in common.
+
+## Run the local mode
+
+Where everyone is on one local network, such as an office or a home network, `chalkline-lan` serves the page and a relay from one machine on it, and the browsers find each other through that machine instead of the public Nostr relays and the relays of Connection settings. On that machine, with Node 22 or later, in a clone of this repository:
+
+```sh
+npm ci
+npm run lan
+```
+
+`npm run lan` builds the page and `chalkline-lan`, and starts it on port 8080. It prints the addresses it serves the board at: one for each of the machine's IPv4 addresses on a network, and `http://localhost:8080/` for the machine's own browser. Open one of them, press New board, and share the board's link from the address bar with the people on the same network. The link names the machine's relay, so each browser that opens it finds the board through that machine; the TURN servers of Connection settings still apply. It serves until you press Ctrl-C. `node packages/lan/dist/chalkline-lan.mjs --help` lists its options, such as `--port` for another port.
 
 ## Live speech
 
@@ -52,7 +65,7 @@ It stays in the room until you press Ctrl-C. `--help` lists its options.
 
 ## Connect an agent
 
-`chalkline-mcp` serves the board's tools to an agent as a local MCP server, and `chalkline-mcp listen` tells the agent what people on the board say. Build it, and add the server to Claude Code with the board's link:
+`chalkline-mcp` serves the board's tools to an agent as a local MCP server, and `chalkline-mcp listen` tells the agent what people on the board say. Each takes the board's link, a link of the local mode among them: that link names its machine's relay, and they find the board through it. Build it, and add the server to Claude Code with the board's link:
 
 ```sh
 npm ci
@@ -81,6 +94,8 @@ The repository is one npm workspace. `packages/sync` holds the board's shared st
 CI runs `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` on each pull request and on `main`, then starts the built `chalkline-mcp` on a new board and calls its tools, runs `chalkline-mcp listen --help` and starts `chalkline-mcp listen` on a new board, and the Pages workflow publishes `main` to GitHub Pages.
 
 CI's End-to-end test job builds the page and `chalkline-mcp` and runs `npm run test:e2e --workspace @chalkline/lan`. The test serves the built page and the relay from one machine, as `chalkline-lan` does, opens the board in two Chromium contexts with Playwright, and starts the built `chalkline-mcp` on the same board through that relay. The helper adds a labelled rectangle and a labelled ellipse and connects them with a labelled arrow, and the test waits until both browsers show each of them with its label, its creator and the arrow's two ends. Each browser's screenshot is kept as an artifact. The test doesn't press the microphone button, since the tab of Playwright's Chromium crashes where the page asks whether speech recognition is available.
+
+CI's README steps job runs the steps of Open a board, Run the local mode and Connect an agent in a new checkout, with the commands this file lists: `packages/lan/e2e/readme-steps.mjs` reads each command from this file and runs it from the repository's root, so a change to a step's commands changes what the job runs. It runs `npm ci` and `npm run lan`, opens the address `chalkline-lan` prints for localhost in Chromium with Playwright, presses New board, and opens the board's link from the address bar in a second browser context. It builds `chalkline-mcp`, runs the `claude mcp add` command with that link, and checks that `claude mcp get` lists the server. It then starts the command that `claude mcp add` was given, as Claude Code starts it, and the helper adds a labelled rectangle, which both browsers show. Next it runs the listener's command, adds an entry to the board's transcript from the first browser, as the page does for a person's speech, and waits until the listener prints it. It also opens the page at the address in Open a board, presses New board, and waits until the page joins the new board. Where Connect an agent repeats `npm ci`, the job doesn't run it again in the same checkout. Claude Code's Monitor tool turns each line into a turn of a model, which needs a model account, so the job runs the listener's command itself, as the Monitor tool runs it.
 
 Installs use `npm ci`, which installs the versions package-lock.json pins. A change that adds, removes or updates a dependency changes package-lock.json too: run `npm install` on your machine, or run the Lock file workflow on the change's branch with `gh workflow run lock.yml --ref main -f branch=<the branch>`, which writes package-lock.json there and runs CI and the Probe workflow on the new head.
 
