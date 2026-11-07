@@ -297,18 +297,18 @@ describe('createRelayPool', () => {
       await announce(relay);
     }
     endStored(first);
-    acceptEvent(first);
     endStored(second);
-    acceptEvent(second);
 
-    // The silent relay's third announcement is the request its silence counts from.
-    await announce(pool.relays[2]);
-    await announce(pool.relays[2]);
-    await announce(pool.relays[0]);
-    acceptEvent(first);
-    expect(pool.retired()).toEqual([]);
-    await announce(pool.relays[1]);
-    acceptEvent(second);
+    // The other relays answer a request after each of the silent relay's announcements: its third is the one its silence counts from.
+    for (let announcement = 1; announcement <= 3; announcement += 1) {
+      if (announcement > 1) await announce(pool.relays[2]);
+      await announce(pool.relays[0]);
+      acceptEvent(first);
+      expect(pool.retired()).toEqual([]);
+      await announce(pool.relays[1]);
+      acceptEvent(second);
+      if (announcement < 3) expect(pool.retired()).toEqual([]);
+    }
 
     expect(pool.retired()).toEqual([urls[2]]);
     expect(warn).toHaveBeenCalledTimes(1);
@@ -339,6 +339,8 @@ describe('createRelayPool', () => {
     endStored(late);
     await announce(pool.relays[1]);
     acceptEvent(second);
+    await announce(pool.relays[2]);
+    acceptEvent(late);
 
     expect(pool.retired()).toEqual([]);
     expect(warn).not.toHaveBeenCalled();
@@ -362,6 +364,37 @@ describe('createRelayPool', () => {
     expect(warn).not.toHaveBeenCalled();
     expect(pool.held()).toEqual(urls.slice(0, 2));
     expect(socketsOf(urls[2])).toHaveLength(0);
+  });
+
+  it('counts the announcements of a new connection, after a relay that answered loses its connection', async () => {
+    const urls = relays('again', 3);
+    const warn = vi.fn();
+    const pool = createRelayPool({ urls, count: 2, warn });
+    const [other, dropped] = urls.slice(0, 2).map((url) => socketOf(url));
+    other.accept();
+    dropped.accept();
+    for (const relay of pool.relays.slice(0, 2)) relay.subscribe('topic', vi.fn());
+    for (let announcement = 0; announcement < 3; announcement += 1) {
+      for (const relay of pool.relays.slice(0, 2)) await announce(relay);
+    }
+    endStored(other);
+    endStored(dropped);
+
+    dropped.end();
+    const again = socketOf(urls[1]);
+    again.accept();
+    await vi.waitFor(() => expect(again.messages('EVENT')).toHaveLength(1), { timeout: 5000 });
+    await announce(pool.relays[0]);
+    acceptEvent(other);
+    expect(pool.retired()).toEqual([]);
+    await announce(pool.relays[1]);
+    await announce(pool.relays[1]);
+    await announce(pool.relays[0]);
+    acceptEvent(other);
+
+    expect(pool.retired()).toEqual([urls[1]]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(pool.held()).toEqual([urls[0], urls[2]]);
   });
 
   it('holds the same relays on two pages that see the same relays fail', () => {
