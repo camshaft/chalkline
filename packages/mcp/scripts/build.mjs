@@ -1,6 +1,6 @@
 // Bundles chalkline-mcp for Node into dist/chalkline-mcp.mjs, as draw-box's build bundles
-// draw-box. werift and jsdom stay outside the bundle and load from node_modules, since they read
-// files of their own at run time.
+// draw-box. werift, jsdom and resvg stay outside the bundle and load from node_modules, since they
+// read files of their own at run time, such as resvg's native module for the machine.
 import { build } from 'esbuild';
 import { fileURLToPath } from 'node:url';
 
@@ -12,12 +12,13 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node22',
-  external: ['werift', 'jsdom', 'global-jsdom'],
+  external: ['werift', 'jsdom', 'global-jsdom', '@resvg/resvg-js'],
   define: {
     'process.env.NODE_ENV': JSON.stringify('production'),
     'process.env.IS_PREACT': JSON.stringify('false'),
   },
-  // The helper doesn't render anything, so Excalidraw's styles, fonts and images load as nothing.
+  // The helper draws its pictures from SVG with resvg, which draws text in a font of the machine,
+  // so Excalidraw's styles, fonts and images load as nothing.
   loader: {
     '.css': 'empty',
     '.woff2': 'empty',

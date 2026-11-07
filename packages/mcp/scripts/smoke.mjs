@@ -3,9 +3,10 @@
 // connects them with a labelled arrow, moves the ellipse with update_shape, and asks for a Mermaid
 // diagram with add_mermaid, which answers pending since no page is in the new room. It reads the
 // request back with get_request, and the shapes, their creator and the pending request with
-// get_board, then deletes the arrow with delete_shapes. It then reads the empty transcript as the
-// resource chalkline://transcript, subscribes to it, and checks that read_transcript refuses a
-// cursor past the transcript's end. CI runs it after the build.
+// get_board, then deletes the arrow with delete_shapes and draws the board as a PNG with
+// render_board. It then reads the empty transcript as the resource chalkline://transcript,
+// subscribes to it, and checks that read_transcript refuses a cursor past the transcript's end. CI
+// runs it after the build.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +37,7 @@ assert.deepEqual(tools.map((tool) => tool.name).sort(), [
   'get_board',
   'get_request',
   'read_transcript',
+  'render_board',
   'update_shape',
 ]);
 
@@ -76,6 +78,19 @@ const after = await call('get_board', {});
 assert.equal(byId(after.shapes, arrow), undefined);
 assert.equal(after.shapes.some((candidate) => candidate.label === 'then'), false);
 
+// The rectangle and the moved ellipse span 0 to 560 across and 0 to 280 down, and the picture of
+// the whole board leaves a margin of 10 around them.
+const drawn = await client.callTool({ name: 'render_board', arguments: {} });
+assert.notEqual(drawn.isError, true, `render_board: ${JSON.stringify(drawn.content)}`);
+const image = drawn.content.find((part) => part.type === 'image');
+assert.equal(image?.mimeType, 'image/png');
+assert.deepEqual([...Buffer.from(image.data, 'base64').subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+assert.deepEqual(drawn.structuredContent, {
+  region: { x: -10, y: -10, width: 580, height: 300 },
+  width: 1024,
+  height: 530,
+});
+
 const transcript = await client.readResource({ uri: 'chalkline://transcript' });
 assert.deepEqual(JSON.parse(transcript.contents[0].text), { entries: [], cursor: 0 });
 await client.subscribeResource({ uri: 'chalkline://transcript' });
@@ -84,5 +99,5 @@ assert.equal(past.isError, true, JSON.stringify(past.content));
 
 await client.close();
 console.log(
-  `chalkline-mcp added ${id} labelled "Smoke test" and ${next}, connected them with ${arrow}, moved ${next}, deleted ${arrow}, wrote the Mermaid request ${asked.id}, read each back, and read the empty transcript`,
+  `chalkline-mcp added ${id} labelled "Smoke test" and ${next}, connected them with ${arrow}, moved ${next}, deleted ${arrow}, drew the board as a PNG of ${drawn.structuredContent.width} by ${drawn.structuredContent.height} pixels, wrote the Mermaid request ${asked.id}, read each back, and read the empty transcript`,
 );

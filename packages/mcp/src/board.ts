@@ -297,7 +297,7 @@ export function boundTo(binding: unknown): string | undefined {
 }
 
 /** Back to front, as the page orders the board: by fractional index, an element without one last, then by id. */
-function backToFront(a: BoardElement, b: BoardElement): number {
+export function backToFront(a: Pick<BoardElement, 'id' | 'index'>, b: Pick<BoardElement, 'id' | 'index'>): number {
   if (a.index !== b.index) {
     if (a.index === null) return 1;
     if (b.index === null) return -1;
