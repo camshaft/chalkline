@@ -68,8 +68,12 @@ export const boardShapeSchema = z.object({
   kind: z.string().describe("Excalidraw's type of the shape, such as rectangle, ellipse, diamond, text, arrow or line."),
   x: z.number(),
   y: z.number(),
-  width: z.number(),
-  height: z.number(),
+  width: z
+    .number()
+    .describe("The shape's width, or for an arrow or a line how far right of its first point it ends, or left where negative."),
+  height: z
+    .number()
+    .describe("The shape's height, or for an arrow or a line how far below its first point it ends, or above where negative."),
   label: z.string().optional().describe("A text's text, or the text inside a shape or on an arrow."),
   start: z.string().optional().describe("The id of the shape an arrow's start is bound to."),
   end: z.string().optional().describe("The id of the shape an arrow's end is bound to."),

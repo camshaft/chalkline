@@ -251,6 +251,90 @@ describe('chalkline-mcp', () => {
   });
 });
 
+describe('lines and arrows of add_shapes', () => {
+  it('draws a line of width 0 straight down or up, and get_board reads it so', async () => {
+    const { network, elements, client } = await board();
+    const [down, up] = ids(
+      await call(client, 'add_shapes', {
+        shapes: [
+          { type: 'line', x: 10, y: 20, width: 0, height: 50 },
+          { type: 'line', x: 40, y: 70, width: 0, height: -50 },
+        ],
+      }),
+    );
+
+    network.flush();
+    expect(elements.get(down)).toMatchObject({ type: 'line', x: 10, y: 20, width: 0, height: 50, points: [[0, 0], [0, 50]] });
+    expect(elements.get(up)).toMatchObject({ type: 'line', x: 40, y: 70, width: 0, height: 50, points: [[0, 0], [0, -50]] });
+    expect(shapes(await call(client, 'get_board'))).toEqual([
+      { id: down, kind: 'line', x: 10, y: 20, width: 0, height: 50 },
+      { id: up, kind: 'line', x: 40, y: 70, width: 0, height: -50 },
+    ]);
+  });
+
+  it('draws an arrow of width 0 straight down between two shapes of the same call', async () => {
+    const { network, elements, client } = await board();
+    const [arrow] = ids(
+      await call(client, 'add_shapes', {
+        shapes: [
+          { type: 'arrow', x: 50, y: 55, width: 0, height: 50, start: 'top', end: 'bottom' },
+          { type: 'rectangle', id: 'top', x: 0, y: 0, width: 100, height: 50 },
+          { type: 'rectangle', id: 'bottom', x: 0, y: 110, width: 100, height: 50 },
+        ],
+      }),
+    );
+
+    network.flush();
+    // The converter moves each end of an arrow bound at both ends 0.5 toward the other end.
+    expect(elements.get(arrow)).toMatchObject({
+      type: 'arrow',
+      x: 50,
+      y: 55,
+      width: 0,
+      height: 50,
+      points: [
+        [0, 0.5],
+        [0, 49.5],
+      ],
+      startBinding: { elementId: 'top' },
+      endBinding: { elementId: 'bottom' },
+    });
+    expect(shapes(await call(client, 'get_board')).find((shape) => shape.id === arrow)).toEqual({
+      id: arrow,
+      kind: 'arrow',
+      x: 50,
+      y: 55,
+      width: 0,
+      height: 49,
+      start: 'top',
+      end: 'bottom',
+    });
+  });
+
+  it("draws a line of height 0 straight across, and a line that leaves out its width or its height at Excalidraw's default", async () => {
+    const { network, elements, client } = await board();
+    const [across, unsized, left] = ids(
+      await call(client, 'add_shapes', {
+        shapes: [
+          { type: 'line', x: 0, y: 0, width: 120, height: 0 },
+          { type: 'line', x: 0, y: 10 },
+          { type: 'line', x: 0, y: 20, width: -80 },
+        ],
+      }),
+    );
+
+    network.flush();
+    expect(elements.get(across)).toMatchObject({ width: 120, height: 0, points: [[0, 0], [120, 0]] });
+    expect(elements.get(unsized)).toMatchObject({ width: 100, height: 0, points: [[0, 0], [100, 0]] });
+    expect(elements.get(left)).toMatchObject({ width: 80, height: 0, points: [[0, 0], [-80, 0]] });
+    expect(shapes(await call(client, 'get_board')).map(({ width, height }) => [width, height])).toEqual([
+      [120, 0],
+      [100, 0],
+      [-80, 0],
+    ]);
+  });
+});
+
 describe('add_shapes refusals', () => {
   const oval = () => drawn({ id: 'oval', type: 'ellipse', index: 'a0' });
 

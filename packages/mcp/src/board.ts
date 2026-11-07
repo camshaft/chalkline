@@ -35,8 +35,10 @@ interface BoardElement {
 
 /**
  * The board's shapes from back to front, as get_board answers them. A text bound to a shape is
- * that shape's label, and an arrow's start and end are the shapes its ends are bound to. Deleted
- * elements, and values that aren't elements, are left out.
+ * that shape's label, and an arrow's start and end are the shapes its ends are bound to. A line's
+ * or an arrow's width and height say how far its last point lies right of and below its first,
+ * which is where the pages draw it to. Deleted elements, and values that aren't elements, are left
+ * out.
  */
 export function readBoard(values: Iterable<unknown>): BoardShape[] {
   const elements = new Map<string, BoardElement>();
@@ -130,14 +132,38 @@ export async function addShapes(doc: Y.Doc, shapes: readonly Shape[]): Promise<s
 
 /** The skeleton that `convertToExcalidrawElements` reads for `shape`, with the id `id`. */
 function skeleton(shape: Shape, id: string): Skeleton {
+  if (shape.type === 'line') return { ...shape, ...linePoints(shape.width, shape.height), id } as unknown as Skeleton;
   if (shape.type !== 'arrow') return { ...shape, id } as unknown as Skeleton;
   const { start, end, ...arrow } = shape;
   return {
     ...arrow,
+    ...linePoints(arrow.width, arrow.height),
     id,
     ...(start === undefined ? {} : { start: { id: start } }),
     ...(end === undefined ? {} : { end: { id: end } }),
   } as unknown as Skeleton;
+}
+
+/** The width and height that convertToExcalidrawElements uses for a line or an arrow that leaves either out. */
+const DEFAULT_LINE = { width: 100, height: 0 };
+
+/**
+ * The width, height and points of a straight line or arrow that ends `width` right of its first
+ * point and `height` below it, with Excalidraw's default for each one left out.
+ * convertToExcalidrawElements reads a width or a height of 0 as left out: it would draw a line of
+ * width 0 to a point 100 right of its first point, while the element keeps width 0. The points
+ * say where the line ends, and the width and height are the size of their bounds, as Excalidraw
+ * keeps them.
+ */
+function linePoints(width = DEFAULT_LINE.width, height = DEFAULT_LINE.height): Record<string, unknown> {
+  return {
+    width: Math.abs(width),
+    height: Math.abs(height),
+    points: [
+      [0, 0],
+      [width, height],
+    ],
+  };
 }
 
 function boardElement(value: unknown): BoardElement | null {
@@ -146,19 +172,40 @@ function boardElement(value: unknown): BoardElement | null {
   const { id, type, x, y, width, height } = fields;
   if (fields.isDeleted === true || typeof id !== 'string' || typeof type !== 'string') return null;
   if (!finite(x) || !finite(y) || !finite(width) || !finite(height)) return null;
+  const drawn = type === 'line' || type === 'arrow' ? offsetOf(fields.points) : null;
   return {
     id,
     type,
     x,
     y,
-    width,
-    height,
+    width: drawn?.width ?? width,
+    height: drawn?.height ?? height,
     index: typeof fields.index === 'string' ? fields.index : null,
     containerId: typeof fields.containerId === 'string' ? fields.containerId : null,
     text: stringOf(fields.originalText) ?? stringOf(fields.text),
     start: boundTo(fields.startBinding),
     end: boundTo(fields.endBinding),
   };
+}
+
+/**
+ * How far the last of `points` lies right of and below the first, which is where Excalidraw draws
+ * a line or an arrow to, whatever its width and height fields say; null where `points` doesn't
+ * hold two points.
+ */
+function offsetOf(points: unknown): { width: number; height: number } | null {
+  if (!Array.isArray(points) || points.length < 2) return null;
+  const first = pointOf(points[0]);
+  const last = pointOf(points[points.length - 1]);
+  if (first === null || last === null) return null;
+  return { width: last[0] - first[0], height: last[1] - first[1] };
+}
+
+/** A point of a line or an arrow, as Excalidraw holds it: its x and y relative to the element's x and y. */
+function pointOf(value: unknown): readonly [number, number] | null {
+  if (!Array.isArray(value)) return null;
+  const [x, y]: unknown[] = value;
+  return finite(x) && finite(y) ? [x, y] : null;
 }
 
 function finite(value: unknown): value is number {
