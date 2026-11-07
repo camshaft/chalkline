@@ -96,7 +96,8 @@ jobs:
       # Serves the built page and the relay from this machine, opens a board in Chromium, fills it
       # with 100 shapes and a new board with 4,000 through the built chalkline-mcp, and prints how
       # long the page takes on each board to load it again, to draw it zoomed in and zoomed out, and
-      # to show the shapes that the helper's update_shape calls move.
+      # to show the shapes that the helper's update_shape calls move. It fails where one update_shape
+      # call costs the page more on the larger board, beyond the margin the measurement states.
       - name: Measure the page on boards of 100 and 4,000 shapes
         run: npm run measure --workspace @chalkline/lan
 

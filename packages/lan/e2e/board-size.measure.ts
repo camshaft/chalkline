@@ -4,8 +4,10 @@
 // rectangles, ellipses and lines. It measures a board of 100 shapes and one of 4,000, and prints for
 // each how long the page takes to load the board again, to draw it
 // zoomed in and zoomed out, and to show a shape that one update_shape call moves, and the shapes that
-// 100 update_shape calls move one after another, as an agent's calls do. It needs the page and the
-// helper that `npm run build` writes, and `npm run measure` runs it.
+// 100 update_shape calls move one after another, as an agent's calls do. It then checks that one
+// update_shape call costs the page no more on the board of 4,000 shapes than on the board of 100
+// zoomed in, and no more than one frame of a pan zoomed out, each within MARGIN_MS. It needs the page
+// and the helper that `npm run build` writes, and `npm run measure` runs it.
 import { randomBytes } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -42,6 +44,8 @@ const CHANGES_IN_A_ROW = 100;
 const FRAMES = 20;
 /** How long each wait of the page lasts. */
 const WAIT_MS = 600_000;
+/** The margin of main-thread time within which one change costs no more on the larger board: a frame at 60 Hz. */
+const MARGIN_MS = 1000 / 60;
 
 /** What measure-page.js and the page put on `window`. */
 interface MeasureWindow {
@@ -327,12 +331,23 @@ describe('the page on a board of 100 shapes and on one of 4,000', () => {
     await server?.close();
   }, 60_000);
 
-  it("loads, draws and applies the helper's changes on each board, and prints the numbers", async () => {
+  it("loads, draws and applies the helper's changes on each board, and a change costs no more on the larger board", async () => {
     const lan = server;
     const chrome = browser;
     if (lan === undefined || chrome === undefined) throw new Error('the server or the browser did not start');
     const boards: BoardNumbers[] = [];
     for (const count of SIZES) boards.push(await measureBoard(lan, chrome, count));
     console.log(`The board-size measurement:\n\n${table(boards)}\n`);
+
+    const [small, large] = boards;
+    // Zoomed in, the window shows about as many shapes of each board, so one change costs the page
+    // no more on the board of 4,000 shapes than on the board of 100, within the margin.
+    const zoomedIn = (board: BoardNumbers) => board.views['zoomed in'].change.busyMs;
+    expect(zoomedIn(large)).toBeLessThanOrEqual(zoomedIn(small) + MARGIN_MS);
+    // Zoomed out, the window shows every shape of the board, and Excalidraw draws each shape it shows
+    // again for each change, as it does for each frame of a pan: there one change costs no more than
+    // one frame of a pan at the same view, within the margin.
+    const zoomedOut = large.views['zoomed out'];
+    expect(zoomedOut.change.busyMs).toBeLessThanOrEqual(zoomedOut.frames.busyMs / FRAMES + MARGIN_MS);
   }, 2_400_000);
 });
