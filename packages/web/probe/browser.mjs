@@ -1,9 +1,12 @@
-// The live probe's browser: opens the board, types its name in the name field,
-// draws a rectangle with the mouse, and waits until the board shows each
-// participant's shape, the script's labelled box, and each other browser's
-// cursor with its name. It then marks seen-<name>, stays until the script marks
-// done-script, and marks bye-<name> as it leaves. The Probe workflow runs one
-// copy on each of two runners, and draw-box on a third.
+// The live probe's browser: opens the page's own address and waits for its
+// join screen, puts the board's link in the address as a person who pastes it
+// in the address bar, types its name in the name field, draws a rectangle with
+// the mouse, and waits until the board shows each participant's shape, the
+// script's labelled box, and each other browser's cursor with its name. It then
+// marks seen-<name>, stays until the script marks done-script, and marks
+// bye-<name> as it leaves. Last, it presses New board and waits until the page
+// loads again on a new room's link. The Probe workflow runs one copy on each of
+// two runners, and draw-box on a third.
 //
 // Settings, from the environment:
 //   PROBE_NAME     this browser's name in the room's probe map and by its cursor, such as chromium
@@ -64,6 +67,15 @@ page.on('console', (message) => console.log(`[${name} console.${message.type()}]
 page.on('pageerror', (error) => console.log(`[${name} page error] ${error.message}`));
 
 try {
+  // The page's own address doesn't name a board, so the page shows its join screen.
+  const home = new URL(link);
+  home.hash = '';
+  await page.goto(home.toString());
+  await page.locator('.join-screen').waitFor({ timeout: 30_000 });
+  console.log(`${name}: the page's own address shows the join screen`);
+
+  // Put the board's link in the address, as a person who pastes it in the address bar: only the
+  // fragment changes, so the page doesn't load again, and it joins the board the link names.
   await page.goto(link.toString());
   await page.waitForFunction(() => window.chalklineReady !== undefined);
   const selfId = await page.evaluate(async (who) => {
@@ -238,6 +250,16 @@ try {
   // Say goodbye, so that the script may leave as well.
   await page.evaluate((who) => window.chalkline.doc.getMap('probe').set(`bye-${who}`, new Date().toISOString()), name);
   console.log(`${name}: said goodbye`);
+
+  // Start another board from the bar's New board button, as a person does: the page loads again on a new room's link.
+  await Promise.all([page.waitForEvent('load'), page.getByRole('button', { name: 'New board', exact: true }).click()]);
+  await page.waitForFunction(() => window.chalklineReady !== undefined);
+  const next = await page.evaluate(async () => (await window.chalklineReady).room);
+  const nextLink = new URLSearchParams(new URL(page.url()).hash.slice(1));
+  if (next === room || nextLink.get('room') !== next || !nextLink.get('key')) {
+    throw new Error(`New board opened room ${next} at ${new URL(page.url()).pathname}, in place of a new room with a password`);
+  }
+  console.log(`${name}: New board opened the new room ${next}`);
 } catch (error) {
   process.exitCode = 1;
   console.error(`${name}: the probe failed: ${error instanceof Error ? error.stack : error}`);
