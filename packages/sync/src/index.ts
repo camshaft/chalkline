@@ -32,7 +32,18 @@ export {
   type Point,
   type RequestStatus,
 } from './requests';
-export { APP_ID, newRoomSecrets, parseRoomFragment, roomFragment, type RoomSecrets } from './room';
+export {
+  APP_ID,
+  encodeTurnServers,
+  linkTurnServers,
+  newRoomSecrets,
+  parseRoomFragment,
+  roomFragment,
+  TURN_PARAM,
+  type LinkTurnServers,
+  type RoomSecrets,
+  type TurnServer,
+} from './room';
 export {
   getSnapshotMark,
   isShape,

@@ -15,6 +15,8 @@ export interface FileCommands {
 export interface MenuActions {
   /** Opens a new board, in a new room. */
   newBoard(): void;
+  /** Opens the Share link panel, which copies the board's link, with the TURN servers the page uses or without them. */
+  share(): void;
   /** Opens the page's connection settings. */
   connectionSettings(): void;
   /** The board's file commands, null until the board is open; the menu shows Save file and Open file once they are set. */
@@ -50,6 +52,7 @@ const icon = (...paths: string[]): ReactElement =>
   );
 
 const NEW_BOARD_ICON = icon('M12 5v14', 'M5 12h14');
+const SHARE_ICON = icon('M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71', 'M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71');
 const SAVE_ICON = icon('M12 3v12', 'M7 10l5 5 5-5', 'M5 21h14');
 const OPEN_ICON = icon('M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z');
 const HISTORY_ICON = icon('M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8', 'M3 3v5h5', 'M12 7v5l4 2');
@@ -111,7 +114,7 @@ function SideButtonItems({ setting }: { setting: SideButtonSetting }): ReactElem
 }
 
 /**
- * Excalidraw's main menu with the page's items first: New board, Save file and Open file once the board
+ * Excalidraw's main menu with the page's items first: New board, Share link, Save file and Open file once the board
  * is open, History once this browser has opened its snapshots of the board, and Connection settings. Then
  * come Excalidraw's own items for the canvas, then its items for
  * the drawing space: the theme, the grid and the canvas's background, and last the items that choose what
@@ -124,6 +127,7 @@ export function ChalklineMenu({ actions }: { actions: MenuActions }): ReactEleme
       Fragment,
       null,
       createElement(MainMenu.Item, { icon: NEW_BOARD_ICON, onSelect: () => actions.newBoard(), children: 'New board' }),
+      createElement(MainMenu.Item, { icon: SHARE_ICON, onSelect: () => actions.share(), children: 'Share link' }),
       createElement(FileItems, { files: actions.files }),
       createElement(HistoryItem, { history: actions.history }),
       createElement(MainMenu.Item, {
