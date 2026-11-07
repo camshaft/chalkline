@@ -13,6 +13,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ResourceUpdatedNotificationSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
+import { FEEDBACK_URI } from './feedback';
 import { createServer } from './server';
 import { TRANSCRIPT_URI, TranscriptLog, type TranscriptRead } from './transcript';
 
@@ -314,7 +315,7 @@ describe('the transcript resource', () => {
   it('holds every entry and the cursor after them, and notifies a subscribed client after each new entry', async () => {
     const { network, transcript, client } = await board([entry('one')]);
     const { resources } = await client.listResources();
-    expect(resources.map(({ uri }) => uri)).toEqual([TRANSCRIPT_URI]);
+    expect(resources.map(({ uri }) => uri)).toEqual([TRANSCRIPT_URI, FEEDBACK_URI]);
     expect(await resource(client)).toEqual({ entries: [entry('one')], cursor: 1 });
 
     const updated: string[] = [];
