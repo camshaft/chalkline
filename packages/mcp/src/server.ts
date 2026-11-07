@@ -103,7 +103,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
           maxWidth: max_width ?? PICTURE_SIZE,
           maxHeight: max_height ?? PICTURE_SIZE,
           timeout,
-          signal: extra.signal,
+          signal: void extra,
         });
         const content = { region: drawn.region, width: drawn.width, height: drawn.height };
         const result: CallToolResult = {
