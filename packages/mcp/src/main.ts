@@ -23,8 +23,9 @@ const USAGE = `Usage: chalkline-mcp <board link>
 Joins the Chalkline board that the link opens, and serves the agent's tools on it as a local MCP
 server over standard input and output: get_board reads the board, add_shapes draws on it,
 connect draws an arrow between two of its shapes, update_shape changes a shape, delete_shapes
-deletes shapes, add_mermaid asks a page of the board to draw a Mermaid diagram, whose request
-get_request reads, and read_transcript reads what the people on the board said.
+deletes shapes, reorder_shapes moves shapes forward or back, add_mermaid asks a page of the board
+to draw a Mermaid diagram, whose request get_request reads, and read_transcript reads what the
+people on the board said.
 The link is the board's address, with its #room=<name>&key=<password> fragment, and with its
 ?relay= parameters where the board's participants meet through a relay. Each line the helper
 logs goes to standard error.
