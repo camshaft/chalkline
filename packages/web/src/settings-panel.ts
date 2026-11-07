@@ -1,7 +1,11 @@
 import {
+  linkErrorText,
+  sameTurnServer,
   saveSettings,
   settingsFromForm,
+  turnPartOf,
   type ConnectionSettings,
+  type FromLink,
   type SettingsStorage,
   type TurnRow,
   type TurnServer,
@@ -11,6 +15,8 @@ import {
 export interface PanelOptions {
   /** The settings the panel opens with. */
   settings: ConnectionSettings;
+  /** The servers of the board's link that the settings don't hold, and why the page can't read them, where it can't. */
+  fromLink?: FromLink;
   /** Keeps the settings the person saves; throws where the browser didn't keep them. */
   onSave(settings: ConnectionSettings): void;
   /** Closes the panel without saving. */
@@ -83,23 +89,66 @@ export function settingsPanel(doc: Document, options: PanelOptions): HTMLElement
     errors.hidden = messages.length === 0;
   };
 
-  const save = () => {
+  /** Saves what the person typed, and `extra`, servers of the board's link that the person chose to keep. */
+  const save = (extra: TurnServer[] = []) => {
     const result = settingsFromForm(readRows(), relays.value);
     if ('errors' in result) {
       showErrors(result.errors);
       return;
     }
     showErrors([]);
+    // A server of the link that the person typed in the panel too is kept once.
+    const { turnServers } = result.settings;
+    const added = extra.filter((server) => !turnServers.some((kept) => sameTurnServer(kept, server)));
     try {
-      options.onSave(result.settings);
+      options.onSave({ ...result.settings, turnServers: [...turnServers, ...added] });
     } catch (error) {
       showErrors([`This browser didn't keep the settings: ${error instanceof Error ? error.message : String(error)}`]);
     }
   };
 
+  // The servers of the board's link, which the page uses for this board alone, and which Keep adds to the settings.
+  const fromLink = options.fromLink ?? { servers: [], error: null };
+  const linkPart: HTMLElement[] = [];
+  if (fromLink.servers.length > 0 || fromLink.error !== null) linkPart.push(make('h3', 'From this link'));
+  if (fromLink.servers.length > 0) {
+    const list = make('ul');
+    list.className = 'link-servers';
+    for (const server of fromLink.servers) {
+      const urls = server.urls.join(' ');
+      list.append(make('li', server.username === undefined ? urls : `${urls} (username ${server.username})`));
+    }
+    linkPart.push(
+      make(
+        'p',
+        "This board's link carries these servers. The page uses them for this board alone, beside the TURN servers above, and doesn't keep them.",
+      ),
+      list,
+    );
+    const keep = fromLink.servers.flatMap((server) => {
+      const part = turnPartOf(server);
+      return part === null ? [] : [part];
+    });
+    if (keep.length > 0) {
+      linkPart.push(
+        make(
+          'p',
+          'Keep them in this browser to use them on every board it opens: the page saves their turn: and turns: addresses with the settings above, and reloads the board.',
+        ),
+        button('Keep them in this browser', () => save(keep)),
+      );
+    }
+  }
+  if (fromLink.error !== null) {
+    const refusal = make('p', linkErrorText(fromLink.error));
+    refusal.className = 'link-error';
+    refusal.setAttribute('role', 'alert');
+    linkPart.push(refusal);
+  }
+
   const actions = make('div');
   actions.className = 'settings-actions';
-  actions.append(button('Cancel', () => options.onClose()), button('Save and reload', save));
+  actions.append(button('Cancel', () => options.onClose()), button('Save and reload', () => save()));
 
   const panel = make('section');
   panel.className = 'settings-panel';
@@ -115,6 +164,7 @@ export function settingsPanel(doc: Document, options: PanelOptions): HTMLElement
     ),
     rows,
     button('Add a TURN server', () => addRow()),
+    ...linkPart,
     make('h3', 'Relays'),
     make(
       'p',
@@ -134,6 +184,8 @@ export interface ButtonOptions {
   storage: SettingsStorage | null;
   /** Loads the board again, so that the room joins with the saved settings. */
   reload(): void;
+  /** The servers of the board's link that the settings don't hold, which the panel reads each time it opens. */
+  fromLink?(): FromLink;
 }
 
 /**
@@ -149,6 +201,7 @@ export function settingsOpener(holder: HTMLElement, options: ButtonOptions): () 
     holder.replaceChildren(
       settingsPanel(holder.ownerDocument, {
         settings: options.settings,
+        fromLink: options.fromLink?.(),
         onSave: (saved) => {
           if (options.storage === null) throw new Error("it doesn't let this page keep anything");
           saveSettings(options.storage, saved);

@@ -1,4 +1,4 @@
-import { joinErrorText, type ConnectionSettings } from './connection';
+import { joinErrorText, linkErrorText, turnPartOf, type ConnectionSettings, type FromLink } from './connection';
 
 /** The part of the page's status element that `statusLine` writes. */
 export interface StatusElement {
@@ -13,17 +13,28 @@ export interface StatusLine {
   showFailure(): void;
 }
 
-/** The status line, in `element`, of a page that joined its room with `settings`. */
-export function statusLine(element: StatusElement, settings: ConnectionSettings): StatusLine {
+/**
+ * The status line, in `element`, of a page that joined its room with
+ * `settings` and with `fromLink`, the servers its board's link carries. Where
+ * the page can't read the link's servers, each count of people says so too.
+ */
+export function statusLine(
+  element: StatusElement,
+  settings: ConnectionSettings,
+  fromLink: FromLink = { servers: [], error: null },
+): StatusLine {
+  const linkNote = fromLink.error === null ? '' : ` ${linkErrorText(fromLink.error)}`;
+  // A STUN server doesn't ask for a password, so only the link's TURN servers may have expired.
+  const linkTurn = fromLink.servers.some((server) => turnPartOf(server) !== null);
   return {
     showPeers: (count) => {
       element.textContent =
-        count === 0
+        (count === 0
           ? "No one else is here yet. Share this page's link to invite people."
-          : `${count} other ${count === 1 ? 'person is' : 'people are'} on this board.`;
+          : `${count} other ${count === 1 ? 'person is' : 'people are'} on this board.`) + linkNote;
     },
     showFailure: () => {
-      element.textContent = joinErrorText(settings);
+      element.textContent = joinErrorText(settings, linkTurn);
     },
   };
 }

@@ -2,10 +2,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   defaultSettings,
+  linkErrorText,
   relayUrlError,
   SETTINGS_KEY,
   turnUrlError,
   type ConnectionSettings,
+  type FromLink,
   type SettingsStorage,
 } from './connection';
 import { connectSettingsButton, settingsOpener, settingsPanel } from './settings-panel';
@@ -213,5 +215,96 @@ describe("the main menu's Connection settings item", () => {
     open();
     expect(holder.hidden).toBe(false);
     expect(holder.querySelectorAll('.settings-panel')).toHaveLength(1);
+  });
+});
+
+describe("the panel's servers from the board's link", () => {
+  const linkTurn = {
+    urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turns:turn.cloudflare.com:5349?transport=tcp'],
+    username: 'link-user',
+    credential: 'link-pass',
+  };
+  const fromLink: FromLink = { servers: [{ urls: ['stun:stun.cloudflare.com:3478'] }, linkTurn], error: null };
+
+  function withLink(link: FromLink, settings: ConnectionSettings = defaultSettings()) {
+    const onSave = vi.fn<(saved: ConnectionSettings) => void>();
+    const panel = settingsPanel(document, { settings, fromLink: link, onSave, onClose: vi.fn<() => void>() });
+    document.body.replaceChildren(panel);
+    return { panel, onSave };
+  }
+
+  const listed = (panel: Element) => [...panel.querySelectorAll('.link-servers li')].map((item) => item.textContent);
+
+  it("doesn't show the section where the link carries none", () => {
+    for (const panel of [open().panel, withLink({ servers: [], error: null }).panel]) {
+      expect(panel.textContent).not.toContain('From this link');
+      expect(panel.querySelector('.link-servers')).toBeNull();
+      expect(panel.querySelector('.link-error')).toBeNull();
+    }
+  });
+
+  it('lists them as from this link without their passwords, and leaves them out of what Save and reload keeps', () => {
+    const { panel, onSave } = withLink(fromLink);
+    expect(panel.textContent).toContain('From this link');
+    expect(listed(panel)).toEqual([
+      'stun:stun.cloudflare.com:3478',
+      'turn:turn.cloudflare.com:3478?transport=udp turns:turn.cloudflare.com:5349?transport=tcp (username link-user)',
+    ]);
+    expect(panel.textContent).not.toContain('link-pass');
+    expect(rows(panel)).toEqual([]);
+    button(panel, 'Save and reload').click();
+    expect(onSave).toHaveBeenCalledWith(defaultSettings());
+  });
+
+  it('keeps their TURN part beside what the person typed on Keep them in this browser', () => {
+    const { panel, onSave } = withLink(fromLink);
+    relays(panel).value = 'wss://relay.one.example';
+    button(panel, 'Keep them in this browser').click();
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onSave).toHaveBeenCalledWith({ turnServers: [linkTurn], relays: ['wss://relay.one.example'] });
+  });
+
+  it('keeps a server of the link once, where the person typed it in the panel too', () => {
+    const { panel, onSave } = withLink(fromLink);
+    button(panel, 'Add a TURN server').click();
+    const [row] = rows(panel);
+    input(row, 'urls').value = linkTurn.urls.join(' ');
+    input(row, 'username').value = linkTurn.username;
+    input(row, 'credential').value = linkTurn.credential;
+    button(panel, 'Keep them in this browser').click();
+    expect(onSave).toHaveBeenCalledWith({ turnServers: [linkTurn], relays: [] });
+  });
+
+  it('offers to keep only the TURN servers of a link, as a STUN server needs no setting', () => {
+    const { panel } = withLink({ servers: [{ urls: ['stun:stun.example.com'] }], error: null });
+    expect(listed(panel)).toEqual(['stun:stun.example.com']);
+    expect([...panel.querySelectorAll('button')].map((found) => found.textContent)).not.toContain('Keep them in this browser');
+  });
+
+  it("says why where the page can't read the link's turn parameter", () => {
+    const error = "The link's turn parameter isn't base64url text.";
+    const { panel } = withLink({ servers: [], error });
+    expect(panel.textContent).toContain('From this link');
+    expect(panel.querySelector('.link-error')?.textContent).toBe(linkErrorText(error));
+    expect(panel.querySelector('.link-servers')).toBeNull();
+  });
+
+  it("reads them each time the button opens the panel, and keeps them in the browser's storage on Keep", () => {
+    document.body.innerHTML = '<button id="settings-button">Connection settings</button><div id="settings" hidden></div>';
+    const opener = document.getElementById('settings-button') as HTMLElement;
+    const holder = document.getElementById('settings') as HTMLElement;
+    const storage = new MemoryStorage();
+    const reload = vi.fn<() => void>();
+    let link: FromLink = { servers: [], error: null };
+    connectSettingsButton(opener, holder, { settings: defaultSettings(), storage, reload, fromLink: () => link });
+    opener.click();
+    expect(holder.textContent).not.toContain('From this link');
+    button(holder, 'Cancel').click();
+    link = fromLink;
+    opener.click();
+    expect(listed(holder)).toHaveLength(2);
+    button(holder, 'Keep them in this browser').click();
+    expect(JSON.parse(storage.getItem(SETTINGS_KEY) ?? 'null')).toStrictEqual({ turnServers: [linkTurn], relays: [] });
+    expect(reload).toHaveBeenCalledOnce();
   });
 });
