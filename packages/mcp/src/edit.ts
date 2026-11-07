@@ -6,6 +6,8 @@
 // which reaches the page as any change of the board does. Each element a change writes records
 // the agent whose call makes it, where the server passes that agent, as the author of the
 // element's new version, with creator.ts's change mark.
+// That agent is also the origin of the change's transaction, which the server's record of the
+// agent's changes reads (agent-changes.ts).
 import { randomInt } from 'node:crypto';
 import type * as Y from 'yjs';
 import {
@@ -381,7 +383,7 @@ export function deleteShapes(doc: Y.Doc, ids: readonly string[], groups: readonl
       if (kept.length !== bound.length) fields.boundElements = kept;
       if (Object.keys(fields).length > 0) shared.set(id, changedBy(touched(element, fields), creator));
     }
-  });
+  }, creator);
   return deleted;
 }
 
@@ -541,7 +543,7 @@ export function reorderShapes(doc: Y.Doc, ids: readonly string[], place: Place, 
   const indices = indicesAt(shared, place, moved.length, new Set(moved.map((entry) => entry.id)));
   doc.transact(() => {
     moved.forEach((entry, n) => shared.set(entry.id, changedBy(touched(entry.element, { index: indices[n] }), creator)));
-  });
+  }, creator);
   return order.map((shape) => shape.id);
 }
 
@@ -580,13 +582,13 @@ class Writes {
     this.changed.set(String(element.id), element);
   }
 
-  /** Writes the change into `doc`, in one transaction. */
+  /** Writes the change into `doc`, in one transaction, whose origin is `creator`. */
   commit(doc: Y.Doc): void {
     doc.transact(() => {
       for (const [id, element] of this.changed) this.shared.set(id, changedBy(element, this.creator));
       const indices = indicesAbove(this.shared.values(), this.added.length);
       this.added.forEach((element, place) => this.shared.set(String(element.id), { ...element, index: indices[place] }));
-    });
+    }, this.creator);
   }
 }
 

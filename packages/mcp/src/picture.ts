@@ -11,7 +11,9 @@ import { convertSkeletons, loadExcalidraw, type Excalidraw, type Skeleton } from
 
 // add_image and flatten write a picture as the page writes one that a person drops on the board:
 // an image element whose fileId names a file of the board's files map, which holds the picture as
-// a data URL, so that every page of the room loads it, and render_board draws it.
+// a data URL, so that every page of the room loads it, and render_board draws it. Each writes its
+// change in one transaction whose origin is the call's agent, which the server's record of the
+// agent's changes reads (agent-changes.ts).
 
 /** The most bytes a picture may hold: Excalidraw's limit for a file that a person adds to a board, 4 MiB. */
 export const MAX_FILE_BYTES = 4 * 1024 * 1024;
@@ -78,7 +80,7 @@ export async function addImage(doc: Y.Doc, request: ImageRequest, creator: Creat
   doc.transact(() => {
     const [index] = indicesAt(doc.getMap<unknown>(ELEMENTS), request.place ?? 'front', 1);
     writePicture(doc, element, index, file, creator);
-  });
+  }, creator);
   return { id, file: file.id, width: request.width, height };
 }
 
@@ -162,7 +164,7 @@ export async function flatten(doc: Y.Doc, request: FlattenRequest, creator: Crea
     const [index] = indicesAt(shared, frontPlace(shared, chosen), 1);
     deleted = deleteShapes(doc, chosen, [], creator);
     writePicture(doc, element, index, file, creator);
-  });
+  }, creator);
   return { id, file: file.id, ids: deleted, region: area, width, height };
 }
 

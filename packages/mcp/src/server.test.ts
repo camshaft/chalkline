@@ -159,7 +159,7 @@ function text(result: CallToolResult): string {
 }
 
 describe('chalkline-mcp', () => {
-  it('lists get_board, render_board, add_shapes, connect, update_shape, delete_shapes, reorder_shapes, scale_shapes, add_image, flatten, add_mermaid, get_request, read_changes, read_transcript, post_message, read_feedback, answer_feedback, save_snapshot and list_snapshots', async () => {
+  it('lists get_board, render_board, add_shapes, connect, update_shape, delete_shapes, reorder_shapes, scale_shapes, add_image, flatten, add_mermaid, get_request, read_changes, read_transcript, post_message, read_feedback, answer_feedback, save_snapshot, list_snapshots and undo_change', async () => {
     const { client } = await board();
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
@@ -181,6 +181,7 @@ describe('chalkline-mcp', () => {
       'reorder_shapes',
       'save_snapshot',
       'scale_shapes',
+      'undo_change',
       'update_shape',
     ]);
   });
