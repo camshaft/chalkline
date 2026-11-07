@@ -9,7 +9,9 @@
 // image's picture.
 // Once every browser has seen each copy, the first browser resets the canvas
 // from Excalidraw's menu, and each browser waits until its board shows none of
-// the shapes. It then marks seen-<name>, stays until the script marks
+// the shapes. Next it writes a request for a page to draw a Mermaid diagram, as
+// the agent's helper does with add_mermaid, and waits until the board shows each
+// browser's diagram. It then marks seen-<name>, stays until the script marks
 // done-script, and marks bye-<name> as it leaves. Last, it presses New board and
 // waits until the page loads again on a new room's link. The Probe workflow runs
 // one copy on each of two runners, and draw-box on a third.
@@ -409,6 +411,66 @@ try {
   );
   console.log(`${name}: the board shows none of the shapes after ${resetter} reset the canvas`);
 
+  // Write a request for a page to draw a Mermaid diagram, as the agent's helper does with
+  // add_mermaid, and wait, on the scene's and the document's change events, until each browser's
+  // request is done and the board shows its shapes. One page of the room converts each request.
+  await page.evaluate(
+    ({ id, who, x }) =>
+      window.chalkline.doc.getMap('requests').set(id, {
+        kind: 'mermaid',
+        text: `flowchart LR\n  start["${who}"] --> finish["drawn"]`,
+        by: who,
+        status: 'pending',
+        error: null,
+        at: { x, y: 600 },
+      }),
+    { id: `mermaid-${name}`, who: name, x: 360 + offset },
+  );
+  const requestIds = [name, ...others].map((browser) => `mermaid-${browser}`);
+  const diagrams = await page.evaluate(
+    ({ ids, waitMs }) =>
+      new Promise((resolve, reject) => {
+        const { api, doc } = window.chalkline;
+        const requests = doc.getMap('requests');
+        const state = () => {
+          const shown = new Set(api.getSceneElements().map((element) => element.id));
+          const read = Object.fromEntries(ids.map((id) => [id, requests.get(id) ?? null]));
+          const failed = ids.filter((id) => read[id]?.status === 'failed');
+          const missing = ids.filter(
+            (id) =>
+              read[id]?.status !== 'done' ||
+              !Array.isArray(read[id].ids) ||
+              read[id].ids.length === 0 ||
+              !read[id].ids.every((shape) => shown.has(shape)),
+          );
+          return { read, failed, missing };
+        };
+        let finished = false;
+        let stopScene = () => {};
+        let timer;
+        const finish = (error, value) => {
+          if (finished) return;
+          finished = true;
+          stopScene();
+          doc.off('update', check);
+          clearTimeout(timer);
+          if (error) reject(error);
+          else resolve(value);
+        };
+        const check = () => {
+          const now = state();
+          if (now.failed.length > 0) finish(new Error(`a page couldn't convert a Mermaid request: ${JSON.stringify(now.read)}`));
+          else if (now.missing.length === 0) finish(null, Object.fromEntries(ids.map((id) => [id, now.read[id].ids])));
+        };
+        stopScene = api.onChange(check);
+        doc.on('update', check);
+        timer = setTimeout(() => finish(new Error(`timed out waiting for each Mermaid diagram: ${JSON.stringify(state())}`)), waitMs);
+        check();
+      }),
+    { ids: requestIds, waitMs },
+  );
+  console.log(`${name}: the board shows each browser's Mermaid diagram: ${JSON.stringify(diagrams)}`);
+
   // Mark this browser's view as seen, and stay until the script has every browser's mark: a
   // browser that left at once could take its mark with it before any peer received it.
   await page.evaluate((who) => window.chalkline.doc.getMap('probe').set(`seen-${who}`, new Date().toISOString()), name);
@@ -455,6 +517,7 @@ try {
       '',
       `Opened ${link.origin}${link.pathname} as "${name}", drew rectangle \`${drawnId}\`, and saw each participant's shape (${participants.join(', ')}), the box labelled "${label}", and each other browser's cursor with its name (${others.join(', ') || 'none'}). It saved the board as \`${savedName}\`, opened a copy of its rectangle and an image from a file, and saw each browser's copy and image (${openedIds.join(', ')}) and each picture (${pictureIds.join(', ')}).`,
       `After ${resetter} reset the canvas from Excalidraw's menu, the board showed none of the shapes.`,
+      `The board showed each browser's Mermaid diagram: ${JSON.stringify(diagrams)}.`,
       '',
       '| Peer | Connection | This browser\'s candidate | The peer\'s candidate |',
       '| --- | --- | --- | --- |',
