@@ -3,7 +3,9 @@
 // delete_shapes deletes some, by their ids or by their groups, reorder_shapes moves some forward
 // or back, and scale_shapes makes some smaller or larger, by their ids or by their groups.
 // Each reads the board as chalkline-mcp's copy holds it, and writes its change in one transaction,
-// which reaches the page as any change of the board does.
+// which reaches the page as any change of the board does. Each element a change writes records
+// the agent whose call makes it, where the server passes that agent, as the author of the
+// element's new version, with creator.ts's change mark.
 import { randomInt } from 'node:crypto';
 import type * as Y from 'yjs';
 import {
@@ -19,7 +21,7 @@ import {
   stringOf,
   type Stacked,
 } from './board';
-import { withCreator, type Creator } from './creator';
+import { withChange, withCreator, type Creator } from './creator';
 import { arrowPoints, boardPoints, outlineOf, type Point } from './geometry';
 import { indicesAbove } from './order';
 import type { BoardShape, Connection, Place, Scaling, ShapeChange } from './shapes';
@@ -124,7 +126,7 @@ export async function connect(doc: Y.Doc, connection: Connection, creator?: Crea
     strokeColor: connection.strokeColor ?? undefined,
     label: text === undefined ? undefined : { text, id: newId() },
   });
-  const writes = new Writes(shared);
+  const writes = new Writes(shared, creator);
   writes.added.push(mark(structuredClone(laid.arrow), creator));
   if (laid.label !== undefined) writes.added.push(mark(structuredClone(laid.label), creator));
   for (const shapeId of [connection.start, connection.end]) {
@@ -172,7 +174,7 @@ export async function updateShape(doc: Y.Doc, change: ShapeChange, creator?: Cre
     throw new ShapeError(`${stray} doesn't apply to ${article(type)}, such as "${id}": update_shape changes its ${listed(fields)}.`);
   }
 
-  const writes = new Writes(shared);
+  const writes = new Writes(shared, creator);
   if (type === 'text') await changeText(writes, shape, change);
   else if (type === 'arrow' || type === 'line') await changeLinear(writes, shape, change, creator);
   else await changeBox(writes, shape, change, creator);
@@ -195,8 +197,9 @@ const NO_SHAPE = "The call doesn't name a shape: give id, the shape to change, o
  * is laid out again between the shapes it binds; an arrow of more than two points and an elbow
  * arrow move as they are. Throws a ShapeError, and changes nothing, where `change` sets id too,
  * sets a field besides x and y, sets neither, or where no shape on the board is in the group.
+ * Each element the move writes records `creator`, where given, as the author of its new version.
  */
-export async function moveGroup(doc: Y.Doc, change: ShapeChange): Promise<BoardShape[]> {
+export async function moveGroup(doc: Y.Doc, change: ShapeChange, creator?: Creator): Promise<BoardShape[]> {
   const shared = doc.getMap<unknown>(ELEMENTS);
   const { id, group, x, y } = change;
   if (!present(group)) throw new ShapeError(NO_SHAPE);
@@ -222,7 +225,7 @@ export async function moveGroup(doc: Y.Doc, change: ShapeChange): Promise<BoardS
 
   // The group's shapes and their labels move together, and keep where each lies from the others.
   const moved = withLabels(shared, members.map((shape) => shape.id));
-  const writes = new Writes(shared);
+  const writes = new Writes(shared, creator);
   for (const elementId of moved) {
     const element = writes.get(elementId);
     if (element !== undefined) writes.set(touched(element, { x: numberOf(element.x) + dx, y: numberOf(element.y) + dy }));
@@ -294,8 +297,10 @@ async function followMoved(writes: Writes, moved: ReadonlySet<string>): Promise<
  * longer does. Throws a ShapeError, and deletes nothing, where neither lists anything, where `ids`
  * holds one id twice, or an id that isn't a shape on the board or is a label, or where `groups`
  * holds one group twice, or a group that no shape on the board is in.
+ * Each element the deletion writes records `creator`, where given, as the author of its new
+ * version.
  */
-export function deleteShapes(doc: Y.Doc, ids: readonly string[], groups: readonly string[] = []): string[] {
+export function deleteShapes(doc: Y.Doc, ids: readonly string[], groups: readonly string[] = [], creator?: Creator): string[] {
   const shared = doc.getMap<unknown>(ELEMENTS);
   if (ids.length === 0 && groups.length === 0) {
     throw new ShapeError("The call doesn't name a shape to delete: give ids, groups or both.");
@@ -318,7 +323,7 @@ export function deleteShapes(doc: Y.Doc, ids: readonly string[], groups: readonl
     }
     for (const [id, element] of board) {
       if (gone.has(id)) {
-        shared.set(id, touched(element, { isDeleted: true }));
+        shared.set(id, changedBy(touched(element, { isDeleted: true }), creator));
         continue;
       }
       const fields: Element = {};
@@ -329,7 +334,7 @@ export function deleteShapes(doc: Y.Doc, ids: readonly string[], groups: readonl
       const bound = entries(element.boundElements);
       const kept = bound.filter((entry) => !gone.has(entry.id));
       if (kept.length !== bound.length) fields.boundElements = kept;
-      if (Object.keys(fields).length > 0) shared.set(id, touched(element, fields));
+      if (Object.keys(fields).length > 0) shared.set(id, changedBy(touched(element, fields), creator));
     }
   });
   return deleted;
@@ -397,9 +402,10 @@ function selected(
  * between them. Throws a ShapeError, and changes nothing, where neither `scaling.ids` nor
  * `scaling.groups` lists anything, where `scaling.ids` holds one id twice, or an id that isn't a
  * shape on the board or is a label, or where `scaling.groups` holds one group twice, or a group
- * that no shape on the board is in.
+ * that no shape on the board is in. Each element the scale writes records `creator`, where given,
+ * as the author of its new version.
  */
-export async function scaleShapes(doc: Y.Doc, scaling: Scaling): Promise<BoardShape[]> {
+export async function scaleShapes(doc: Y.Doc, scaling: Scaling, creator?: Creator): Promise<BoardShape[]> {
   const shared = doc.getMap<unknown>(ELEMENTS);
   const ids = scaling.ids ?? [];
   const groups = scaling.groups ?? [];
@@ -410,7 +416,7 @@ export async function scaleShapes(doc: Y.Doc, scaling: Scaling): Promise<BoardSh
   const chosenShapes = () => readBoard(shared.values()).filter((shape) => chosen.has(shape.id));
   const about = scaling.about ?? edgesOf(chosenShapes());
   const scaled = withLabels(shared, chosen);
-  const writes = new Writes(shared);
+  const writes = new Writes(shared, creator);
   for (const elementId of scaled) {
     const element = writes.get(elementId);
     if (element !== undefined) writes.set(touched(element, scaledFields(element, about, scaling.factor, scaled)));
@@ -453,9 +459,10 @@ function scaledFields(element: Element, about: Point, factor: number, scaled: Re
  * keep their order among themselves, whatever order `ids` lists them in, and each element moved
  * gets a new version, so that each page takes the move. Throws a ShapeError, and moves nothing,
  * where `ids` holds one id twice, or an id that isn't a shape on the board or is a label, or where
- * `place` names a shape that `ids` moves too, or one that indicesAt refuses.
+ * `place` names a shape that `ids` moves too, or one that indicesAt refuses. Each element the move
+ * writes records `creator`, where given, as the author of its new version.
  */
-export function reorderShapes(doc: Y.Doc, ids: readonly string[], place: Place): string[] {
+export function reorderShapes(doc: Y.Doc, ids: readonly string[], place: Place, creator?: Creator): string[] {
   const shared = doc.getMap<unknown>(ELEMENTS);
   const first = new Map<string, number>();
   const shapes = ids.map((id, n) => {
@@ -488,7 +495,7 @@ export function reorderShapes(doc: Y.Doc, ids: readonly string[], place: Place):
   const moved = order.flatMap((shape) => [shape, ...(labels.get(shape.id) ?? []).sort(backToFront)]);
   const indices = indicesAt(shared, place, moved.length, new Set(moved.map((entry) => entry.id)));
   doc.transact(() => {
-    moved.forEach((entry, n) => shared.set(entry.id, touched(entry.element, { index: indices[n] })));
+    moved.forEach((entry, n) => shared.set(entry.id, changedBy(touched(entry.element, { index: indices[n] }), creator)));
   });
   return order.map((shape) => shape.id);
 }
@@ -510,7 +517,14 @@ class Writes {
   /** The elements the change adds, which go above every element on the board, in this order. */
   readonly added: Element[] = [];
 
-  constructor(readonly shared: Y.Map<unknown>) {}
+  /**
+   * `creator`, where given, is the agent whose call makes the change: each element the change
+   * writes records it as the author of the element's new version.
+   */
+  constructor(
+    readonly shared: Y.Map<unknown>,
+    readonly creator?: Creator,
+  ) {}
 
   /** The element `id`, as the change writes it or as the board holds it; undefined where the board doesn't hold it. */
   get(id: string): Element | undefined {
@@ -524,7 +538,7 @@ class Writes {
   /** Writes the change into `doc`, in one transaction. */
   commit(doc: Y.Doc): void {
     doc.transact(() => {
-      for (const [id, element] of this.changed) this.shared.set(id, element);
+      for (const [id, element] of this.changed) this.shared.set(id, changedBy(element, this.creator));
       const indices = indicesAbove(this.shared.values(), this.added.length);
       this.added.forEach((element, place) => this.shared.set(String(element.id), { ...element, index: indices[place] }));
     });
@@ -868,6 +882,11 @@ function touched(element: Element, changes: Element): Element {
 
 function mark(element: Element, creator: Creator | undefined): Element {
   return creator === undefined ? element : withCreator(element, creator);
+}
+
+/** `element`, with `creator`, where given, recorded as the author of its version. */
+function changedBy(element: Element, creator: Creator | undefined): Element {
+  return creator === undefined ? element : withChange(element, creator);
 }
 
 /** Whether `after` moved or resized the shape `before` was. */

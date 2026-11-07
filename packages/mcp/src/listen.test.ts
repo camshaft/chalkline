@@ -2,7 +2,7 @@ import { appendEntry, connectDoc, MemoryNetwork, transcriptOf, type TranscriptEn
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { ELEMENTS } from './board';
-import { withCreator, type Creator } from './creator';
+import { withChange, withCreator, type Creator } from './creator';
 import {
   BOARD_PAUSE_MS,
   listen,
@@ -218,6 +218,25 @@ const stroke = (id: string, x: number, y: number, points: number[][], seconds: n
 /** The agent whose creator mark the agent's shapes of these tests hold. */
 const claude: Creator = { kind: 'agent', name: 'Claude' };
 
+/**
+ * `value` as a person's page leaves it after a change `seconds` after the listener starts: with
+ * `fields`, a new version and a new nonce, and the custom data `value` holds, as Excalidraw keeps it.
+ */
+const edited = (value: Record<string, unknown>, fields: Record<string, unknown>, seconds: number): Record<string, unknown> => ({
+  ...value,
+  ...fields,
+  version: Number(value.version) + 1,
+  versionNonce: Number(value.versionNonce) + 100,
+  updated: START + seconds * 1000,
+});
+
+/** `value` as the agent's helper leaves it after a change `seconds` after the listener starts, with its change mark. */
+const changedByClaude = (value: Record<string, unknown>, fields: Record<string, unknown>, seconds: number): Record<string, unknown> =>
+  withChange(edited(value, fields, seconds), claude);
+
+/** The fields of a text that holds `written`. */
+const words = (written: string): Record<string, unknown> => ({ text: written, originalText: written });
+
 interface Watching<T> {
   elements: Y.Map<unknown>;
   /** Each line the listener would print, in order. */
@@ -288,6 +307,70 @@ describe('listenTexts', () => {
     expect(lines).toEqual([]);
   });
 
+  it("prints a person's change of the words of an agent's text, and leaves out the agent's own changes of it", () => {
+    const { elements, lines } = watching<Written>(listenTexts);
+    let answer = withCreator(text('answer', 'The box is blue', 1), claude);
+    elements.set('answer', answer);
+    answer = changedByClaude(answer, words('The box is red'), 2);
+    elements.set('answer', answer);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([]);
+
+    // A person moves the agent's text, which leaves its words as the agent wrote them.
+    answer = edited(answer, { x: 200 }, 5);
+    elements.set('answer', answer);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([]);
+
+    // The person corrects the agent's words, one key at a time.
+    answer = edited(answer, words('The box is'), 10);
+    elements.set('answer', answer);
+    answer = edited(answer, words('The box is green'), 11);
+    elements.set('answer', answer);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS - 1);
+    expect(lines).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(lines).toEqual([{ at: at(11), kind: 'text', text: 'The box is green' }]);
+
+    // The agent changes its words again, which doesn't make a line.
+    elements.set('answer', changedByClaude(answer, words('The box is green, as you said'), 20));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toHaveLength(1);
+  });
+
+  it("prints a person's change of the label of a shape an agent added", () => {
+    const { elements, lines } = watching<Written>(listenTexts);
+    elements.set('box', withCreator(element({ id: 'box' }, 1), claude));
+    const label = withCreator(text('label', 'Start', 1, { containerId: 'box' }), claude);
+    elements.set('label', label);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([]);
+
+    elements.set('label', edited(label, words('Begin'), 4));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(4), kind: 'text', text: 'Begin' }]);
+  });
+
+  it("leaves out the agent's change of a person's text, and prints the person's next change of it", () => {
+    const { elements, lines } = watching<Written>(listenTexts);
+    let note = text('note', 'draw a box', 1);
+    elements.set('note', note);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(1), kind: 'text', text: 'draw a box' }]);
+
+    note = changedByClaude(note, words('draw a box: done'), 5);
+    elements.set('note', note);
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toHaveLength(1);
+
+    elements.set('note', edited(note, words('draw a circle'), 10));
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([
+      { at: at(1), kind: 'text', text: 'draw a box' },
+      { at: at(10), kind: 'text', text: 'draw a circle' },
+    ]);
+  });
+
   it('prints the text that waits for its pause at once on flush, and drops it on stop', () => {
     const { elements, lines, listener } = watching<Written>(listenTexts);
     elements.set('note', text('note', 'draw a box', 1));
@@ -344,6 +427,16 @@ describe('listenSketches', () => {
     elements.set('box', element({ id: 'box' }, 1));
     elements.set('gone', stroke('gone', 0, 0, [[0, 0], [9, 9]], 2));
     elements.set('gone', { ...stroke('gone', 0, 0, [[0, 0], [9, 9]], 3), isDeleted: true });
+    vi.advanceTimersByTime(10 * BOARD_PAUSE_MS);
+    expect(lines).toEqual([]);
+  });
+
+  it("leaves out a person's stroke that the agent moves, and an agent's stroke that a person moves", () => {
+    const theirs = stroke('theirs', 0, 0, [[0, 0], [9, 9]], -60);
+    const mine = withCreator(stroke('mine', 50, 0, [[0, 0], [9, 9]], -60), claude);
+    const { elements, lines } = watching<Sketched>(listenSketches, [theirs, mine]);
+    elements.set('theirs', changedByClaude(theirs, { x: 100 }, 1));
+    elements.set('mine', edited(mine, { x: 200 }, 2));
     vi.advanceTimersByTime(10 * BOARD_PAUSE_MS);
     expect(lines).toEqual([]);
   });
