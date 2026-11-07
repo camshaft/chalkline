@@ -5,10 +5,12 @@
 // script's labelled box, and each other browser's cursor with its name. Next it
 // saves the board to a file with the Save file button, opens a file that holds
 // a copy of its rectangle, and waits until the board shows each browser's copy.
-// It then marks seen-<name>, stays until the script marks done-script, and
-// marks bye-<name> as it leaves. Last, it presses New board and waits until the
-// page loads again on a new room's link. The Probe workflow runs one copy on
-// each of two runners, and draw-box on a third.
+// Once every browser has seen each copy, the first browser resets the canvas
+// from Excalidraw's menu, and each browser waits until its board shows none of
+// the shapes. It then marks seen-<name>, stays until the script marks
+// done-script, and marks bye-<name> as it leaves. Last, it presses New board and
+// waits until the page loads again on a new room's link. The Probe workflow runs
+// one copy on each of two runners, and draw-box on a third.
 //
 // Settings, from the environment:
 //   PROBE_NAME     this browser's name in the room's probe map and by its cursor, such as chromium
@@ -16,8 +18,8 @@
 //   OFFSET         how far right of the first browser's rectangle to draw, in pixels
 //   ROOM, KEY      the room's name and password
 //   PARTICIPANTS   every name whose shape to wait for, such as chromium,firefox,script
-//   BROWSERS       every browser's name, whose cursor the other browsers wait for, such as chromium,firefox
-//                  (default: none)
+//   BROWSERS       every browser's name, whose cursor the other browsers wait for, such as chromium,firefox;
+//                  the first one resets the canvas (default: none, and this browser resets it)
 //   LABEL          the label of the script's box
 //   PAGE_URL       the page to open; left empty, this script serves the local build
 //   WAIT_SECONDS   how long each wait lasts before the probe fails (default: 480)
@@ -45,6 +47,12 @@ const others = setting('BROWSERS', '')
   .split(',')
   .map((other) => other.trim())
   .filter((other) => other.length > 0 && other !== name);
+// The browser that resets the canvas once every browser has seen each shape: the first of BROWSERS.
+const resetter =
+  setting('BROWSERS', '')
+    .split(',')
+    .map((browser) => browser.trim())
+    .find((browser) => browser.length > 0) ?? name;
 const label = setting('LABEL');
 const waitMs = Number(setting('WAIT_SECONDS', '480')) * 1000;
 const screenshot = `probe-${name}.png`;
@@ -255,6 +263,64 @@ try {
   );
   console.log(`${name}: the board shows each browser's copy opened from a file: ${JSON.stringify(openedIds)}`);
 
+  // Once every browser has seen each shape and copy, reset the canvas from Excalidraw's menu on the
+  // first browser, as a person does, and wait until the board shows none of the shapes: the reset
+  // marks each shape deleted, and the binding shares the deleted copies with every page.
+  await page.evaluate((who) => window.chalkline.doc.getMap('probe').set(`ready-${who}`, new Date().toISOString()), name);
+  if (name === resetter) {
+    await page.evaluate(
+      ({ keys, waitMs }) =>
+        new Promise((resolve, reject) => {
+          const probe = window.chalkline.doc.getMap('probe');
+          const timer = setTimeout(() => {
+            probe.unobserve(check);
+            reject(new Error(`timed out waiting for ${keys.join(', ')}: ${JSON.stringify(probe.toJSON())}`));
+          }, waitMs);
+          function check() {
+            if (!keys.every((key) => probe.has(key))) return;
+            probe.unobserve(check);
+            clearTimeout(timer);
+            resolve();
+          }
+          probe.observe(check);
+          check();
+        }),
+      { keys: [name, ...others].map((browser) => `ready-${browser}`), waitMs },
+    );
+    await page.getByTestId('main-menu-trigger').click();
+    await page.getByTestId('clear-canvas-button').click();
+    await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+    console.log(`${name}: reset the canvas from Excalidraw's menu`);
+  }
+  await page.evaluate(
+    (waitMs) =>
+      new Promise((resolve, reject) => {
+        const { api, doc } = window.chalkline;
+        const shown = () => api.getSceneElements().map((element) => element.id);
+        let finished = false;
+        let stopScene = () => {};
+        let timer;
+        const finish = (error) => {
+          if (finished) return;
+          finished = true;
+          stopScene();
+          doc.off('update', check);
+          clearTimeout(timer);
+          if (error) reject(error);
+          else resolve();
+        };
+        const check = () => {
+          if (shown().length === 0) finish(null);
+        };
+        stopScene = api.onChange(check);
+        doc.on('update', check);
+        timer = setTimeout(() => finish(new Error(`timed out waiting for the reset to clear the board: ${JSON.stringify(shown())}`)), waitMs);
+        check();
+      }),
+    waitMs,
+  );
+  console.log(`${name}: the board shows none of the shapes after ${resetter} reset the canvas`);
+
   // Mark this browser's view as seen, and stay until the script has every browser's mark: a
   // browser that left at once could take its mark with it before any peer received it.
   await page.evaluate((who) => window.chalkline.doc.getMap('probe').set(`seen-${who}`, new Date().toISOString()), name);
@@ -300,6 +366,7 @@ try {
       `### ${name}`,
       '',
       `Opened ${link.origin}${link.pathname} as "${name}", drew rectangle \`${drawnId}\`, and saw each participant's shape (${participants.join(', ')}), the box labelled "${label}", and each other browser's cursor with its name (${others.join(', ') || 'none'}). It saved the board as \`${savedName}\`, opened a copy of its rectangle from a file, and saw each browser's copy (${openedIds.join(', ')}).`,
+      `After ${resetter} reset the canvas from Excalidraw's menu, the board showed none of the shapes.`,
       '',
       '| Peer | Connection | This browser\'s candidate | The peer\'s candidate |',
       '| --- | --- | --- | --- |',
