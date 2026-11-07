@@ -43,10 +43,11 @@ Options:
                            (default: 3)
   --after <time>           leave out what was said, written or drawn at or before this ISO 8601
                            time, in place of the time the listener starts, such as the "at" of
-                           the last line an earlier listener printed. A text whose copy doesn't
-                           record when its words last changed, as a text written before
-                           Chalkline's pages recorded it, is left out where its last change came
-                           before the listener started
+                           the last line an earlier listener printed. A text or a freehand
+                           stroke whose copy doesn't record when its words, or its place and
+                           points, last changed, as one written before Chalkline's pages
+                           recorded it, is left out where its last change came before the
+                           listener started
   --help                   print this text`;
 
 /** What the arguments after `chalkline-mcp listen` ask for. */
