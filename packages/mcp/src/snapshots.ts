@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type * as Y from 'yjs';
 import { answer, refusal } from './answer';
 import { ELEMENTS, newId } from './board';
+import { running } from './presence';
 import { agentName } from './transcript';
 
 /** The line list_snapshots answers beside the marks: where the snapshots themselves are, and how a person restores one. */
@@ -43,22 +44,23 @@ export function registerSnapshots(server: McpServer, doc: Y.Doc): void {
       },
       outputSchema: { mark: markSchema },
     },
-    ({ label }) => {
-      const shapes = shapeCount(doc.getMap<unknown>(ELEMENTS).values());
-      if (shapes === 0) {
-        return refusal("the board doesn't have any shapes: a snapshot of it would hold nothing to restore.");
-      }
-      const words = label?.trim() ?? '';
-      const mark: SnapshotMark = {
-        id: newId(),
-        by: agentName(server),
-        at: new Date().toISOString(),
-        label: words === '' ? null : words,
-        shapes,
-      };
-      writeSnapshotMark(marks, mark);
-      return answer({ mark });
-    },
+    ({ label }) =>
+      running(server, () => {
+        const shapes = shapeCount(doc.getMap<unknown>(ELEMENTS).values());
+        if (shapes === 0) {
+          return refusal("the board doesn't have any shapes: a snapshot of it would hold nothing to restore.");
+        }
+        const words = label?.trim() ?? '';
+        const mark: SnapshotMark = {
+          id: newId(),
+          by: agentName(server),
+          at: new Date().toISOString(),
+          label: words === '' ? null : words,
+          shapes,
+        };
+        writeSnapshotMark(marks, mark);
+        return answer({ mark });
+      }),
   );
 
   server.registerTool(
@@ -72,6 +74,6 @@ export function registerSnapshots(server: McpServer, doc: Y.Doc): void {
       inputSchema: {},
       outputSchema: { marks: z.array(markSchema), note: z.string() },
     },
-    () => answer({ marks: listSnapshotMarks(marks), note: BROWSER_SNAPSHOTS }),
+    () => running(server, () => answer({ marks: listSnapshotMarks(marks), note: BROWSER_SNAPSHOTS })),
   );
 }

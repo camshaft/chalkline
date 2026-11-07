@@ -257,6 +257,19 @@ describe("the helper's presence", () => {
     expect(statuses).toEqual(['idle', 'working', 'idle', 'working', 'idle', 'working', 'idle']);
   });
 
+  it('shows working while save_snapshot and list_snapshots run, and leaves the shapes and the pointer as they are', async () => {
+    const { client, helperAwareness, statuses } = await board();
+    await call(client, 'add_shapes', { shapes: TWO_BOXES });
+    const drawn = stateOf(helperAwareness);
+
+    await call(client, 'save_snapshot', { label: 'before the redesign' });
+    expect(stateOf(helperAwareness)).toEqual(drawn);
+    const listed = await call(client, 'list_snapshots');
+    expect(listed.marks).toHaveLength(1);
+    expect(stateOf(helperAwareness)).toEqual(drawn);
+    expect(statuses).toEqual(['idle', 'working', 'idle', 'working', 'idle', 'working', 'idle']);
+  });
+
   it.each(['read_transcript', 'read_changes', 'read_feedback'])(
     'shows idle while %s waits for an event, and working again until it answers once the client cancels it',
     async (tool) => {
