@@ -3,8 +3,16 @@
 // on the board's list of the agent's changes (@chalkline/mcp/agent-changes). Undo writes each element
 // the change wrote back as it was before the change, for everyone on the board; the change's item then
 // says who undid it and when, and names each element the undo left as it is, since someone changed it
-// after the change.
-import { listAgentChanges, undoAgentChange, UndoError, type KeptElement, type ListedChange } from '@chalkline/mcp/agent-changes';
+// after the change. A change leaves the list once the board no longer shows anything it wrote, and the
+// list then says that older changes can't be undone here.
+import {
+  listAgentChanges,
+  olderChangesDropped,
+  undoAgentChange,
+  UndoError,
+  type KeptElement,
+  type ListedChange,
+} from '@chalkline/mcp/agent-changes';
 import type * as Y from 'yjs';
 
 /** Who undoes a change from the panel, and the time of each undo. */
@@ -31,7 +39,8 @@ export interface ChangesPanel {
  * it, who undid it and when, and the elements of `elements` that the undo left as they are. The panel
  * starts closed, and puts the focus on its Close button as it opens; the Close button, as Escape in
  * the panel does, closes it. Its list renders as it opens and on each change while it is open. Where an undo can't run, as where someone undid the change already on
- * another page, the panel's status line says why.
+ * another page, the panel's status line says why. Once changes left the board's list, as
+ * dropReplacedChanges drops them, the panel says that older changes can't be undone here.
  */
 export function bindChangesPanel(
   panel: HTMLElement,
@@ -66,7 +75,9 @@ export function bindChangesPanel(
   status.hidden = true;
   const empty = make('p', 'changes-empty', "The agent hasn't changed the board yet.");
   const list = make('ol', 'changes-list');
-  panel.replaceChildren(header, status, empty, list);
+  const older = make('p', 'changes-older', "Older changes can't be undone here: a change leaves this list once the board no longer shows what it wrote.");
+  older.hidden = true;
+  panel.replaceChildren(header, status, empty, list, older);
   panel.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || event.isComposing) return;
     event.preventDefault();
@@ -93,8 +104,10 @@ export function bindChangesPanel(
   const render = (): void => {
     stale = false;
     const listed = listAgentChanges(changes);
+    const dropped = olderChangesDropped(changes);
     list.replaceChildren(...listed.map((change) => changeItem(doc, change, undo)));
-    empty.hidden = listed.length > 0;
+    empty.hidden = listed.length > 0 || dropped;
+    older.hidden = !dropped;
   };
   const changed = (): void => {
     if (panel.hidden) stale = true;
