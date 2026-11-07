@@ -196,7 +196,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       refusing(async () =>
         change.group === undefined || change.group === null
           ? answer({ shape: await updateShape(doc, change, creator()) })
-          : answer({ shapes: await moveGroup(doc, change) }),
+          : answer({ shapes: await moveGroup(doc, change, creator()) }),
       ),
   );
 
@@ -212,7 +212,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       inputSchema: deletionSchema.shape,
       outputSchema: { ids: z.array(z.string()) },
     },
-    ({ ids, groups }) => refusing(async () => answer({ ids: deleteShapes(doc, ids ?? [], groups ?? []) })),
+    ({ ids, groups }) => refusing(async () => answer({ ids: deleteShapes(doc, ids ?? [], groups ?? [], creator()) })),
   );
 
   server.registerTool(
@@ -228,7 +228,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       inputSchema: reorderSchema.shape,
       outputSchema: { ids: z.array(z.string()) },
     },
-    ({ ids, place }) => refusing(async () => answer({ ids: reorderShapes(doc, ids, place) })),
+    ({ ids, place }) => refusing(async () => answer({ ids: reorderShapes(doc, ids, place, creator()) })),
   );
 
   server.registerTool(
@@ -245,7 +245,7 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       inputSchema: scalingSchema.shape,
       outputSchema: { shapes: z.array(boardShapeSchema) },
     },
-    (scaling) => refusing(async () => answer({ shapes: await scaleShapes(doc, scaling) })),
+    (scaling) => refusing(async () => answer({ shapes: await scaleShapes(doc, scaling, creator()) })),
   );
 
   server.registerTool(

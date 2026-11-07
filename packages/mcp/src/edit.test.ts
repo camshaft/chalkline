@@ -5,6 +5,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import { ELEMENTS } from './board';
+import { changerOf } from './creator';
 import { arrowPoints, type Point } from './geometry';
 import { createServer } from './server';
 import type { BoardShape } from './shapes';
@@ -118,6 +119,32 @@ describe('the creator mark', () => {
     const shapes = await board(client);
     expect(shapes.find((shape) => shape.id === id)?.creator).toEqual(AGENT);
     expect(shapes.find((shape) => shape.id === 'theirs')?.creator).toBeUndefined();
+  });
+
+  it('marks each element an edit writes with the agent as the author of its new version', async () => {
+    const { elements, client } = await helper([
+      drawn({ id: 'note', type: 'text', index: 'a0', text: 'Note', originalText: 'Note', fontSize: 20, fontFamily: 5, lineHeight: 1.25 }),
+      drawn({ id: 'pen', type: 'rectangle', x: 400, index: 'a1', groupIds: ['set'] }),
+      drawn({ id: 'gone', type: 'ellipse', x: 600, index: 'a2' }),
+    ]);
+    const [box] = ok<{ ids: string[] }>(
+      await call(client, 'add_shapes', {
+        shapes: [{ type: 'rectangle', x: 200, y: 0, width: 100, height: 50, label: { text: 'Mine' } }],
+      }),
+    ).ids;
+    expect(changerOf(elements.get(box))).toEqual(AGENT);
+    expect(changerOf(elements.get('note'))).toBeUndefined();
+
+    ok(await call(client, 'update_shape', { id: 'note', text: 'Notes' }));
+    expect(changerOf(elements.get('note'))).toEqual(AGENT);
+    ok(await call(client, 'update_shape', { id: box, label: { text: 'Ours' } }));
+    ok(await call(client, 'connect', { start: box, end: 'pen' }));
+    ok(await call(client, 'update_shape', { group: 'set', x: 450 }));
+    ok(await call(client, 'scale_shapes', { ids: ['pen'], factor: 2 }));
+    ok(await call(client, 'reorder_shapes', { ids: ['note'], place: 'front' }));
+    ok(await call(client, 'delete_shapes', { ids: ['gone'] }));
+    expect(elements.size).toBe(6);
+    for (const [id, element] of elements.entries()) expect(changerOf(element), id).toEqual(AGENT);
   });
 });
 

@@ -1,7 +1,7 @@
 import type { TranscriptEntry, Transport } from '@chalkline/sync';
 import type * as Y from 'yjs';
 import { ELEMENTS, finite, stringOf } from './board';
-import { creatorOf } from './creator';
+import { changerOf, creatorOf } from './creator';
 import { TranscriptLog } from './transcript';
 
 /**
@@ -139,23 +139,27 @@ export interface BoardListenOptions<T> {
 }
 
 /**
- * The fields of `value` where it is an element of the board that isn't deleted, that doesn't hold
- * an agent's creator mark, and that holds the time its page last changed it.
+ * The fields of `value` where it is an element of the board that isn't deleted and that holds the
+ * time its page last changed it.
  */
-function personsElement(value: unknown): (Record<string, unknown> & { updated: number }) | undefined {
+function liveElement(value: unknown): (Record<string, unknown> & { updated: number }) | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
   const fields = value as Record<string, unknown>;
-  if (fields.isDeleted === true || creatorOf(value) !== undefined || !finite(fields.updated)) return undefined;
+  if (fields.isDeleted === true || !finite(fields.updated)) return undefined;
   return fields as Record<string, unknown> & { updated: number };
 }
 
-/** The words of the person's text that `value` holds, and when they last changed it, where it holds a text with words. */
-function writtenOf(value: unknown): { words: string; updated: number } | undefined {
-  const fields = personsElement(value);
+/**
+ * The words of the text that `value` holds, when its page last changed it, and whether an agent's
+ * helper made that change, as the element's change mark records it, where it holds a text with
+ * words.
+ */
+function writtenOf(value: unknown): { words: string; updated: number; byAgent: boolean } | undefined {
+  const fields = liveElement(value);
   if (fields === undefined || fields.type !== 'text') return undefined;
   const words = stringOf(fields.originalText) ?? stringOf(fields.text);
   if (words === undefined || words.trim() === '') return undefined;
-  return { words, updated: fields.updated };
+  return { words, updated: fields.updated, byAgent: changerOf(value) !== undefined };
 }
 
 /** The points of a freehand stroke, each relative to its x and y, where `value` holds at least one and each reads as one. */
@@ -195,11 +199,14 @@ function corners({ x, y, width, height }: Box): [number, number][] {
 /**
  * The part of the board that the person's freehand stroke `value` covers, and when they last
  * changed it, where it holds one: the bounds of its points, or its x, y, width and height where
- * its points don't read as points.
+ * its points don't read as points. A stroke that an agent drew, which holds its creator mark, and
+ * a stroke whose last change an agent's helper made, as its change mark records it, aren't a
+ * person's.
  */
 function strokeOf(value: unknown): { box: Box; updated: number } | undefined {
-  const fields = personsElement(value);
+  const fields = liveElement(value);
   if (fields === undefined || fields.type !== 'freedraw') return undefined;
+  if (creatorOf(value) !== undefined || changerOf(value) !== undefined) return undefined;
   const { x, y, width, height } = fields;
   if (!finite(x) || !finite(y)) return undefined;
   const points = pointsOf(fields.points);
@@ -224,17 +231,19 @@ function watchElements(elements: Y.Map<unknown>, seen: (id: string) => void): ()
 }
 
 /**
- * Listens to the texts people write on the board that `doc` holds, shapes' labels among them.
- * Once a person's text stays unchanged for `options.pauseMs` after a change, its line goes to
- * `options.onLine`, so that a text typed one key at a time makes one line, and a text whose words
- * the listener told of already, as where a person moves it, doesn't make another. A text that
- * holds an agent's creator mark, a deleted text and a text without words are left out, and so is
- * a text that a person last changed at or before `options.after`, though the listener receives it
- * later, as a peer's copy of the board brings it.
+ * Listens to the texts people write on the board that `doc` holds, shapes' labels among them, and
+ * the changes people make to the texts an agent wrote. Once a person's text stays unchanged for
+ * `options.pauseMs` after a change, its line goes to `options.onLine`, so that a text typed one key
+ * at a time makes one line, and a text whose words the listener told of already, as where a person
+ * moves it, doesn't make another. A change that an agent's helper made, as the element's change
+ * mark records it, doesn't make a line, and the listener keeps the words the agent wrote as told,
+ * so that a person's move of the agent's text doesn't make one either. A deleted text and a text
+ * without words are left out, and so is a text that a person last changed at or before
+ * `options.after`, though the listener receives it later, as a peer's copy of the board brings it.
  */
 export function listenTexts(doc: Y.Doc, options: BoardListenOptions<Written>): Listener {
   const elements = doc.getMap<unknown>(ELEMENTS);
-  /** The words of each text the listener told of, or that a person wrote before the listener started. */
+  /** The words of each text the listener told of, that a person wrote before the listener started, or that an agent wrote last. */
   const told = new Map<string, string>();
   /** The pause after each text's last change, where a line may follow it. */
   const pauses = new Map<string, ReturnType<typeof setTimeout>>();
@@ -256,7 +265,7 @@ export function listenTexts(doc: Y.Doc, options: BoardListenOptions<Written>): L
     const written = writtenOf(elements.get(id));
     settle(id);
     if (written === undefined) return;
-    if (written.updated <= options.after) {
+    if (written.byAgent || written.updated <= options.after) {
       told.set(id, written.words);
       return;
     }
@@ -279,8 +288,9 @@ export function listenTexts(doc: Y.Doc, options: BoardListenOptions<Written>): L
  * Listens to the freehand strokes people draw on the board that `doc` holds. Once each stroke that
  * a person drew or changed since the last line stays unchanged for `options.pauseMs`, one line
  * goes to `options.onLine` with those strokes and the part of the board they cover, so that a
- * sketch of several strokes makes one line. A stroke that holds an agent's creator mark, a deleted
- * stroke, and a stroke that a person last changed at or before `options.after` are left out.
+ * sketch of several strokes makes one line. A stroke that holds an agent's creator mark, a stroke
+ * whose last change an agent's helper made, a deleted stroke, and a stroke that a person last
+ * changed at or before `options.after` are left out.
  */
 export function listenSketches(doc: Y.Doc, options: BoardListenOptions<Sketched>): Listener {
   const elements = doc.getMap<unknown>(ELEMENTS);
