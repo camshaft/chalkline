@@ -9,6 +9,18 @@ const size = z.number().finite().positive();
 const color = z.string().min(1).describe('A CSS color, such as #1971c2 or transparent.');
 const label = z.object({ text: z.string().min(1) }).describe('The text inside the shape.');
 
+/** The refusal of a link that isn't an http or https URL. */
+const LINK_REFUSAL = 'A link is an http or https URL, such as https://github.com/<owner>/<repo>/blob/<commit>/<path>#L10-L42.';
+
+/** A URL that the page opens from a link icon on a shape: an http or https URL that `new URL` reads. */
+const link = z
+  .string()
+  .url({ message: LINK_REFUSAL })
+  .regex(/^https?:\/\//i, { message: LINK_REFUSAL })
+  .describe(
+    'A URL that the page opens from a link icon on the shape, an http or https URL. Where the shape stands for code, such as a box of an architecture diagram or a state of a state machine, give a permalink to the code, which keeps showing the same lines as the code changes: a GitHub URL with a commit and a line range, such as https://github.com/<owner>/<repo>/blob/<commit>/<path>#L10-L42.',
+  );
+
 /** Excalidraw's stroke widths: thin, bold and extra bold. */
 export const STROKE_WIDTH = { thin: 1, bold: 2, extraBold: 4 } as const;
 /** Excalidraw's roughness: architect (clean lines), artist and cartoonist. */
@@ -98,6 +110,7 @@ const box = {
   strokeColor: color.optional(),
   backgroundColor: color.optional(),
   ...style,
+  link: link.optional(),
 };
 
 /** One shape that add_shapes adds, in Excalidraw's skeleton format. */
@@ -116,6 +129,7 @@ export const shapeSchema = z.discriminatedUnion('type', [
     textAlign: textAlign('left'),
     strokeColor: color.optional(),
     ...style,
+    link: link.optional(),
   }),
   z.object({
     type: z.literal('arrow'),
@@ -130,6 +144,7 @@ export const shapeSchema = z.discriminatedUnion('type', [
     end: endpoint('ends at').optional(),
     strokeColor: color.optional(),
     ...style,
+    link: link.optional(),
   }),
   z.object({
     type: z.literal('line'),
@@ -152,6 +167,7 @@ export const shapeSchema = z.discriminatedUnion('type', [
       .optional()
       .describe('A CSS color, such as #ffc9c9, that fills the shape a closed line encloses.'),
     ...style,
+    link: link.optional(),
   }),
   z.object({
     type: z.literal('freedraw'),
@@ -166,6 +182,7 @@ export const shapeSchema = z.discriminatedUnion('type', [
       ),
     strokeColor: color.optional(),
     ...style,
+    link: link.optional(),
   }),
 ]);
 
@@ -210,6 +227,7 @@ export const boardShapeSchema = z.object({
     .string()
     .optional()
     .describe('How the lines of a text or a label align, where it is not the default: left for a text, and center for a label.'),
+  link: z.string().optional().describe('The URL the shape links to, which the page opens from a link icon on it, where it has one.'),
   groups: z
     .array(z.string())
     .optional()
@@ -298,6 +316,12 @@ export const changeSchema = z.object({
   strokeColor: color.nullish().describe('The new color of the shape and its label, a CSS color such as #1971c2.'),
   backgroundColor: color.nullish().describe("The new fill of a rectangle, an ellipse or a diamond, a CSS color such as #a5d8ff."),
   name: z.string().min(1).nullish().describe("A frame's new name."),
+  link: z
+    .union([z.literal(''), link])
+    .nullish()
+    .describe(
+      "The shape's new link, an http or https URL that the page opens from a link icon on the shape, such as a permalink to code with a commit and a line range; any shape takes one, a freehand stroke, an image or a frame among them, and an empty link removes it.",
+    ),
 });
 
 /** The shapes that delete_shapes deletes: by their ids, by their groups, or both. */

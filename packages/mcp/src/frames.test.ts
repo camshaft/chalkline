@@ -211,10 +211,10 @@ describe('frames', () => {
     );
     const before = JSON.stringify(elements.toJSON());
     const cases: [Element, string][] = [
-      [{ id: frame, width: 10 }, `width doesn't apply to a frame, such as "${frame}": update_shape changes its x, y and name.`],
+      [{ id: frame, width: 10 }, `width doesn't apply to a frame, such as "${frame}": update_shape changes its x, y, name and link.`],
       [
         { id: 'a', name: 'Box' },
-        `name doesn't apply to a rectangle, such as "a": update_shape changes its x, y, width, height, label, strokeColor and backgroundColor.`,
+        `name doesn't apply to a rectangle, such as "a": update_shape changes its x, y, width, height, label, strokeColor, backgroundColor and link.`,
       ],
       [
         { group, name: 'Group' },
