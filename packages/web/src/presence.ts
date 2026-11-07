@@ -10,9 +10,14 @@ export interface Pointer {
 /** Whether a participant's pointer button is pressed. */
 export type Button = 'up' | 'down';
 
+/** An agent's status: `working` while one of its tool calls runs. */
+export type AgentStatus = 'idle' | 'working';
+
 /**
  * The awareness state each page shares, outside the stored document: its
- * participant's name, pointer and selection.
+ * participant's name, pointer and selection. An agent's helper shares its
+ * name, its pointer, `agent` and its status, and the shapes it last added or
+ * changed (designs/chalkline A6).
  */
 export interface Presence {
   name?: string;
@@ -20,6 +25,12 @@ export interface Presence {
   button?: Button;
   /** The ids of the elements the participant has selected. */
   selectedElementIds?: Record<string, true>;
+  /** Whether the participant is an agent's helper, which the participants list shows with the Agent badge. */
+  agent?: true;
+  /** An agent's status. */
+  status?: AgentStatus;
+  /** The ids of the shapes an agent last added or changed, which its Go to button shows. */
+  shapes?: string[];
 }
 
 /** Another participant, in the fields of Excalidraw's `Collaborator` that the canvas draws. */
@@ -70,13 +81,16 @@ function selectedIds(value: Readonly<Record<string, unknown>>): Record<string, t
  */
 export function readPresence(state: unknown): Presence | null {
   if (!isRecord(state)) return null;
-  const { name, pointer, button, selectedElementIds } = state;
+  const { name, pointer, button, selectedElementIds, agent, status, shapes } = state;
   const presence: Presence = {};
   if (typeof name === 'string' && name.trim() !== '') presence.name = name;
   const shownPointer = readPointer(pointer);
   if (shownPointer !== undefined) presence.pointer = shownPointer;
   if (button === 'up' || button === 'down') presence.button = button;
   if (isRecord(selectedElementIds)) presence.selectedElementIds = selectedIds(selectedElementIds);
+  if (agent === true) presence.agent = true;
+  if (status === 'idle' || status === 'working') presence.status = status;
+  if (Array.isArray(shapes) && shapes.every((id): id is string => typeof id === 'string')) presence.shapes = [...shapes];
   return presence;
 }
 
@@ -87,9 +101,14 @@ export function collaboratorsFrom(states: ReadonlyMap<number, unknown>, self: nu
     if (client === self) continue;
     const presence = readPresence(state);
     if (presence === null) continue;
-    const { name, ...shown } = presence;
-    const id = String(client);
-    collaborators.set(id, name === undefined ? { id, ...shown } : { id, username: name, ...shown });
+    // An agent's mark, status and shapes stay out of what the canvas reads: the participants list shows them.
+    const { name, pointer, button, selectedElementIds } = presence;
+    const collaborator: Collaborator = { id: String(client) };
+    if (name !== undefined) collaborator.username = name;
+    if (pointer !== undefined) collaborator.pointer = pointer;
+    if (button !== undefined) collaborator.button = button;
+    if (selectedElementIds !== undefined) collaborator.selectedElementIds = selectedElementIds;
+    collaborators.set(collaborator.id, collaborator);
   }
   return collaborators;
 }
