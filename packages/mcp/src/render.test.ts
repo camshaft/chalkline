@@ -25,7 +25,6 @@ type Color = (red: number, green: number, blue: number) => boolean;
 const white: Color = (r, g, b) => r > 245 && g > 245 && b > 245;
 const dark: Color = (r, g, b) => r < 100 && g < 100 && b < 100;
 const red: Color = (r, g, b) => r > 200 && g < 60 && b < 60;
-const green: Color = (r, g, b) => g > 200 && r < 60 && b < 60;
 const blue: Color = (r, g, b) => b > 200 && r < 60 && g < 60;
 
 const clients: Client[] = [];
@@ -291,7 +290,7 @@ describe('renderBoard', () => {
       }),
     ]);
     const region = { x: 10, y: 10, width: 20, height: 20 };
-    expect(every(await drawn(doc, region), white)).toBe(true);
+    expect([...colors(await drawn(doc, region))]).toEqual(['255,255,255,255']);
 
     const png = new Resvg(
       '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#00ff00"/></svg>',
@@ -304,7 +303,7 @@ describe('renderBoard', () => {
       dataURL: `data:image/png;base64,${png.toString('base64')}`,
       created: 1,
     });
-    expect(every(await drawn(doc, region), green)).toBe(true);
+    expect([...colors(await drawn(doc, region))]).toEqual(['0,255,0,255']);
   });
 
   it('draws a picture at least one pixel wide and high', async () => {
