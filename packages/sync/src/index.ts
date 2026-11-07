@@ -8,6 +8,16 @@ export {
   type SentMessage,
 } from './memory-transport';
 export { RELAY_PARAM, relaysFromAddress } from './relay';
+export {
+  CONVERTS,
+  convertsMermaid,
+  mermaidConverters,
+  readRequest,
+  REQUESTS,
+  type MermaidRequest,
+  type Point,
+  type RequestStatus,
+} from './requests';
 export { APP_ID, newRoomSecrets, parseRoomFragment, roomFragment, type RoomSecrets } from './room';
 export { connectDoc, REMOTE, type Channel, type ConnectOptions, type Transport } from './sync';
 export { appendEntry, readEntry, readTranscript, TRANSCRIPT, transcriptOf, type TranscriptEntry } from './transcript';

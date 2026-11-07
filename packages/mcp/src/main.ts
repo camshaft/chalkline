@@ -1,9 +1,11 @@
-// chalkline-mcp: joins the Chalkline board that its link opens, and serves get_board and add_shapes
-// on it as a local MCP server over standard input and output.
+// chalkline-mcp: joins the Chalkline board that its link opens, and serves the agent's tools on it
+// as a local MCP server over standard input and output.
 import './log';
 import { parseArgs } from 'node:util';
 import {
   APP_ID,
+  Awareness,
+  connectAwareness,
   connectDoc,
   parseRoomFragment,
   relaysFromAddress,
@@ -18,7 +20,8 @@ import { loadExcalidraw } from './skeleton';
 const USAGE = `Usage: chalkline-mcp <board link>
 
 Joins the Chalkline board that the link opens, and serves the agent's tools on it as a local MCP
-server over standard input and output: get_board reads the board, and add_shapes draws on it.
+server over standard input and output: get_board reads the board, add_shapes draws on it, and
+add_mermaid asks a page of the board to draw a Mermaid diagram, whose request get_request reads.
 The link is the board's address, with its #room=<name>&key=<password> fragment, and with its
 ?relay= parameters where the board's participants meet through a relay. Each line the helper
 logs goes to standard error.
@@ -65,7 +68,11 @@ async function main(): Promise<void> {
   // The server answers the client at once, and its tools work on the helper's copy of the board
   // while the helper joins the room.
   const doc = new Y.Doc();
-  const server = createServer(doc);
+  // The helper doesn't show in the room's presence: it reads the pages' awareness states to learn
+  // whether a page is in the room to convert a Mermaid request.
+  const awareness = new Awareness(doc);
+  awareness.setLocalState(null);
+  const server = createServer(doc, awareness);
   const closed = ended();
   await server.connect(new StdioServerTransport());
 
@@ -86,6 +93,9 @@ async function main(): Promise<void> {
     onSynced: (peerId) => console.error(`synced with ${peerId}`),
     onSendError: (error) => console.error('a send failed:', error),
   });
+  connectAwareness(awareness, transport, {
+    onSendError: (error) => console.error('an awareness send failed:', error),
+  });
   transport.onPeerJoin((peerId) => console.error(`connected to ${peerId}`));
   transport.onPeerLeave((peerId) => console.error(`${peerId} left`));
   console.error(
@@ -95,6 +105,7 @@ async function main(): Promise<void> {
   await closed;
   await server.close();
   await room.leave();
+  awareness.destroy();
 }
 
 main().then(
