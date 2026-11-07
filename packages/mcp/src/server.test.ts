@@ -432,6 +432,60 @@ describe('lines and arrows of add_shapes', () => {
     }
   });
 
+  it('binds an arrow with a width and a height, or with points, to a text it starts or ends at, and leaves the text where it is', async () => {
+    const { network, elements, client } = await board();
+    const [, , , sized, curved] = ids(
+      await call(client, 'add_shapes', {
+        shapes: [
+          { type: 'text', id: 'from', x: 0, y: 0, text: 'From' },
+          { type: 'rectangle', id: 'box', x: 300, y: 100, width: 100, height: 50 },
+          { type: 'text', id: 'to', x: 600, y: 300, text: 'To' },
+          { type: 'arrow', x: 60, y: 10, width: 235, height: 110, start: 'from', end: 'box' },
+          { type: 'arrow', x: 405, y: 125, points: [[0, 0], [100, 50], [190, 180]], start: 'box', end: 'to' },
+        ],
+      }),
+    );
+
+    network.flush();
+    // Each text stays at the x and y the call gave it, though the converter moves a text that an
+    // arrow binds to by its id.
+    expect(elements.get('from')).toMatchObject({ x: 0, y: 0 });
+    expect(elements.get('to')).toMatchObject({ x: 600, y: 300 });
+    // Each arrow keeps its x, its y and its points, and is bound at both ends; the converter moves
+    // each end of an arrow bound at both ends 0.5 toward the other end.
+    expect(elements.get(sized)).toMatchObject({
+      type: 'arrow',
+      x: 60,
+      y: 10,
+      points: [
+        [0.5, 0.5],
+        [234.5, 109.5],
+      ],
+      startBinding: { elementId: 'from' },
+      endBinding: { elementId: 'box' },
+    });
+    expect(elements.get(curved)).toMatchObject({
+      type: 'arrow',
+      x: 405,
+      y: 125,
+      points: [
+        [0.5, 0.5],
+        [100, 50],
+        [189.5, 179.5],
+      ],
+      startBinding: { elementId: 'box' },
+      endBinding: { elementId: 'to' },
+    });
+    expect(elements.get('from')?.boundElements).toContainEqual({ id: sized, type: 'arrow' });
+    expect(elements.get('to')?.boundElements).toContainEqual({ id: curved, type: 'arrow' });
+    expect(elements.get('box')?.boundElements).toEqual(
+      expect.arrayContaining([
+        { id: sized, type: 'arrow' },
+        { id: curved, type: 'arrow' },
+      ]),
+    );
+  });
+
   it("draws a line of height 0 straight across, and a line that leaves out its width or its height at Excalidraw's default", async () => {
     const { network, elements, client } = await board();
     const [across, unsized, left] = ids(

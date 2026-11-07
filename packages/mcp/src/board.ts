@@ -142,7 +142,8 @@ export function newId(): string {
  * that leaves it out gets a random one. Each element it adds, a shape's label among them, records
  * `creator`, where given, as its creator, and goes into the group `group`, where given, as
  * Excalidraw groups elements. An arrow that sets start and end and none of width, height and points
- * runs between those two shapes, as laidBetween lays it out, whatever its x and y. Throws a
+ * runs between those two shapes, as laidBetween lays it out, whatever its x and y. A text that an
+ * arrow starts or ends at stays at its x and y, as laidBetween binds the arrow to it. Throws a
  * ShapeError, and adds nothing, where two shapes set one id, a shape sets an id the board holds
  * already, an arrow's start or end isn't a rectangle, an ellipse, a diamond or a text of the same
  * call, a line or an arrow sets both points and a width or a height, a closed line has fewer than
@@ -205,14 +206,15 @@ export async function addShapes(
   });
 
   const excalidraw = await loadExcalidraw();
-  const skeletons = shapes.map((shape, place) => skeleton(shape, ids[place], excalidraw));
+  const texts = new Set(ids.filter((_id, place) => shapes[place].type === 'text'));
+  const skeletons = shapes.map((shape, place) => skeleton(shape, ids[place], excalidraw, texts));
   const converted = await convertSkeletons(skeletons, { regenerateIds: false });
   for (const id of ids) {
     if (!converted.some((element) => element.id === id)) {
       throw new Error(`convertToExcalidrawElements didn't make the shape ${id}: ${JSON.stringify(converted)}`);
     }
   }
-  const elements = await laidBetween(shapes, ids, skeletons, converted);
+  const elements = await laidBetween(shapes, ids, skeletons, converted, texts);
   const indices = indicesAt(shared, where, elements.length);
   doc.transact(() => {
     elements.forEach((element, place) => {
@@ -228,11 +230,13 @@ export async function addShapes(
  * The skeleton that `convertToExcalidrawElements` reads for `shape`, with the id `id`. A freehand
  * stroke's skeleton is the whole element, which convertToExcalidrawElements adds as it is. A text's
  * and a label's font is the number Excalidraw's element holds instead of the font's name. An arrow
- * that runs between its start and end, as `between` says, binds to neither here, at its x and y or
- * at 0 where it leaves them out: laidBetween lays it out and binds it once its shapes are
- * converted, since convertToExcalidrawElements moves a text that an arrow binds to by its id.
+ * that laidBetween binds, as `bindsLater` says of `texts`, the ids of the call's texts, binds to
+ * neither of its shapes here, and one that runs between its start and end, as `between` says, is
+ * at its x and y or at 0 where it leaves them out. laidBetween binds it, and lays out one that
+ * runs between, once its shapes are converted, since convertToExcalidrawElements moves a text
+ * that an arrow binds to by its id.
  */
-function skeleton(shape: Shape, id: string, excalidraw: Excalidraw): Skeleton {
+function skeleton(shape: Shape, id: string, excalidraw: Excalidraw, texts: ReadonlySet<string>): Skeleton {
   if (shape.type === 'freedraw') return freedraw(shape, id, excalidraw) as unknown as Skeleton;
   if (shape.type === 'line') {
     const { points, closed = false, ...line } = shape;
@@ -242,7 +246,7 @@ function skeleton(shape: Shape, id: string, excalidraw: Excalidraw): Skeleton {
   const label = 'label' in shape && shape.label !== undefined ? { label: { ...shape.label, ...fontNumber(shape.label) } } : {};
   if (shape.type !== 'arrow') return { ...shape, ...font, ...label, id } as unknown as Skeleton;
   const { start, end, points, ...arrow } = shape;
-  const ends = between(shape)
+  const ends = bindsLater(shape, texts)
     ? {}
     : { ...(start === undefined ? {} : { start: { id: start } }), ...(end === undefined ? {} : { end: { id: end } }) };
   return {
@@ -271,54 +275,79 @@ function between(shape: Shape): shape is Arrow & { start: string; end: string } 
 }
 
 /**
+ * Whether laidBetween, and not convertToExcalidrawElements, binds the arrow `shape` to its start
+ * and end, since the converter moves a text that an arrow binds to by its id: where the arrow runs
+ * between them, as `between` says, or its start or its end is one of `texts`, the ids of the
+ * call's texts.
+ */
+function bindsLater(shape: Shape, texts: ReadonlySet<string>): shape is Arrow {
+  if (shape.type !== 'arrow') return false;
+  return between(shape) || [shape.start, shape.end].some((bound) => bound !== undefined && texts.has(bound));
+}
+
+/**
  * `elements`, which convertToExcalidrawElements made of `skeletons`, the skeletons of `shapes` with
- * the ids `ids`, with each arrow that runs between its start and end, as `between` says, laid out
- * as connect lays out its arrow: along the line between the centers of its two shapes, from GAP
- * beyond the outline of its start to GAP short of the outline of its end, bound to both, with its
- * label in its middle. The arrow and its label take the places of the ones `elements` holds, and
- * each of the two shapes lists the arrow among its bound elements. Throws a ShapeError where the
- * two shapes have one center, so that the arrow has no direction.
+ * the ids `ids`, with each arrow that binds later, as `bindsLater` says of `texts`, bound to its
+ * start and end through copies of their outlines, as connect binds its arrow, so that a text it
+ * binds to stays where it is. An arrow that runs between its start and end, as `between` says, is
+ * laid out as connect lays out its arrow: along the line between the centers of its two shapes,
+ * from GAP beyond the outline of its start to GAP short of the outline of its end, with its label
+ * in its middle. Any other keeps the x, y and points of its skeleton. The arrow and its label take
+ * the places of the ones `elements` holds, and each shape it binds to lists the arrow among its
+ * bound elements. Throws a ShapeError where the two shapes an arrow runs between have one center,
+ * so that the arrow has no direction.
  */
 async function laidBetween(
   shapes: readonly Shape[],
   ids: readonly string[],
   skeletons: readonly Skeleton[],
   elements: readonly ConvertedElement[],
+  texts: ReadonlySet<string>,
 ): Promise<ConvertedElement[]> {
   let laid = [...elements];
   for (const [place, shape] of shapes.entries()) {
-    if (!between(shape)) continue;
+    if (!bindsLater(shape, texts)) continue;
     const id = ids[place];
     const start = laid.find((element) => element.id === shape.start);
     const end = laid.find((element) => element.id === shape.end);
-    if (start === undefined || end === undefined) continue;
-    const segment = arrowPoints(outlineOf(start), outlineOf(end));
-    if (segment === null) {
-      throw new ShapeError(
-        `shapes[${place}] starts at "${shape.start}" and ends at "${shape.end}", which have one center, so an arrow between them has no direction: give the arrow its x and y, and a width and a height or points.`,
-      );
+    let layout: Partial<Placed> = {};
+    if (between(shape)) {
+      if (start === undefined || end === undefined) continue;
+      const segment = arrowPoints(outlineOf(start), outlineOf(end));
+      if (segment === null) {
+        throw new ShapeError(
+          `shapes[${place}] starts at "${shape.start}" and ends at "${shape.end}", which have one center, so an arrow between them has no direction: give the arrow its x and y, and a width and a height or points.`,
+        );
+      }
+      const { from, to } = segment;
+      layout = {
+        x: from.x,
+        y: from.y,
+        width: Math.abs(to.x - from.x),
+        height: Math.abs(to.y - from.y),
+        points: [
+          [0, 0],
+          [to.x - from.x, to.y - from.y],
+        ],
+      };
     }
-    const { from, to } = segment;
     const arrow = {
       ...skeletons[place],
-      x: from.x,
-      y: from.y,
-      width: Math.abs(to.x - from.x),
-      height: Math.abs(to.y - from.y),
-      points: [
-        [0, 0],
-        [to.x - from.x, to.y - from.y],
-      ],
-      start: { id: start.id },
-      end: { id: end.id },
+      ...layout,
+      ...(start === undefined ? {} : { start: { id: start.id } }),
+      ...(end === undefined ? {} : { end: { id: end.id } }),
     };
-    // Copies of the two shapes' outlines, which the converter binds the arrow to, as connect's are.
-    const copies = [start, end].map((bound) => ({ ...outlineOf(bound), id: bound.id }));
+    // Copies of the outlines of the shapes it binds to, each once, which the converter binds the
+    // arrow to, as connect's are.
+    const bound = [start, end].filter(
+      (element, index, both): element is ConvertedElement => element !== undefined && both.indexOf(element) === index,
+    );
+    const copies = bound.map((element) => ({ ...outlineOf(element), id: element.id }));
     const relaid = await convertSkeletons([arrow, ...copies] as unknown as Skeleton[], { regenerateIds: false });
     laid = laid.flatMap((element): ConvertedElement[] => {
       if (element.id === id) return relaid.filter((drawn) => drawn.id === id);
       if (isLabelOf(element, id)) return relaid.filter((drawn) => isLabelOf(drawn, id));
-      if (element.id !== start.id && element.id !== end.id) return [element];
+      if (!bound.some((other) => other.id === element.id)) return [element];
       return [{ ...element, boundElements: [...(element.boundElements ?? []), { id, type: 'arrow' as const }] } as ConvertedElement];
     });
   }
