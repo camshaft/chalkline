@@ -4,9 +4,9 @@
 // diagram with add_mermaid, which answers pending since no page is in the new room. It reads the
 // request back with get_request, and the shapes, their creator and the pending request with
 // get_board, then deletes the arrow with delete_shapes and draws the board as a PNG with
-// render_board. It then reads the empty transcript as the resource chalkline://transcript,
-// subscribes to it, and checks that read_transcript refuses a cursor past the transcript's end. CI
-// runs it after the build.
+// render_board. It reads the board's changes from the start with read_changes, then reads the
+// empty transcript as the resource chalkline://transcript, subscribes to it, and checks that
+// read_transcript refuses a cursor past the transcript's end. CI runs it after the build.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +36,7 @@ assert.deepEqual(tools.map((tool) => tool.name).sort(), [
   'delete_shapes',
   'get_board',
   'get_request',
+  'read_changes',
   'read_transcript',
   'render_board',
   'update_shape',
@@ -91,6 +92,17 @@ assert.deepEqual(drawn.structuredContent, {
   height: 530,
 });
 
+// From the start, read_changes lists the two shapes the board holds as added, each with the agent
+// as its creator, and leaves out the arrow, which was added and deleted since.
+const changes = await call('read_changes', {});
+assert.deepEqual(
+  changes.changes.map((change) => [change.change, change.id, change.creator?.name]),
+  [
+    ['added', id, 'chalkline-smoke'],
+    ['added', next, 'chalkline-smoke'],
+  ],
+);
+
 const transcript = await client.readResource({ uri: 'chalkline://transcript' });
 assert.deepEqual(JSON.parse(transcript.contents[0].text), { entries: [], cursor: 0 });
 await client.subscribeResource({ uri: 'chalkline://transcript' });
@@ -99,5 +111,5 @@ assert.equal(past.isError, true, JSON.stringify(past.content));
 
 await client.close();
 console.log(
-  `chalkline-mcp added ${id} labelled "Smoke test" and ${next}, connected them with ${arrow}, moved ${next}, deleted ${arrow}, drew the board as a PNG of ${drawn.structuredContent.width} by ${drawn.structuredContent.height} pixels, wrote the Mermaid request ${asked.id}, read each back, and read the empty transcript`,
+  `chalkline-mcp added ${id} labelled "Smoke test" and ${next}, connected them with ${arrow}, moved ${next}, deleted ${arrow}, drew the board as a PNG of ${drawn.structuredContent.width} by ${drawn.structuredContent.height} pixels, wrote the Mermaid request ${asked.id}, read each back, read the board's ${changes.changes.length} changes, and read the empty transcript`,
 );

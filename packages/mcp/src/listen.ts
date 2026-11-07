@@ -1,5 +1,8 @@
 import type { TranscriptEntry, Transport } from '@chalkline/sync';
-import type { TranscriptLog } from './transcript';
+import type * as Y from 'yjs';
+import { ELEMENTS, finite, stringOf } from './board';
+import { creatorOf } from './creator';
+import { TranscriptLog } from './transcript';
 
 /**
  * One line that `chalkline-mcp listen` prints: the words people on the board said with no pause of
@@ -85,6 +88,270 @@ export function listen(log: TranscriptLog, options: ListenOptions): Listener {
       clearTimeout(pause);
       pause = undefined;
       group = [];
+    },
+  };
+}
+
+/** A line that `chalkline-mcp listen` prints for a text a person wrote on the board, a shape's label among them. */
+export type Written = {
+  /** When the person last changed the text, as their page recorded it (ISO 8601). */
+  at: string;
+  kind: 'text';
+  /** The text's words. */
+  text: string;
+};
+
+/** A part of the board, in the board's coordinates. */
+export type Box = { x: number; y: number; width: number; height: number };
+
+/** A line that `chalkline-mcp listen` prints for the freehand strokes a person drew on the board. */
+export type Sketched = {
+  /** When the person last changed one of the strokes, as their page recorded it (ISO 8601). */
+  at: string;
+  kind: 'sketch';
+  /** The strokes' ids, as get_board and read_changes list them, in the order the person last changed them. */
+  ids: string[];
+  /** The part of the board the strokes cover. */
+  box: Box;
+};
+
+/** A line that `chalkline-mcp listen` prints. */
+export type Line = Heard | Written | Sketched;
+
+/**
+ * How long a person's text, or the strokes they draw, stay unchanged before a line tells of them,
+ * where `--board-pause` doesn't set another length, in milliseconds.
+ */
+export const BOARD_PAUSE_MS = 3000;
+
+export interface BoardListenOptions<T> {
+  /**
+   * When the listener started, in milliseconds since the epoch: a text or a stroke that a person
+   * last changed at or before this time is left out.
+   */
+  after: number;
+  /** How long a text or the strokes stay unchanged before their line, in milliseconds. */
+  pauseMs: number;
+  /** Called with each line. */
+  onLine: (line: T) => void;
+}
+
+/**
+ * The fields of `value` where it is an element of the board that isn't deleted, that doesn't hold
+ * an agent's creator mark, and that holds the time its page last changed it.
+ */
+function personsElement(value: unknown): (Record<string, unknown> & { updated: number }) | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const fields = value as Record<string, unknown>;
+  if (fields.isDeleted === true || creatorOf(value) !== undefined || !finite(fields.updated)) return undefined;
+  return fields as Record<string, unknown> & { updated: number };
+}
+
+/** The words of the person's text that `value` holds, and when they last changed it, where it holds a text with words. */
+function writtenOf(value: unknown): { words: string; updated: number } | undefined {
+  const fields = personsElement(value);
+  if (fields === undefined || fields.type !== 'text') return undefined;
+  const words = stringOf(fields.originalText) ?? stringOf(fields.text);
+  if (words === undefined || words.trim() === '') return undefined;
+  return { words, updated: fields.updated };
+}
+
+/** The points of a freehand stroke, each relative to its x and y, where `value` holds at least one and each reads as one. */
+function pointsOf(value: unknown): [number, number][] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const points: [number, number][] = [];
+  for (const point of value) {
+    if (!Array.isArray(point)) return undefined;
+    const [x, y]: unknown[] = point;
+    if (!finite(x) || !finite(y)) return undefined;
+    points.push([x, y]);
+  }
+  return points;
+}
+
+/** The smallest box that holds each of `points`, which holds at least one point. */
+function around(points: readonly (readonly [number, number])[]): Box {
+  let [left, top] = points[0];
+  let [right, bottom] = points[0];
+  for (const [x, y] of points) {
+    left = Math.min(left, x);
+    top = Math.min(top, y);
+    right = Math.max(right, x);
+    bottom = Math.max(bottom, y);
+  }
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+/** The top left and bottom right corners of `box`. */
+function corners({ x, y, width, height }: Box): [number, number][] {
+  return [
+    [x, y],
+    [x + width, y + height],
+  ];
+}
+
+/**
+ * The part of the board that the person's freehand stroke `value` covers, and when they last
+ * changed it, where it holds one: the bounds of its points, or its x, y, width and height where
+ * its points don't read as points.
+ */
+function strokeOf(value: unknown): { box: Box; updated: number } | undefined {
+  const fields = personsElement(value);
+  if (fields === undefined || fields.type !== 'freedraw') return undefined;
+  const { x, y, width, height } = fields;
+  if (!finite(x) || !finite(y)) return undefined;
+  const points = pointsOf(fields.points);
+  if (points !== undefined) {
+    return { box: around(points.map(([px, py]): [number, number] => [x + px, y + py])), updated: fields.updated };
+  }
+  if (!finite(width) || !finite(height)) return undefined;
+  return { box: { x, y, width, height }, updated: fields.updated };
+}
+
+/**
+ * Calls `seen` with the id of each element the board holds, and then with the id of each element
+ * that a change of the board sets, until the function it answers is called.
+ */
+function watchElements(elements: Y.Map<unknown>, seen: (id: string) => void): () => void {
+  const observer = (event: Y.YMapEvent<unknown>): void => {
+    for (const id of event.keysChanged) seen(id);
+  };
+  elements.observe(observer);
+  for (const id of [...elements.keys()]) seen(id);
+  return () => elements.unobserve(observer);
+}
+
+/**
+ * Listens to the texts people write on the board that `doc` holds, shapes' labels among them.
+ * Once a person's text stays unchanged for `options.pauseMs` after a change, its line goes to
+ * `options.onLine`, so that a text typed one key at a time makes one line, and a text whose words
+ * the listener told of already, as where a person moves it, doesn't make another. A text that
+ * holds an agent's creator mark, a deleted text and a text without words are left out, and so is
+ * a text that a person last changed at or before `options.after`, though the listener receives it
+ * later, as a peer's copy of the board brings it.
+ */
+export function listenTexts(doc: Y.Doc, options: BoardListenOptions<Written>): Listener {
+  const elements = doc.getMap<unknown>(ELEMENTS);
+  /** The words of each text the listener told of, or that a person wrote before the listener started. */
+  const told = new Map<string, string>();
+  /** The pause after each text's last change, where a line may follow it. */
+  const pauses = new Map<string, ReturnType<typeof setTimeout>>();
+
+  const settle = (id: string): void => {
+    clearTimeout(pauses.get(id));
+    pauses.delete(id);
+  };
+
+  const tell = (id: string): void => {
+    settle(id);
+    const written = writtenOf(elements.get(id));
+    if (written === undefined || written.words === told.get(id)) return;
+    told.set(id, written.words);
+    options.onLine({ at: new Date(written.updated).toISOString(), kind: 'text', text: written.words });
+  };
+
+  const off = watchElements(elements, (id) => {
+    const written = writtenOf(elements.get(id));
+    settle(id);
+    if (written === undefined) return;
+    if (written.updated <= options.after) {
+      told.set(id, written.words);
+      return;
+    }
+    pauses.set(id, setTimeout(() => tell(id), options.pauseMs));
+  });
+
+  return {
+    flush: () => {
+      for (const id of [...pauses.keys()]) tell(id);
+    },
+    stop: () => {
+      off();
+      for (const pause of pauses.values()) clearTimeout(pause);
+      pauses.clear();
+    },
+  };
+}
+
+/**
+ * Listens to the freehand strokes people draw on the board that `doc` holds. Once each stroke that
+ * a person drew or changed since the last line stays unchanged for `options.pauseMs`, one line
+ * goes to `options.onLine` with those strokes and the part of the board they cover, so that a
+ * sketch of several strokes makes one line. A stroke that holds an agent's creator mark, a deleted
+ * stroke, and a stroke that a person last changed at or before `options.after` are left out.
+ */
+export function listenSketches(doc: Y.Doc, options: BoardListenOptions<Sketched>): Listener {
+  const elements = doc.getMap<unknown>(ELEMENTS);
+  /** The strokes changed since the last line, in the order of their last change. */
+  let strokes: string[] = [];
+  let pause: ReturnType<typeof setTimeout> | undefined;
+
+  const flush = (): void => {
+    clearTimeout(pause);
+    pause = undefined;
+    const drawn = strokes.flatMap((id) => {
+      const stroke = strokeOf(elements.get(id));
+      return stroke === undefined ? [] : [{ id, ...stroke }];
+    });
+    strokes = [];
+    if (drawn.length === 0) return;
+    options.onLine({
+      at: new Date(Math.max(...drawn.map(({ updated }) => updated))).toISOString(),
+      kind: 'sketch',
+      ids: drawn.map(({ id }) => id),
+      box: around(drawn.flatMap(({ box }) => corners(box))),
+    });
+  };
+
+  const off = watchElements(elements, (id) => {
+    const stroke = strokeOf(elements.get(id));
+    if (stroke === undefined || stroke.updated <= options.after) return;
+    strokes = strokes.filter((other) => other !== id);
+    strokes.push(id);
+    clearTimeout(pause);
+    pause = setTimeout(flush, options.pauseMs);
+  });
+
+  return {
+    flush,
+    stop: () => {
+      off();
+      clearTimeout(pause);
+      pause = undefined;
+      strokes = [];
+    },
+  };
+}
+
+export interface BoardListenerOptions {
+  /** When the listener started, in milliseconds since the epoch: what was said, written or drawn at or before it is left out. */
+  after: number;
+  /** How long a pause after words ends their group, in milliseconds. */
+  pauseMs: number;
+  /** How long a text or a sketch stays unchanged before its line, in milliseconds. */
+  boardPauseMs: number;
+  /** Called with each line. */
+  print: (line: Line) => void;
+}
+
+/**
+ * Listens to what people on the board that `doc` holds say, write and draw: the groups of words
+ * that `listen` makes of the board's transcript, the texts that `listenTexts` tells of and the
+ * sketches that `listenSketches` makes, each line to `options.print`.
+ */
+export function listenToBoard(doc: Y.Doc, options: BoardListenerOptions): Listener {
+  const { after, pauseMs, boardPauseMs, print } = options;
+  const listeners = [
+    listen(new TranscriptLog(doc), { after, pauseMs, onHeard: print }),
+    listenTexts(doc, { after, pauseMs: boardPauseMs, onLine: print }),
+    listenSketches(doc, { after, pauseMs: boardPauseMs, onLine: print }),
+  ];
+  return {
+    flush: () => {
+      for (const listener of listeners) listener.flush();
+    },
+    stop: () => {
+      for (const listener of listeners) listener.stop();
     },
   };
 }

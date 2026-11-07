@@ -24,8 +24,8 @@ Joins the Chalkline board that the link opens, and serves the agent's tools on i
 server over standard input and output: get_board reads the board, render_board draws it as a
 picture, add_shapes draws on it, connect draws an arrow between two of its shapes, update_shape
 changes a shape, delete_shapes deletes shapes, add_mermaid asks a page of the board to draw a
-Mermaid diagram, whose request get_request reads, and read_transcript reads what the people on
-the board said.
+Mermaid diagram, whose request get_request reads, read_changes reads the shapes added, changed
+and deleted on the board, and read_transcript reads what the people on the board said.
 The link is the board's address, with its #room=<name>&key=<password> fragment, and with its
 ?relay= parameters where the board's participants meet through a relay. Each line the helper
 logs goes to standard error.
@@ -34,9 +34,9 @@ Options:
   --help  print this text
 
 chalkline-mcp listen <board link> joins the board too, and prints on standard output one JSON
-line for each group of words people on the board say, for an agent client that turns each line
-a command prints into a message to its agent, such as Claude Code's Monitor tool:
-chalkline-mcp listen --help says more.`;
+line for each group of words people on the board say, each text they write and each sketch they
+draw, for an agent client that turns each line a command prints into a message to its agent,
+such as Claude Code's Monitor tool: chalkline-mcp listen --help says more.`;
 
 function roomOf(link: string): RoomSecrets {
   let address: URL;
