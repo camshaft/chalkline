@@ -53,7 +53,8 @@ function heardOf(entries: readonly TranscriptEntry[]): Heard {
  * left out, though the listener receives it later, as a peer's copy of the board brings the
  * transcript's earlier entries. The pause counts from the moment the listener receives each entry,
  * so the entries that arrive in one change, as when the listener joins the room again, make one
- * group.
+ * group. An entry that comes again with the id of one in the group, as a speech entry that its page
+ * replaced with longer words, takes that one's place in the group.
  */
 export function listen(log: TranscriptLog, options: ListenOptions): Listener {
   let cursor = 0;
@@ -76,7 +77,14 @@ export function listen(log: TranscriptLog, options: ListenOptions): Listener {
     // left out, so that an agent doesn't receive its own posts, or another agent's, as people's words.
     const said = read.entries.filter(({ at, via }) => via !== 'agent' && Date.parse(at) > options.after);
     if (said.length === 0) return;
-    group.push(...said);
+    for (const entry of said) {
+      const place = group.findIndex(({ id }) => id === entry.id);
+      if (place === -1) {
+        group.push(entry);
+      } else {
+        group[place] = entry;
+      }
+    }
     clearTimeout(pause);
     pause = setTimeout(flush, options.pauseMs);
   };

@@ -25,6 +25,7 @@ export {
   newEntryId,
   readEntry,
   readTranscript,
+  replaceLastEntry,
   TRANSCRIPT,
   transcriptOf,
   type TranscriptEntry,

@@ -1,4 +1,4 @@
-import { readTranscript, transcriptOf } from '@chalkline/sync';
+import { appendEntry, readTranscript, transcriptOf } from '@chalkline/sync';
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import {
@@ -98,6 +98,30 @@ function deferred<T>() {
 }
 
 const AT = new Date('2026-11-07T01:02:03.000Z');
+
+/**
+ * One sentence, "draw a picture of a cute little kitty cat", as a phone's browser reported it on
+ * 2026-11-07: each growing hypothesis marked final, each one repeating the words before it.
+ */
+const KITTY = [
+  'draw',
+  'draw',
+  'draw a',
+  'draw a picture',
+  'draw a picture',
+  'draw a picture',
+  'draw a picture of',
+  'draw a picture of',
+  'draw a picture of a',
+  'draw a picture of a',
+  'draw a picture of a cute',
+  'draw a picture of a cute',
+  'draw a picture of a cute little',
+  'draw a picture of a cute little kitty cat',
+];
+
+/** The next sentence of the same phone, reported the same way. */
+const ALOUD = ['say', 'say it', 'say it out', 'say it out loud'];
 
 function control(Class: RecognitionClass | null, speaker = () => 'Ada') {
   const doc = new Y.Doc();
@@ -310,6 +334,74 @@ describe('speechControl', () => {
       { id: 'entry-2', speaker: 'Ada Lovelace', at: AT.toISOString(), text: 'and an arrow', via: 'speech' },
     ]);
     expect(speech.state()).toMatchObject({ heard: '' });
+  });
+
+  it('puts a sentence on the transcript once, as its last words, where the browser marks each growing hypothesis final', async () => {
+    // Each hypothesis made an entry of its own before, and `chalkline-mcp listen` printed them as one line.
+    expect(KITTY.join(' ')).toBe(
+      'draw draw draw a draw a picture draw a picture draw a picture draw a picture of draw a picture of draw a picture of a draw a picture of a draw a picture of a cute draw a picture of a cute draw a picture of a cute little draw a picture of a cute little kitty cat',
+    );
+    expect(ALOUD.join(' ')).toBe('say say it say it out say it out loud');
+    // The browser reports each hypothesis as the next result of a list that grows, or as the one result of its event.
+    const reports: Array<(listener: FakeRecognition, said: string[]) => void> = [
+      (listener, said) => listener.hear(said.length - 1, ...said.map((words): [string, boolean] => [words, true])),
+      (listener, said) => listener.hear(0, [said[said.length - 1], true]),
+    ];
+    for (const report of reports) {
+      const { Class, made } = fakeClass();
+      const { speech, transcript } = control(Class);
+      await listening(speech);
+      const [listener] = made;
+      listener.begin();
+      const said: string[] = [];
+
+      for (const words of KITTY) {
+        said.push(words);
+        report(listener, said);
+        // The chat shows the words as they come, in the one entry.
+        expect(readTranscript(transcript)).toEqual([
+          { id: 'entry-1', speaker: 'Ada', at: AT.toISOString(), text: words, via: 'speech' },
+        ]);
+      }
+      expect(readTranscript(transcript).map(({ text }) => text)).toEqual(['draw a picture of a cute little kitty cat']);
+
+      for (const words of ALOUD) {
+        said.push(words);
+        report(listener, said);
+      }
+      expect(readTranscript(transcript)).toEqual([
+        { id: 'entry-1', speaker: 'Ada', at: AT.toISOString(), text: 'draw a picture of a cute little kitty cat', via: 'speech' },
+        { id: 'entry-2', speaker: 'Ada', at: AT.toISOString(), text: 'say it out loud', via: 'speech' },
+      ]);
+      expect(transcript.length).toBe(2);
+    }
+  });
+
+  it("adds an entry where the words don't extend the last entry's, another entry came after it, or recognition started again", async () => {
+    const { Class, made } = fakeClass();
+    const { speech, transcript } = control(Class);
+    await listening(speech);
+    const [listener] = made;
+    listener.begin();
+
+    listener.hear(0, ['draw a box', true]);
+    listener.hear(1, ['draw a box', true], ['draw a circle', true]);
+    appendEntry(transcript, { id: 'typed', speaker: 'Grace', at: AT.toISOString(), text: 'in red', via: 'typed' });
+    listener.hear(0, ['draw a circle in blue', true]);
+    listener.end();
+    listener.begin();
+    listener.hear(0, ['draw a circle in blue and green', true]);
+    // The words compare in any case.
+    listener.hear(0, ['Draw a circle in blue and green please', true]);
+
+    expect(listener.starts).toBe(2);
+    expect(readTranscript(transcript).map(({ id, text }) => [id, text])).toEqual([
+      ['entry-1', 'draw a box'],
+      ['entry-2', 'draw a circle'],
+      ['typed', 'in red'],
+      ['entry-3', 'draw a circle in blue'],
+      ['entry-4', 'Draw a circle in blue and green please'],
+    ]);
   });
 
   it('starts again where the browser ends recognition after it started, as after a silence', async () => {

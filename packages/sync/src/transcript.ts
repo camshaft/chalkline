@@ -14,7 +14,10 @@ const VIAS: readonly string[] = ['speech', 'typed', 'agent'];
  * said, typed or posted it, when, the words, and how they came.
  */
 export interface TranscriptEntry {
-  /** The entry's id, unique on the board. */
+  /**
+   * The entry's id, unique on the board. A page that replaces its own last speech entry with
+   * `replaceLastEntry` keeps the entry's id.
+   */
   id: string;
   /** The name of the person or the agent, as the board showed it when the words came. */
   speaker: string;
@@ -31,8 +34,9 @@ export const TRANSCRIPT = 'transcript';
 
 /**
  * The board's transcript: a Y.Array that each participant appends its final
- * speech results, its typed messages and an agent's posts to, and that no one
- * edits.
+ * speech results, its typed messages and an agent's posts to. No one edits an
+ * entry, except that a page replaces its own last speech entry with
+ * `replaceLastEntry` while the browser goes on extending that entry's words.
  */
 export function transcriptOf(doc: Y.Doc): Y.Array<unknown> {
   return doc.getArray<unknown>(TRANSCRIPT);
@@ -81,4 +85,27 @@ export function readTranscript(transcript: Y.Array<unknown>): TranscriptEntry[] 
 export function appendEntry(transcript: Y.Array<unknown>, entry: TranscriptEntry): void {
   const { id, speaker, at, text, via } = entry;
   transcript.push([{ id, speaker, at, text, via }]);
+}
+
+/**
+ * Replaces the last entry of `transcript` with `entry` where that last entry
+ * reads as one with `entry`'s id, as a page does while the speaker's browser
+ * goes on extending the words of a sentence it already marked final. The
+ * delete and the insert reach every peer as one change. Where the transcript
+ * is empty, its last value doesn't read as an entry with that id, or the
+ * transcript isn't in a document, it changes nothing and returns false.
+ */
+export function replaceLastEntry(transcript: Y.Array<unknown>, entry: TranscriptEntry): boolean {
+  const doc = transcript.doc;
+  if (doc === null) return false;
+  const index = transcript.length - 1;
+  if (index < 0) return false;
+  const last = readEntry(transcript.get(index));
+  if (last === null || last.id !== entry.id) return false;
+  const { id, speaker, at, text, via } = entry;
+  doc.transact(() => {
+    transcript.delete(index, 1);
+    transcript.insert(index, [{ id, speaker, at, text, via }]);
+  });
+  return true;
 }
