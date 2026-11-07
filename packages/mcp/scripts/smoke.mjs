@@ -8,8 +8,10 @@
 // that the helper's log doesn't hold the error of a stroke left out. It reads the board's changes from
 // the start with read_changes, then reads the empty transcript as the resource
 // chalkline://transcript, subscribes to it, and checks that read_transcript refuses a cursor past
-// the transcript's end. Last, it posts a message in the board's chat with post_message and reads it
-// back with read_transcript. CI runs it after the build.
+// the transcript's end. It posts a message in the board's chat with post_message and reads it
+// back with read_transcript. Last, it reads the empty feedback resource chalkline://feedback,
+// subscribes to it, and checks that get_board doesn't list a feedback and that answer_feedback refuses
+// an id the board doesn't hold. CI runs it after the build.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -42,12 +44,14 @@ const { tools } = await client.listTools();
 assert.deepEqual(tools.map((tool) => tool.name).sort(), [
   'add_mermaid',
   'add_shapes',
+  'answer_feedback',
   'connect',
   'delete_shapes',
   'get_board',
   'get_request',
   'post_message',
   'read_changes',
+  'read_feedback',
   'read_transcript',
   'render_board',
   'reorder_shapes',
@@ -141,7 +145,17 @@ assert.equal(posted.text, 'Smoke test message');
 assert.equal(posted.via, 'agent');
 assert.deepEqual(await call('read_transcript', { cursor: 0 }), { entries: [posted], cursor: 1 });
 
+const feedback = await client.readResource({ uri: 'chalkline://feedback' });
+assert.deepEqual(JSON.parse(feedback.contents[0].text), { feedback: [], cursor: 0 });
+await client.subscribeResource({ uri: 'chalkline://feedback' });
+assert.deepEqual((await call('get_board', {})).feedback, []);
+const unknown = await client.callTool({
+  name: 'answer_feedback',
+  arguments: { id: 'missing', text: 'Smoke test answer' },
+});
+assert.equal(unknown.isError, true, JSON.stringify(unknown.content));
+
 await client.close();
 console.log(
-  `chalkline-mcp added ${id} labelled "Smoke test" and ${next}, connected them with ${arrow}, moved ${next}, deleted ${arrow}, added the freehand stroke ${stroke}, drew the board as a PNG of ${drawn.structuredContent.width} by ${drawn.structuredContent.height} pixels, wrote the Mermaid request ${asked.id}, read each back, read the board's ${changes.changes.length} changes, read the empty transcript, and posted the message ${posted.id} in the chat and read it back`,
+  `chalkline-mcp added ${id} labelled "Smoke test" and ${next}, connected them with ${arrow}, moved ${next}, deleted ${arrow}, added the freehand stroke ${stroke}, drew the board as a PNG of ${drawn.structuredContent.width} by ${drawn.structuredContent.height} pixels, wrote the Mermaid request ${asked.id}, read each back, read the board's ${changes.changes.length} changes, read the empty transcript, and posted the message ${posted.id} in the chat and read it back, and read the empty feedback`,
 );
