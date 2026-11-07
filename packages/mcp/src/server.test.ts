@@ -374,11 +374,12 @@ describe('lines and arrows of add_shapes', () => {
       points: [[0, 0], [40, 30], [80, -10], [120, 20]],
     });
     expect(elements.get(moved)).toMatchObject({ type: 'line', x: 5, y: 10, width: 20, height: 30, points: [[0, 0], [20, 0], [20, 30]] });
-    expect(elements.get(curve)).toMatchObject({ type: 'arrow', x: 100, y: 100, width: 100, height: 40, points: [[0, 0], [50, -40], [100, 0]] });
+    // The converter moves this arrow's first point 0.5 right and down and its last point 0.5 left and up, and keeps the width and height it reads.
+    expect(elements.get(curve)).toMatchObject({ type: 'arrow', x: 100, y: 100, width: 100, height: 40, points: [[0.5, 0.5], [50, -40], [99.5, -0.5]] });
     expect(shapes(await call(client, 'get_board'))).toEqual([
       { id: zigzag, kind: 'line', x: 10, y: 20, width: 120, height: 20, points: [[0, 0], [40, 30], [80, -10], [120, 20]], creator },
       { id: moved, kind: 'line', x: 5, y: 10, width: 20, height: 30, points: [[0, 0], [20, 0], [20, 30]], creator },
-      { id: curve, kind: 'arrow', x: 100, y: 100, width: 100, height: 0, points: [[0, 0], [50, -40], [100, 0]], creator },
+      { id: curve, kind: 'arrow', x: 100, y: 100, width: 99, height: -1, points: [[0.5, 0.5], [50, -40], [99.5, -0.5]], creator },
     ]);
   });
 
