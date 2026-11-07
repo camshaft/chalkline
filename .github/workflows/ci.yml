@@ -38,3 +38,7 @@ jobs:
       # Runs the local-network mode's bundle, which prints its usage and serves nothing.
       - name: Print the local-network mode's usage
         run: node packages/lan/dist/chalkline-lan.mjs --help
+      # Starts the built chalkline-mcp on a new board, as an agent's client starts it, and calls
+      # its tools: add_shapes adds a labelled rectangle, and get_board reads it back.
+      - name: Run chalkline-mcp
+        run: npm run smoke --workspace @chalkline/mcp

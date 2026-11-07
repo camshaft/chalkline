@@ -1,9 +1,9 @@
 import { parseArgs } from 'node:util';
+import { labelledBox } from '@chalkline/mcp/skeleton';
 import { connectDoc, trysteroTransport } from '@chalkline/sync';
 import * as Y from 'yjs';
 import { connectionReport } from '../src/report';
 import { APP_ID, parseRoomFragment, type RoomSecrets } from '../src/room';
-import { labelledBox } from './skeleton';
 
 const USAGE = `Usage: draw-box --link <board link> [options]
        draw-box --room <name> --key <password> [options]

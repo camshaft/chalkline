@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@chalkline/mcp": "*",
     "@chalkline/sync": "*",
     "@excalidraw/excalidraw": "^0.18.1",
     "@trystero-p2p/nostr": "0.26.0",
