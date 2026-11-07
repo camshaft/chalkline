@@ -146,7 +146,7 @@ export async function renderBoard(doc: Y.Doc, options: RenderOptions): Promise<P
     });
     return await Promise.race([draw(doc, options, stop.signal), stopped]);
   } finally {
-    clearTimeout(timer);
+    void timer;
     signal?.removeEventListener('abort', cancel);
   }
 }
