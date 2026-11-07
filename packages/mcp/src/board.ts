@@ -2,8 +2,8 @@ import { randomBytes, randomInt } from 'node:crypto';
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type * as Y from 'yjs';
 import { creatorOf, withCreator, type Creator } from './creator';
-import { indicesAbove } from './order';
-import { DEFAULT_FONT, DEFAULT_STYLE, FONT_FAMILY, LISTED_POINTS, type BoardShape, type FontName, type Shape } from './shapes';
+import { fractionalIndex, indicesOver, indicesUnder } from './order';
+import { DEFAULT_FONT, DEFAULT_STYLE, FONT_FAMILY, LISTED_POINTS, type BoardShape, type FontName, type Place, type Shape } from './shapes';
 import { convertSkeletons, loadExcalidraw, type Excalidraw, type Skeleton } from './skeleton';
 
 /** The shared map that holds the board's elements by id, as the page keeps them. */
@@ -133,21 +133,24 @@ export function newId(): string {
 }
 
 /**
- * Adds `shapes`, in Excalidraw's skeleton format, to the board that `doc` holds, above every
- * element on it, in one transaction, and returns each shape's id in the order of `shapes`. A shape
- * keeps the id it sets, and a shape that leaves it out gets a random one. Each element it adds, a
- * shape's label among them, records `creator`, where given, as its creator, and goes into the
- * group `group`, where given, as Excalidraw groups elements. Throws a ShapeError, and adds
- * nothing, where two shapes set one id, a shape sets an id the board holds already, an
- * arrow's start or end isn't a rectangle, an ellipse, a diamond or a text of the same call, a line
- * or an arrow sets both points and a width or a height, or a closed line has fewer than three
- * points.
+ * Adds `shapes`, in Excalidraw's skeleton format, to the board that `doc` holds, in one transaction,
+ * and returns each shape's id in the order of `shapes`. The shapes go to `where` in the board's
+ * stacking order, in front of every element unless `where` says otherwise, each in front of the
+ * shapes before it in `shapes`, as indicesAt places them. A shape keeps the id it sets, and a shape
+ * that leaves it out gets a random one. Each element it adds, a shape's label among them, records
+ * `creator`, where given, as its creator, and goes into the group `group`, where given, as
+ * Excalidraw groups elements. Throws a ShapeError, and adds nothing, where two shapes set one id,
+ * a shape sets an id the board holds already, an arrow's start or end isn't a rectangle, an
+ * ellipse, a diamond or a text of the same call, a line or an arrow sets both points and a width
+ * or a height, a closed line has fewer than three points, or `where` names a shape that indicesAt
+ * refuses.
  */
 export async function addShapes(
   doc: Y.Doc,
   shapes: readonly Shape[],
   creator?: Creator,
   group?: string,
+  where: Place = 'front',
 ): Promise<string[]> {
   const shared = doc.getMap<unknown>(ELEMENTS);
   const ids = shapes.map((shape) => shape.id ?? newId());
@@ -202,7 +205,7 @@ export async function addShapes(
       throw new Error(`convertToExcalidrawElements didn't make the shape ${id}: ${JSON.stringify(elements)}`);
     }
   }
-  const indices = indicesAbove(shared.values(), elements.length);
+  const indices = indicesAt(shared, where, elements.length);
   doc.transact(() => {
     elements.forEach((element, place) => {
       const copy = { ...structuredClone(element), index: indices[place] };
@@ -442,8 +445,76 @@ export function boundTo(binding: unknown): string | undefined {
   return stringOf((binding as { elementId?: unknown }).elementId);
 }
 
+/**
+ * `count` fractional indices, in order, for elements that go to `place` in the stacking order of
+ * the board that `shared` holds: in front of every element for front, behind every element for
+ * back, just below the shape that `place.below` names, or just above the shape that `place.above`
+ * names and its label. The elements that `moving` names, which a move takes from where they are,
+ * are passed over. Throws a ShapeError where `place` names an id that isn't a shape on the board,
+ * is a label, or doesn't have an index in the board's stacking order.
+ */
+export function indicesAt(
+  shared: Y.Map<unknown>,
+  place: Place,
+  count: number,
+  moving: ReadonlySet<string> = new Set(),
+): string[] {
+  const values = [...shared.entries()].filter(([id]) => !moving.has(id)).map(([, value]) => value);
+  if (place === 'front') return indicesUnder(values, null, count);
+  if (place === 'back') return indicesOver(values, null, count);
+  if ('below' in place) return indicesUnder(values, placedIndex(shared, 'below', place.below), count);
+  return indicesOver(values, placedIndex(shared, 'above', place.above), count);
+}
+
+/**
+ * The index that a place takes from the shape `id`: that shape's index for below, and the highest
+ * index of that shape and its label for above. Throws a ShapeError as indicesAt says.
+ */
+function placedIndex(shared: Y.Map<unknown>, side: 'below' | 'above', id: string): string {
+  const element = liveElement(shared.get(id));
+  if (element === undefined || typeof element.type !== 'string') {
+    throw new ShapeError(`place.${side} is "${id}", which isn't the id of a shape on the board: get_board lists each shape's id.`);
+  }
+  const containerId = element.type === 'text' ? stringOf(element.containerId) : undefined;
+  const container = containerId === undefined ? undefined : liveElement(shared.get(containerId));
+  if (container !== undefined && container.type !== 'text') {
+    throw new ShapeError(
+      `place.${side} is "${id}", the label of the shape "${containerId}", which get_board lists with its label: place the shapes ${side} "${containerId}".`,
+    );
+  }
+  const own = fractionalIndex(element);
+  if (own === null) {
+    throw new ShapeError(
+      `place.${side} is "${id}", which doesn't have an index in the board's stacking order: place the shapes at the front or the back.`,
+    );
+  }
+  let index = own;
+  if (side === 'above') {
+    for (const value of shared.values()) {
+      const label = liveElement(value);
+      if (label?.type !== 'text' || label.containerId !== id) continue;
+      const labelIndex = fractionalIndex(label);
+      if (labelIndex !== null && labelIndex > index) index = labelIndex;
+    }
+  }
+  return index;
+}
+
+/** `value`, an element of the board, where it is one and isn't deleted. */
+function liveElement(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const element = value as Record<string, unknown>;
+  return element.isDeleted === true ? undefined : element;
+}
+
+/** An element's id and its fractional index, which place it in the board's stacking order. */
+export interface Stacked {
+  id: string;
+  index: string | null;
+}
+
 /** Back to front, as the page orders the board: by fractional index, an element without one last, then by id. */
-export function backToFront(a: Pick<BoardElement, 'id' | 'index'>, b: Pick<BoardElement, 'id' | 'index'>): number {
+export function backToFront(a: Stacked, b: Stacked): number {
   if (a.index !== b.index) {
     if (a.index === null) return 1;
     if (b.index === null) return -1;

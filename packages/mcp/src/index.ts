@@ -1,6 +1,6 @@
-export { addShapes, ELEMENTS, newId, readBoard, ShapeError } from './board';
+export { addShapes, backToFront, ELEMENTS, indicesAt, newId, readBoard, ShapeError, type Stacked } from './board';
 export { creatorOf, CUSTOM_DATA, withCreator, type Creator } from './creator';
-export { connect, deleteShapes, updateShape } from './edit';
+export { connect, deleteShapes, reorderShapes, updateShape } from './edit';
 export {
   arrowPoints,
   boardPoints,
@@ -12,7 +12,7 @@ export {
   type Point,
   type Segment,
 } from './geometry';
-export { indicesAbove } from './order';
+export { fractionalIndex, indicesAbove, indicesOver, indicesUnder } from './order';
 export {
   pageInRoom,
   pendingRequests,
@@ -28,9 +28,12 @@ export {
   connectionSchema,
   creatorSchema,
   deletionSchema,
+  placeSchema,
+  reorderSchema,
   shapeSchema,
   type BoardShape,
   type Connection,
+  type Place,
   type Shape,
   type ShapeChange,
 } from './shapes';
