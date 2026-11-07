@@ -205,6 +205,47 @@
         outline: 2px solid var(--color-primary, #6965db);
         outline-offset: 1px;
       }
+      /*
+       * The participants list (participants.ts): each other participant by name, an agent with the Agent
+       * badge and, once it has drawn, a Go to button that shows what it last drew.
+       */
+      .chalkline-participants {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        max-height: 5rem;
+        margin: 0;
+        padding: 0;
+        overflow-y: auto;
+        list-style: none;
+      }
+      .chalkline-participant {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        min-height: 1.5rem;
+      }
+      .chalkline-participant-name {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .chalkline-participant-badge {
+        flex: 0 0 auto;
+        padding: 0 0.4rem;
+        font-size: 0.75rem;
+        line-height: 1.25rem;
+        color: var(--color-on-primary-container, #030064);
+        background: var(--color-surface-primary-container, #e0dfff);
+        border-radius: var(--border-radius-md, 0.375rem);
+      }
+      .chalkline-button.chalkline-participant-go {
+        flex: 0 0 auto;
+        height: 1.5rem;
+        padding: 0 0.5rem;
+      }
       #transcript {
         position: absolute;
         /* Below the page's controls on a desktop, the Read agent messages aloud button and the frames list among them. */
@@ -227,6 +268,10 @@
         border-radius: 0.5rem;
         box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.15);
         --chalkline-muted: #666;
+      }
+      /* On a desktop, the chat goes below the participants list too while the list shows. */
+      #board:has(.chalkline-host:not(.chalkline-host--mobile) #participants:not([hidden])) #transcript {
+        top: 22.25rem;
       }
       /*
        * On a phone, the chat opens as a sheet across the window's width, over the canvas, from the window's
@@ -557,6 +602,7 @@
         </button>
       </div>
       <div id="controls-more" class="chalkline-controls-more">
+        <ul id="participants" class="chalkline-participants" aria-label="Participants" hidden></ul>
         <label class="chalkline-name">
           <span class="chalkline-visually-hidden">Your name</span>
           <input id="name" type="text" autocomplete="nickname" title="Your name, which the others see by your cursor" />
