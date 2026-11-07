@@ -112,6 +112,7 @@ const record = (id: string, by: string, region: Region, answered = false): Feedb
   shapes: [],
   status: answered ? 'answered' : 'open',
   answer: answered ? { by: 'agent', at: AT, text: 'Moved it' } : null,
+  reopened: null,
 });
 
 describe('board and window points', () => {
@@ -199,6 +200,7 @@ describe('feedback mode', () => {
         shapes: ['shape-1', 'shape-2'],
         status: 'open',
         answer: null,
+        reopened: null,
       },
     ]);
     // Send ends the mode.
