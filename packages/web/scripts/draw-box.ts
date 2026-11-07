@@ -93,10 +93,12 @@ async function main(): Promise<void> {
   const werift = await import('werift');
   const PeerConnection =
     werift.RTCPeerConnection ?? (werift as unknown as { default: typeof werift }).default.RTCPeerConnection;
-  const { joinRoom, selfId } = await import('@trystero-p2p/nostr');
-  const room = joinRoom(
+  const { selfId } = await import('@trystero-p2p/nostr');
+  const { joinBoardRoom } = await import('@chalkline/sync/join');
+  const room = joinBoardRoom(
     { appId: APP_ID, password: secrets.key, rtcPolyfill: PeerConnection as unknown as typeof RTCPeerConnection },
     secrets.room,
+    [],
     { onJoinError: ({ peerId, error }) => console.error(`${peerId} couldn't connect: ${error}`) },
   );
 
