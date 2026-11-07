@@ -39,6 +39,30 @@
         flex: 1;
         min-height: 0;
       }
+      .join-screen {
+        max-width: 34rem;
+        margin: 3rem auto;
+        padding: 0 1rem;
+      }
+      .join-screen form {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.5rem;
+        margin-top: 1rem;
+      }
+      .join-screen label {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        gap: 0.2rem;
+        font-size: 0.85rem;
+      }
+      .join-screen input {
+        font: inherit;
+      }
+      .join-error {
+        color: #b00020;
+      }
       #settings {
         position: fixed;
         inset: 0;
@@ -96,6 +120,7 @@
     <div id="bar">
       <span id="status">Joining the room...</span>
       <label>Your name <input id="name" type="text" autocomplete="nickname" /></label>
+      <button id="new-board" type="button">New board</button>
       <button id="settings-button" type="button">Connection settings</button>
     </div>
     <div id="settings" hidden></div>
