@@ -19,9 +19,9 @@ export const LISTEN_USAGE = `Usage: chalkline-mcp listen <board link> [options]
 Joins the Chalkline board that the link opens, and prints on standard output one JSON line for
 what people on the board say, write and draw:
 
-  {"at", "speakers", "text"}  for each group of words people say with no pause of --pause's
-      length between them: "text" holds the group's words, "speakers" who said them, and "at"
-      when its last words were said;
+  {"at", "speakers", "text"}  for each group of words people say or type in the chat with no
+      pause of --pause's length between them: "text" holds the group's words, "speakers" who
+      said or typed them, and "at" when its last words came;
   {"at", "kind": "text", "text"}  for each text a person writes or changes, a shape's label
       among them, once it stays unchanged for --board-pause's length: "text" holds its words,
       and "at" when the person last changed it;
@@ -31,7 +31,8 @@ what people on the board say, write and draw:
       changed one.
 
 What was said, written or drawn before the listener started is left out, and so is each shape
-an agent added, which holds the agent's creator mark. Each line it logs goes to standard error,
+an agent added, which holds the agent's creator mark, and each message an agent posted in the
+chat. Each line it logs goes to standard error,
 such as where it loses the room and where it joins it again. It listens until Ctrl-C or SIGTERM
 stops it, and then prints the lines that wait for their pause before it leaves the room.
 

@@ -1,4 +1,4 @@
-import { readTranscript, type TranscriptEntry } from '@chalkline/sync';
+import { appendEntry, newEntryId, readTranscript, type TranscriptEntry } from '@chalkline/sync';
 import type * as Y from 'yjs';
 import type { SpeechState } from './speech';
 
@@ -22,11 +22,21 @@ export interface SpeechActions {
   decline(): void;
 }
 
+/** Who sends the messages typed in the panel's field, and the id and the time of each. */
+export interface ChatOptions {
+  /** The person's name, as the board shows it now. */
+  speaker(): string;
+  /** A new entry's id; random where left out. */
+  newId?: () => string;
+  /** The time now; the clock where left out. */
+  now?: () => Date;
+}
+
 /** What the panel says under its title for each state. */
 export function statusText(state: SpeechState): string {
   switch (state.kind) {
     case 'unsupported':
-      return "This browser doesn't offer speech recognition, so it doesn't add to the transcript. The transcript still shows what the others say.";
+      return "This browser doesn't offer speech recognition, so type your messages below. The chat still shows what the others say and type.";
     case 'off':
       return state.error ?? '';
     case 'checking':
@@ -56,9 +66,10 @@ export function micText(state: SpeechState): string {
   }
 }
 
-function entryItem(doc: Document, { id, speaker, at, text }: TranscriptEntry): HTMLLIElement {
+function entryItem(doc: Document, { id, speaker, at, text, via }: TranscriptEntry): HTMLLIElement {
   const item = doc.createElement('li');
   item.dataset.id = id;
+  item.dataset.via = via;
   const who = doc.createElement('span');
   who.className = 'transcript-speaker';
   who.textContent = speaker;
@@ -74,12 +85,14 @@ function entryItem(doc: Document, { id, speaker, at, text }: TranscriptEntry): H
 }
 
 /**
- * Fills `panel` with the board's transcript and this browser's speech: the
- * question that says where recognition runs, with Start listening and Cancel;
- * a status line; the words not yet final; and every entry of `transcript`,
- * which it shows again on each change of the transcript, a peer's among them.
- * `opener` opens and closes the panel, and counts the entries. The panel opens
- * as speech starts to turn on, so that the person reads the question.
+ * Fills `panel` with the board's chat and this browser's speech: the question
+ * that says where recognition runs, with Start listening and Cancel; a status
+ * line; the words not yet final; every entry of `transcript`, which it shows
+ * again on each change of the transcript, a peer's among them; and a message
+ * field with Send, which, as Enter does, appends the words typed there to
+ * `transcript` as a typed entry under `chat.speaker()`. `opener` opens and
+ * closes the panel, and counts the entries. The panel opens as speech starts
+ * to turn on, so that the person reads the question.
  *
  * Returns `show`, which shows a state of the speech, and `stop`, which stops
  * following the transcript.
@@ -88,8 +101,11 @@ export function bindTranscriptPanel(
   { mic, opener, panel }: PanelElements,
   transcript: Y.Array<unknown>,
   actions: SpeechActions,
+  chat: ChatOptions,
 ): { show(state: SpeechState): void; stop(): void } {
   const doc = panel.ownerDocument;
+  const newId = chat.newId ?? newEntryId;
+  const now = chat.now ?? (() => new Date());
   const make = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text = ''): HTMLElementTagNameMap[K] => {
     const made = doc.createElement(tag);
     made.className = className;
@@ -114,8 +130,28 @@ export function bindTranscriptPanel(
   const heard = make('p', 'speech-heard');
   heard.hidden = true;
   const entries = make('ol', 'transcript-entries');
-  const empty = make('p', 'transcript-empty', 'No one has said anything yet.');
-  panel.replaceChildren(make('h2', '', 'Transcript'), status, ask, heard, entries, empty);
+  const empty = make('p', 'transcript-empty', 'No one has said or typed anything yet.');
+  const field = make('input', 'chat-field');
+  field.type = 'text';
+  field.placeholder = 'Type a message';
+  field.autocomplete = 'off';
+  field.setAttribute('aria-label', 'Message');
+  const send = (): void => {
+    const words = field.value.trim();
+    if (words === '') return;
+    appendEntry(transcript, { id: newId(), speaker: chat.speaker(), at: now().toISOString(), text: words, via: 'typed' });
+    field.value = '';
+    // Show the person's own message, though they scrolled up to read earlier ones.
+    entries.scrollTop = entries.scrollHeight;
+  };
+  field.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault();
+    send();
+  });
+  const compose = make('div', 'chat-compose');
+  compose.append(field, button('Send', send));
+  panel.replaceChildren(make('h2', '', 'Chat'), status, ask, heard, entries, empty, compose);
 
   const open = (shown: boolean) => {
     panel.hidden = !shown;
@@ -130,7 +166,7 @@ export function bindTranscriptPanel(
     const read = readTranscript(transcript);
     entries.replaceChildren(...read.map((entry) => entryItem(doc, entry)));
     empty.hidden = read.length > 0;
-    opener.textContent = read.length === 0 ? 'Transcript' : `Transcript (${read.length})`;
+    opener.textContent = read.length === 0 ? 'Chat' : `Chat (${read.length})`;
     // Follow new entries, unless the person scrolled up to read earlier ones.
     if (atEnd) entries.scrollTop = entries.scrollHeight;
   };

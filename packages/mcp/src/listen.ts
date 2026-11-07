@@ -5,8 +5,8 @@ import { creatorOf } from './creator';
 import { TranscriptLog } from './transcript';
 
 /**
- * One line that `chalkline-mcp listen` prints: the words people on the board said with no pause of
- * the listener's length between them.
+ * One line that `chalkline-mcp listen` prints: the words people on the board said or typed in the
+ * chat with no pause of the listener's length between them.
  */
 export type Heard = {
   /** When the group's last words were said, as the speaker's browser recorded them (ISO 8601). */
@@ -72,7 +72,9 @@ export function listen(log: TranscriptLog, options: ListenOptions): Listener {
   const take = (): void => {
     const read = log.after(cursor);
     cursor = read.cursor;
-    const said = read.entries.filter(({ at }) => Date.parse(at) > options.after);
+    // A typed message joins a group as a speech result does. An agent's post, an entry with `via` "agent", is
+    // left out, so that an agent doesn't receive its own posts, or another agent's, as people's words.
+    const said = read.entries.filter(({ at, via }) => via !== 'agent' && Date.parse(at) > options.after);
     if (said.length === 0) return;
     group.push(...said);
     clearTimeout(pause);

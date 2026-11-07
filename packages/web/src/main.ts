@@ -57,7 +57,7 @@ export interface ChalklineHandle {
   settings: ConnectionSettings;
   /** The copy of the board that this browser keeps, or null where the browser doesn't let the page keep one. */
   kept: KeptBoard | null;
-  /** The board's transcript: each participant's final speech results, in order. */
+  /** The board's transcript, which the page shows as its chat: each final speech result, typed message and agent's post, in order. */
   transcript: Y.Array<unknown>;
   /** This browser's speech, which the microphone button turns on and off. */
   speech: Speech;
@@ -279,23 +279,26 @@ async function start(): Promise<ChalklineHandle> {
       },
     },
   );
-  // The board's transcript holds each participant's final speech results. Speech stays off until the person
-  // presses the microphone button, and each final result goes on the transcript under the name the others see.
+  // The board's transcript, which the page shows as its chat, holds each participant's final speech results and
+  // typed messages, and the agent's posts. Speech stays off until the person presses the microphone button, and
+  // each final result, as each typed message, goes on the transcript under the name the others see.
   const transcript = transcriptOf(doc);
+  const speaker = () => readPresence(awareness.getLocalState())?.name ?? 'Someone';
   const speech = speechControl({
     Class: recognitionClass(window),
     lang: recognitionLanguage(navigator.language),
     transcript,
-    speaker: () => readPresence(awareness.getLocalState())?.name ?? 'Someone',
+    speaker,
   });
   const panel = bindTranscriptPanel(
     { mic: pageButton('mic'), opener: pageButton('transcript-button'), panel: pageElement('transcript') },
     transcript,
     { toggle: () => void speech.toggle(), agree: () => void speech.agree(), decline: () => speech.decline() },
+    { speaker },
   );
   panel.show(speech.state());
   speech.onState((state) => panel.show(state));
-  // The bar's Save file, Open file, microphone and Transcript buttons show once the board they act on is open,
+  // The bar's Save file, Open file, microphone and Chat buttons show once the board they act on is open,
   // and stay hidden on the join screen.
   pageElement('save-button').hidden = false;
   pageElement('open-button').hidden = false;

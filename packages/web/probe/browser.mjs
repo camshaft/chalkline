@@ -11,7 +11,9 @@
 // from Excalidraw's menu, and each browser waits until its board shows none of
 // the shapes. Next it writes a request for a page to draw a Mermaid diagram, as
 // the agent's helper does with add_mermaid, and waits until the board shows each
-// browser's diagram. It then marks seen-<name>, stays until the script marks
+// browser's diagram. Next it opens the chat with its button, types a message in
+// the chat's field and presses Enter, and waits until its chat shows each
+// browser's message under that browser's name. It then marks seen-<name>, stays until the script marks
 // done-script, and marks bye-<name> as it leaves. Last, it presses New board and
 // waits until the page loads again on a new room's link. The Probe workflow runs
 // one copy on each of two runners, and draw-box on a third.
@@ -471,6 +473,49 @@ try {
   );
   console.log(`${name}: the board shows each browser's Mermaid diagram: ${JSON.stringify(diagrams)}`);
 
+  // Open the chat with its button, type a message in its field and press Enter, as a person does,
+  // and wait, on the panel's own changes, until the chat shows each browser's message as a typed
+  // entry under that browser's name.
+  await page.getByRole('button', { name: /^Chat( \(\d+\))?$/ }).click();
+  const messageField = page.getByRole('textbox', { name: 'Message' });
+  await messageField.fill(`Hello from ${name}`);
+  await messageField.press('Enter');
+  const chat = await page.evaluate(
+    ({ wanted, waitMs }) =>
+      new Promise((resolve, reject) => {
+        const panel = document.getElementById('transcript');
+        const shown = () =>
+          [...panel.querySelectorAll('.transcript-entries li')].map((item) => ({
+            speaker: item.querySelector('.transcript-speaker')?.textContent,
+            via: item.dataset.via,
+            text: item.querySelector('.transcript-text')?.textContent,
+          }));
+        let finished = false;
+        let timer;
+        const observer = new MutationObserver(() => check());
+        const finish = (error, value) => {
+          if (finished) return;
+          finished = true;
+          observer.disconnect();
+          clearTimeout(timer);
+          if (error) reject(error);
+          else resolve(value);
+        };
+        const check = () => {
+          const now = shown();
+          const missing = wanted.filter(
+            ({ speaker, text }) => !now.some((entry) => entry.via === 'typed' && entry.speaker === speaker && entry.text === text),
+          );
+          if (missing.length === 0) finish(null, now);
+        };
+        observer.observe(panel, { childList: true, subtree: true, characterData: true });
+        timer = setTimeout(() => finish(new Error(`timed out waiting for each browser's chat message: ${JSON.stringify(shown())}`)), waitMs);
+        check();
+      }),
+    { wanted: [name, ...others].map((browser) => ({ speaker: browser, text: `Hello from ${browser}` })), waitMs },
+  );
+  console.log(`${name}: the chat shows each browser's typed message: ${JSON.stringify(chat)}`);
+
   // Mark this browser's view as seen, and stay until the script has every browser's mark: a
   // browser that left at once could take its mark with it before any peer received it.
   await page.evaluate((who) => window.chalkline.doc.getMap('probe').set(`seen-${who}`, new Date().toISOString()), name);
@@ -518,6 +563,7 @@ try {
       `Opened ${link.origin}${link.pathname} as "${name}", drew rectangle \`${drawnId}\`, and saw each participant's shape (${participants.join(', ')}), the box labelled "${label}", and each other browser's cursor with its name (${others.join(', ') || 'none'}). It saved the board as \`${savedName}\`, opened a copy of its rectangle and an image from a file, and saw each browser's copy and image (${openedIds.join(', ')}) and each picture (${pictureIds.join(', ')}).`,
       `After ${resetter} reset the canvas from Excalidraw's menu, the board showed none of the shapes.`,
       `The board showed each browser's Mermaid diagram: ${JSON.stringify(diagrams)}.`,
+      `It typed "Hello from ${name}" in the chat, and the chat showed each browser's typed message: ${JSON.stringify(chat)}.`,
       '',
       '| Peer | Connection | This browser\'s candidate | The peer\'s candidate |',
       '| --- | --- | --- | --- |',
