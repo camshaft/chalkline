@@ -630,7 +630,7 @@ describe('add_shapes styles', () => {
     const fields = ['strokeWidth', 'strokeStyle', 'fillStyle', 'roughness', 'opacity', 'fontFamily', 'textAlign'];
     const description = tools.find((tool) => tool.name === 'add_shapes')?.description ?? '';
     for (const field of fields) expect(description).toContain(field);
-    const answer = tools.find((tool) => tool.name === 'get_board')?.outputSchema as {
+    const answer = tools.find((tool) => tool.name === 'get_board')?.outputSchema as unknown as {
       properties: { shapes: { items: { properties: Record<string, unknown> } } };
     };
     expect(Object.keys(answer.properties.shapes.items.properties)).toEqual(
