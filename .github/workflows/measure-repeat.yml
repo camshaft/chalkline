@@ -2,7 +2,7 @@ name: Board size measurement, repeated
 
 # Runs the Board size measurement ten times at once on each push to a measure/ branch, so that the
 # zoomed-out change's cost can be compared between commits across runners. Each job first prints its
-# runner's CPU, so that a job's numbers can be read beside the machine that ran it.
+# runner's CPU, so that a job's numbers can be read beside the machine that ran it. Second round.
 on:
   push:
     branches: ['measure/**']
