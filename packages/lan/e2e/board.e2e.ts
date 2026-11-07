@@ -5,15 +5,17 @@
 // arrow, and the test waits until both browsers show each of them. A second test has one browser
 // write a feedback over a rectangle the helper added (A13): the helper reads it, moves the
 // rectangle and answers it, and the test waits until both browsers show the answer in the chat,
-// the area's outline gone and the rectangle in its new place. A third test has the helper add two
-// drawings, each in a frame of its own name, and chooses the second in the page's frames list, which
-// shows that frame whole at the canvas's center. A fourth test opens the board in a
-// desktop's window and in a phone's, 390 px wide, checks that the page's controls sit in
-// Excalidraw's own UI over a canvas that fills the window, uses each of them there, and keeps a
-// screenshot of each layout; on the desktop it also presses the pen's side button. A fifth test
-// presses a pen's tip with each tool, also after a press whose release the page didn't receive,
-// and checks that it draws, selects and pans as a mouse's press does. It needs the page and the
-// helper that `npm run build` writes, and `npm run test:e2e` runs it.
+// the area's outline gone and the rectangle in its new place. A third test has one browser select
+// two rectangles the helper added and ask an agent about them from the canvas's context menu: the
+// helper reads the ask, of kind "ask", with both rectangles and the rectangle that holds them, and
+// answers it. A fourth test has the helper add two drawings, each in a frame of its own name, and
+// chooses the second in the page's frames list, which shows that frame whole at the canvas's center.
+// A fifth test opens the board in a desktop's window and in a phone's, 390 px wide, checks that the
+// page's controls sit in Excalidraw's own UI over a canvas that fills the window, uses each of them
+// there, and keeps a screenshot of each layout; on the desktop it also presses the pen's side button.
+// A sixth test presses a pen's tip with each tool, also after a press whose release the page didn't
+// receive, and checks that it draws, selects and pans as a mouse's press does. It needs the page and
+// the helper that `npm run build` writes, and `npm run test:e2e` runs it.
 import { randomBytes } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -24,6 +26,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { chromium, type Browser, type Page } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ASK_LABEL, QUICK_ASKS } from '../../web/src/ask';
 import { DRAWING_SPACE_KEY } from '../../web/src/drawing-space';
 import { SIDE_BUTTON_KEY } from '../../web/src/pen';
 import { RELAY_PATH, startLanServer, type LanServer } from '../src/server';
@@ -48,6 +51,10 @@ const FEEDBACK = 'Move this box further down';
 const MOVED_Y = 300;
 /** The helper's answer to the feedback. */
 const ANSWER = 'Moved the box down to y 300';
+/** The quick ask the ask test sends about the two rectangles it selects. */
+const [ASK] = QUICK_ASKS;
+/** The helper's answer to the ask. */
+const ASK_ANSWER = 'Lined up both boxes';
 /** The names of the frames the frames test's helper puts its two drawings into, in the order it adds them. */
 const FRAMES = ['First drawing', 'Second drawing'];
 /** The board file the layout test opens with the main menu's Open file item: one rectangle. */
@@ -92,6 +99,8 @@ interface FeedbackRecord {
   shapes: string[];
   status: string;
   answer: { by: string; text: string } | null;
+  /** "feedback", or "ask" for an ask that a person sent with Ask an agent. */
+  kind: string;
 }
 
 /** A feedback as a browser shows it, as page.js reads it from the chat, the canvas's outlines and the scene. */
@@ -501,7 +510,7 @@ describe('the local-network mode, end to end', () => {
       await page.mouse.up();
 
       // Send in the text box beside the area writes the feedback to the board, and ends the mode.
-      const dialog = page.locator('.feedback-box');
+      const dialog = page.locator('.feedback-box:not(.ask-box)');
       await dialog.locator('.feedback-field').fill(FEEDBACK);
       await dialog.getByRole('button', { name: 'Send', exact: true }).click();
       expect(await button.getAttribute('aria-pressed')).toBe('false');
@@ -512,7 +521,7 @@ describe('the local-network mode, end to end', () => {
       const opened = read.opened as { feedback: FeedbackRecord; shapes: { id: string }[] }[];
       expect(opened).toHaveLength(1);
       const [{ feedback, shapes }] = opened;
-      expect(feedback).toMatchObject({ by: WRITER, text: FEEDBACK, status: 'open', answer: null });
+      expect(feedback).toMatchObject({ by: WRITER, text: FEEDBACK, status: 'open', answer: null, kind: 'feedback' });
       expect(feedback.shapes).toContain(shape);
       expect(shapes.map(({ id }) => id)).toContain(shape);
       const corner = onBoard(from);
@@ -542,6 +551,92 @@ describe('the local-network mode, end to end', () => {
     } finally {
       await helper.close();
       await Promise.all([writer, reader].map((board) => board.page.context().close()));
+    }
+  }, 300_000);
+
+  it("sends the helper an ask about two shapes that a browser selected, from the canvas's context menu", async () => {
+    const lan = server;
+    const chrome = browser;
+    if (lan === undefined || chrome === undefined) throw new Error('the server or the browser did not start');
+    const link = boardLink(lan.port);
+    const board = await openBoard(chrome, link, 'asker');
+    const helper = new Client({ name: CLIENT, version: '0.0.0' });
+    try {
+      await helper.connect(new StdioClientTransport({ command: process.execPath, args: [HELPER, link.href] }));
+      const added = await call(helper, 'add_shapes', {
+        shapes: [
+          { type: 'rectangle', x: 100, y: 300, width: 160, height: 80, label: { text: 'First' } },
+          { type: 'rectangle', x: 400, y: 300, width: 160, height: 80, label: { text: 'Second' } },
+        ],
+      });
+      const ids = added.ids as string[];
+      const [first, second] = ids;
+      await shownIn(board, [
+        { id: first, type: 'rectangle', label: 'First' },
+        { id: second, type: 'rectangle', label: 'Second' },
+      ]);
+
+      // The name field sets the name that the ask records as its writer.
+      const { page } = board;
+      await page.locator('#name').fill(WRITER);
+      await page.waitForFunction(
+        (name) => (window as unknown as E2eWindow).chalkline?.awareness.getLocalState()?.name === name,
+        WRITER,
+      );
+      const view = await page.evaluate(() => {
+        const state = (window as unknown as E2eWindow).chalkline?.api.getAppState();
+        if (state === undefined) throw new Error("the page doesn't show a board");
+        return { scrollX: state.scrollX, scrollY: state.scrollY, zoom: state.zoom.value, left: state.offsetLeft, top: state.offsetTop };
+      });
+      // The window's point of a point of the board, rounded to whole pixels.
+      const onWindow = (x: number, y: number) => ({
+        x: Math.round((x + view.scrollX) * view.zoom + view.left),
+        y: Math.round((y + view.scrollY) * view.zoom + view.top),
+      });
+
+      // A drag over the empty canvas around both rectangles selects them, as Excalidraw's selection tool does.
+      const from = onWindow(60, 260);
+      const to = onWindow(600, 420);
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      await page.mouse.move(to.x, to.y, { steps: 10 });
+      await page.mouse.up();
+      await page.waitForFunction((wanted) => {
+        const selected = (window as unknown as E2eWindow).chalkline?.api.getAppState().selectedElementIds ?? {};
+        return wanted.every((id) => selected[id] === true);
+      }, ids);
+
+      // With the helper on the board, Ask an agent shows under the selection.
+      await page.locator('.ask-button').waitFor({ state: 'visible' });
+
+      // A right click inside the selection opens the canvas's context menu, whose first entry is Ask an
+      // agent, which opens the box beside the selection; a quick ask there sends at once.
+      const inside = onWindow(330, 340);
+      await page.mouse.click(inside.x, inside.y, { button: 'right' });
+      await page.locator('.context-menu').getByRole('button', { name: ASK_LABEL, exact: true }).click();
+      const dialog = page.locator('.ask-box');
+      await dialog.getByRole('button', { name: ASK, exact: true }).click();
+      await dialog.waitFor({ state: 'hidden' });
+
+      // The helper reads the ask: its kind, its writer, its text, both rectangles, and the rectangle that holds them.
+      const read = await call(helper, 'read_feedback', {});
+      const opened = read.opened as { feedback: FeedbackRecord; shapes: { id: string }[] }[];
+      expect(opened).toHaveLength(1);
+      const [{ feedback, shapes }] = opened;
+      expect(feedback).toMatchObject({ kind: 'ask', by: WRITER, text: ASK, status: 'open', answer: null });
+      expect([...feedback.shapes].sort()).toEqual([...ids].sort());
+      expect(shapes.map(({ id }) => id)).toEqual(expect.arrayContaining(ids));
+      expect(feedback.region.x).toBeCloseTo(100, 0);
+      expect(feedback.region.y).toBeCloseTo(300, 0);
+      expect(feedback.region.width).toBeCloseTo(460, 0);
+      expect(feedback.region.height).toBeCloseTo(80, 0);
+
+      // The helper answers the ask, which keeps its kind.
+      const answered = await call(helper, 'answer_feedback', { id: feedback.id, text: ASK_ANSWER });
+      expect(answered.feedback).toMatchObject({ kind: 'ask', status: 'answered', answer: { text: ASK_ANSWER } });
+    } finally {
+      await helper.close();
+      await board.page.context().close();
     }
   }, 300_000);
 

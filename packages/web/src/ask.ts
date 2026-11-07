@@ -219,6 +219,7 @@ export function bindAsk(
       shapes: asked.shapes,
       status: 'open',
       answer: null,
+      reopened: null,
       kind: 'ask',
     });
     close();

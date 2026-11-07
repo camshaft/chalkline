@@ -1,4 +1,13 @@
-import { answerFeedback, feedbackOf, getFeedback, listFeedback, type Feedback, type Region } from '@chalkline/sync';
+import {
+  answerFeedback,
+  feedbackKind,
+  feedbackOf,
+  getFeedback,
+  listFeedback,
+  type Feedback,
+  type FeedbackKind,
+  type Region,
+} from '@chalkline/sync';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type * as Y from 'yjs';
@@ -38,6 +47,7 @@ export type FeedbackRead = {
 /** What get_board lists of each open feedback. */
 export type ListedFeedback = {
   id: string;
+  kind: FeedbackKind;
   by: string;
   text: string;
   region: Region;
@@ -55,10 +65,25 @@ const feedbackSchema = z.object({
   status: z.enum(['open', 'answered']),
   answer: z.object({ by: z.string(), at: z.string(), text: z.string() }).nullable(),
   reopened: z.string().nullable(),
+  kind: z.enum(['feedback', 'ask']),
 });
 
 /** An open feedback as get_board lists it. */
-export const listedFeedbackSchema = z.object({ id: z.string(), by: z.string(), text: z.string(), region: regionSchema });
+export const listedFeedbackSchema = z.object({
+  id: z.string(),
+  kind: z.enum(['feedback', 'ask']),
+  by: z.string(),
+  text: z.string(),
+  region: regionSchema,
+});
+
+/**
+ * `record` with its kind, as read_feedback, answer_feedback, get_board and the resource answer it: a
+ * record that a page wrote without one is a feedback.
+ */
+function kinded(record: Feedback): Feedback {
+  return { ...record, kind: feedbackKind(record) };
+}
 
 /**
  * The openings of the board's feedback as this run of the helper received them: each feedback that
@@ -134,21 +159,29 @@ export class FeedbackLog {
     if (opened.length === 0) return;
     for (const record of opened) {
       this.#open.add(record.id);
-      this.#openings.push(record);
+      this.#openings.push(kinded(record));
     }
     for (const end of [...this.#waiting]) end();
     for (const listener of [...this.#listeners]) listener();
   }
 }
 
-/** The board's open feedback, in listFeedback's order. */
+/** The board's open feedback, in listFeedback's order, each with its kind. */
 export function openFeedback(doc: Y.Doc): Feedback[] {
-  return listFeedback(feedbackOf(doc)).filter((record) => record.status === 'open');
+  return listFeedback(feedbackOf(doc))
+    .filter((record) => record.status === 'open')
+    .map(kinded);
 }
 
-/** The board's open feedback as get_board lists it: each one's id, writer, text and region. */
+/** The board's open feedback as get_board lists it: each one's id, kind, writer, text and region. */
 export function listedFeedback(doc: Y.Doc): ListedFeedback[] {
-  return openFeedback(doc).map(({ id, by, text, region }) => ({ id, by, text, region }));
+  return openFeedback(doc).map((record) => ({
+    id: record.id,
+    kind: feedbackKind(record),
+    by: record.by,
+    text: record.text,
+    region: record.region,
+  }));
 }
 
 /**
@@ -202,7 +235,8 @@ export function registerFeedback(server: McpServer, doc: Y.Doc): FeedbackLog {
       title: "Read the people's feedback on areas of the board",
       description: [
         'Reads the feedback that people write on areas of the board: each feedback that became open after `cursor`, a new one or one a person reopened, in the order the helper received them.',
-        "Each comes with its record as the helper read it when it became open: its id, its writer as `by`, its time (ISO 8601), its text, its region in the units get_board reads, the ids of the shapes that met the region when the person sent it, its status, the agent's last answer or null, and when a person last reopened it (ISO 8601) or null; and with the board's shapes that meet its region now, as get_board lists them.",
+        "Each comes with its record as the helper read it when it became open: its id, its writer as `by`, its time (ISO 8601), its text, its region in the units get_board reads, the ids of the shapes it is about, its status, the agent's last answer or null, when a person last reopened it (ISO 8601) or null, and its kind; and with the board's shapes that meet its region now, as get_board lists them.",
+        'A kind of "feedback" is a comment on an area that the person marked, whose shapes are the ones that met the area when they sent it; a kind of "ask" is a request that the person sent with Ask an agent on the shapes they selected, whose shapes are those shapes and whose region is their bounds.',
         'It answers the cursor to pass to the next call. Where no feedback became open after the cursor, it answers once a person writes or reopens one, or with none once the client cancels the call.',
         "Left out, the cursor is 0, the log's start, which holds each feedback that was open when the helper joined the board.",
         'A cursor counts the openings this run of the helper has received, so it holds within one run of the helper.',
@@ -266,7 +300,7 @@ export function registerFeedback(server: McpServer, doc: Y.Doc): FeedbackLog {
           }.`,
         );
       }
-      return answer({ feedback: record });
+      return answer({ feedback: kinded(record) });
     },
   );
 

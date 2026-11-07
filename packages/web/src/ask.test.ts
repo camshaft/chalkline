@@ -154,6 +154,7 @@ const ask = (id: string, text: string, selection: Selection = SELECTED) => ({
   shapes: selection.shapes,
   status: 'open',
   answer: null,
+  reopened: null,
   kind: 'ask',
 });
 

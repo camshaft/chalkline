@@ -322,7 +322,7 @@ describe('an ask in the chat', () => {
     writeFeedback(feedbackOf(doc), asked);
     const { panel, map } = page(doc);
     reopenButton(panel, 'n1')?.click();
-    expect(getFeedback(map, 'n1')).toEqual({ ...asked, status: 'open' });
+    expect(getFeedback(map, 'n1')).toEqual({ ...asked, status: 'open', reopened: REOPENED });
     expect(feedbackItem(panel, 'n1').dataset.kind).toBe('ask');
   });
 });
