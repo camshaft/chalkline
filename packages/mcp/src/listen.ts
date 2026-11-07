@@ -1,4 +1,12 @@
-import { feedbackOf, getFeedback, type Feedback, type TranscriptEntry, type Transport } from '@chalkline/sync';
+import {
+  feedbackKind,
+  feedbackOf,
+  getFeedback,
+  type Feedback,
+  type FeedbackKind,
+  type TranscriptEntry,
+  type Transport,
+} from '@chalkline/sync';
 import type * as Y from 'yjs';
 import { ELEMENTS, finite, stringOf } from './board';
 import { agentWordsOf, changerOf, creatorOf, drawingChangedOf, drawingOf, wordsChangedOf } from './creator';
@@ -126,14 +134,22 @@ export type FeedbackOpened = {
    * the reopening.
    */
   at: string;
-  kind: 'feedback';
+  /**
+   * What the record is, as `feedbackKind` reads it: "ask" for an ask that a person sent with Ask
+   * an agent on the shapes they selected, and "feedback" for a feedback and for a record that
+   * doesn't hold a kind.
+   */
+  kind: FeedbackKind;
   /** The feedback's id, as read_feedback lists it, to pass to answer_feedback. */
   id: string;
   /** The writer's name. */
   by: string;
   /** What the person wrote. */
   text: string;
-  /** The ids of the shapes that overlapped the feedback's area when the person sent it. */
+  /**
+   * The ids of the shapes that overlapped the feedback's area when the person sent it, or, for an
+   * ask, the ids of the shapes the person selected.
+   */
   shapes: string[];
 };
 
@@ -476,7 +492,7 @@ export function listenFeedback(doc: Y.Doc, options: FeedbackListenOptions): List
       if (record.status !== 'open' || wasOpen === true) continue;
       const at = openedAt(record, wasOpen === false, options.after);
       if (at === undefined) continue;
-      lines.push({ at, kind: 'feedback', id, by: record.by, text: record.text, shapes: record.shapes });
+      lines.push({ at, kind: feedbackKind(record), id, by: record.by, text: record.text, shapes: record.shapes });
     }
     // The feedback that one change opens, as where a peer's copy of the board arrives, comes in the
     // order of its time.
