@@ -24,6 +24,7 @@ import { keepBoard, storeName, type KeptBoard } from './keep';
 import { Followed } from './followed';
 import { ChalklineMenu, type FileCommands } from './menu';
 import { bindRequests, mermaidConverter } from './mermaid';
+import { bindPenSideButton, sideButtonSetting } from './pen';
 import {
   bindPresence,
   keepName,
@@ -196,6 +197,9 @@ async function start(): Promise<ChalklineHandle> {
   const pointerHandlers = new Set<(pointer: Pointer, button: Button) => void>();
   // The menu's Save file and Open file items show once the board's file controls are connected, below.
   const fileCommands = new Followed<FileCommands | null>(null);
+  // What a press of the pen's side button does, which the main menu's Pen side button items choose and this
+  // browser keeps.
+  const sideButton = sideButtonSetting(storage ?? undefined);
   let mounted: ExcalidrawImperativeAPI | null = null;
   const attachControls = controlsAttacher(pageElement('controls'));
   const api = await new Promise<ExcalidrawImperativeAPI>((resolve) => {
@@ -234,6 +238,7 @@ async function start(): Promise<ChalklineHandle> {
                 appState: { gridModeEnabled: shown },
                 captureUpdate: CaptureUpdateAction.EVENTUALLY,
               }),
+            sideButton,
           },
         }),
       }),
@@ -247,6 +252,17 @@ async function start(): Promise<ChalklineHandle> {
     },
     onChange: (handler) => api.onChange(() => handler()),
   });
+  // A press of the pen's side button sets a tool, as the main menu's Pen side button items choose, in place of
+  // opening Excalidraw's context menu.
+  bindPenSideButton(
+    pageElement('app'),
+    {
+      tool: () => api.getAppState().activeTool.type,
+      setTool: (tool) => api.setActiveTool({ type: tool }),
+      onChange: (listener) => api.onChange(() => listener()),
+    },
+    () => sideButton.get(),
+  );
   const shared = doc.getMap<OrderedExcalidrawElement>('elements');
   bindElements(shared, {
     elements: () => api.getSceneElementsIncludingDeleted(),
