@@ -228,6 +228,7 @@ export function undoAgentChange(
  * array doesn't hold and each undo of a change after its first, and, where it drops a change, keeps
  * one ChangesDropped mark on the array, which tells a page that older changes aren't kept. It
  * writes in one transaction, and doesn't write anything where it doesn't drop a record.
+ * It serializes each value of the board and of the array once, across drops (contentOnce).
  */
 export function dropReplacedChanges(elements: Y.Map<unknown>, changes: Y.Array<unknown>): string[] {
   const records = changes.toArray();
@@ -240,7 +241,7 @@ export function dropReplacedChanges(elements: Y.Map<unknown>, changes: Y.Array<u
     for (const element of change.elements) {
       const wanted = target(element);
       if (counted.has(element.id) || wanted === undefined) continue;
-      if (contentOf(elements.get(element.id)) !== contentOf(wanted)) continue;
+      if (contentOnce(elements.get(element.id)) !== contentOnce(wanted)) continue;
       counted.add(element.id);
       shown.add(change.id);
     }
@@ -309,6 +310,25 @@ export function contentOf(element: unknown): string {
     if (typeof compared.originalText === 'string') delete compared.text;
   }
   return JSON.stringify(sorted(compared));
+}
+
+/**
+ * contentOf of each element value that dropReplacedChanges compared, by the value. The board's map
+ * and the array of changes hold each value as the write that set it left it: a tool or an undo
+ * writes a new value for each version of an element, and a peer's write arrives as a new value, so a
+ * value's content doesn't change once it is read. A drop then serializes only the values written
+ * since the drop before it, and not each shape of the board again.
+ */
+const contents = new WeakMap<object, string>();
+
+/** contentOf(element), serialized once for each object and kept for the next drop. */
+function contentOnce(element: unknown): string {
+  if (typeof element !== 'object' || element === null) return contentOf(element);
+  const known = contents.get(element);
+  if (known !== undefined) return known;
+  const content = contentOf(element);
+  contents.set(element, content);
+  return content;
 }
 
 /** How a page names each type of element to people. */

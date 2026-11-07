@@ -1,5 +1,5 @@
 import { connectDoc, MemoryNetwork } from '@chalkline/sync';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import {
   agentChangesOf,
@@ -341,6 +341,33 @@ describe("the agent's changes", () => {
     expect(transactions).toBe(1);
     expect(holds(shared, added)).toBe(false);
     expect(shared.changes.toArray()).toEqual([expect.objectContaining({ kind: 'change', id: moved }), { kind: 'dropped' }]);
+  });
+
+  it('serializes each element once across drops, and still compares each value written since', async () => {
+    const shared = board();
+    const ids: Record<string, string> = {};
+    for (const id of ['a', 'b', 'c']) ids[id] = await agentWrites(shared, [rectangle(id)], undefined, true);
+    const moved = await agentWrites(shared, [rectangle('a', { x: 50, version: 2 })], undefined, true);
+    const stringify = vi.spyOn(JSON, 'stringify');
+    const serialized: number[] = [];
+    let again: string[] = [];
+    let changed: string[] = [];
+    try {
+      // The board and the array hold the values that the drops before this one compared.
+      again = dropReplacedChanges(shared.elements, shared.changes);
+      serialized.push(stringify.mock.calls.length);
+      // A person moves b: the drop serializes b's new value alone, and finds that b's change no longer shows.
+      shared.elements.set('b', rectangle('b', { x: 80, version: 2 }));
+      stringify.mockClear();
+      changed = dropReplacedChanges(shared.elements, shared.changes);
+      serialized.push(stringify.mock.calls.length);
+    } finally {
+      stringify.mockRestore();
+    }
+    expect(again).toEqual([]);
+    expect(changed).toEqual([ids.b]);
+    expect(serialized).toEqual([0, 1]);
+    expect(listedIds(shared)).toEqual([moved, ids.c]);
   });
 
   it('names each kind of element with its label or its words', () => {
