@@ -4,7 +4,8 @@
 // ellipse with update_shape, and asks for a Mermaid diagram with add_mermaid, which answers pending
 // since no page is in the new room. It reads the request back with get_request, and the shapes,
 // their order, their creator and the pending request with get_board, then deletes the arrow with
-// delete_shapes and draws the board as a PNG with render_board. It reads the board's changes from
+// delete_shapes, adds a freehand stroke, and draws the board as a PNG with render_board, and checks
+// that the helper's log doesn't hold the error of a stroke left out. It reads the board's changes from
 // the start with read_changes, then reads the empty transcript as the resource
 // chalkline://transcript, subscribes to it, and checks that read_transcript refuses a cursor past
 // the transcript's end. Last, it posts a message in the board's chat with post_message and reads it
@@ -21,7 +22,14 @@ const key = randomBytes(16).toString('hex');
 const link = `https://camshaft.github.io/chalkline/#room=${room}&key=${key}`;
 
 const client = new Client({ name: 'chalkline-smoke', version: '0.0.0' });
-await client.connect(new StdioClientTransport({ command: process.execPath, args: [helper, link] }));
+const transport = new StdioClientTransport({ command: process.execPath, args: [helper, link], stderr: 'pipe' });
+// The helper's log, which the smoke test passes on to its own standard error, and reads.
+let log = '';
+transport.stderr?.on('data', (chunk) => {
+  process.stderr.write(chunk);
+  log += chunk;
+});
+await client.connect(transport);
 
 /** Calls a tool, checks that it didn't refuse the call, and returns its structured content. */
 async function call(name, args) {
@@ -87,8 +95,15 @@ const after = await call('get_board', {});
 assert.equal(byId(after.shapes, arrow), undefined);
 assert.equal(after.shapes.some((candidate) => candidate.label === 'then'), false);
 
-// The rectangle and the moved ellipse span 0 to 560 across and 0 to 280 down, and the picture of
-// the whole board leaves a margin of 10 around them.
+// A freehand stroke between the two shapes, which Excalidraw draws only with a Path2D.
+const {
+  ids: [stroke],
+} = await call('add_shapes', {
+  shapes: [{ type: 'freedraw', x: 300, y: 100, points: [[0, 0], [20, 10], [40, 0], [60, 10]] }],
+});
+
+// The rectangle and the moved ellipse span 0 to 560 across and 0 to 280 down, the stroke lies
+// between them, and the picture of the whole board leaves a margin of 10 around them.
 const drawn = await client.callTool({ name: 'render_board', arguments: {} });
 assert.notEqual(drawn.isError, true, `render_board: ${JSON.stringify(drawn.content)}`);
 const image = drawn.content.find((part) => part.type === 'image');
@@ -99,8 +114,11 @@ assert.deepEqual(drawn.structuredContent, {
   width: 1024,
   height: 530,
 });
+// Excalidraw logs each shape it leaves out of the picture with the error it met, which was a
+// ReferenceError for each freehand stroke while jsdom didn't define Path2D.
+assert.doesNotMatch(log, /ReferenceError/);
 
-// From the start, read_changes lists the two shapes the board holds as added, in get_board's order,
+// From the start, read_changes lists the three shapes the board holds as added, in get_board's order,
 // each with the agent as its creator, and leaves out the arrow, which was added and deleted since.
 const changes = await call('read_changes', {});
 assert.deepEqual(
@@ -108,6 +126,7 @@ assert.deepEqual(
   [
     ['added', next, 'chalkline-smoke'],
     ['added', id, 'chalkline-smoke'],
+    ['added', stroke, 'chalkline-smoke'],
   ],
 );
 
@@ -124,5 +143,5 @@ assert.deepEqual(await call('read_transcript', { cursor: 0 }), { entries: [poste
 
 await client.close();
 console.log(
-  `chalkline-mcp added ${id} labelled "Smoke test" and ${next}, connected them with ${arrow}, moved ${next}, deleted ${arrow}, drew the board as a PNG of ${drawn.structuredContent.width} by ${drawn.structuredContent.height} pixels, wrote the Mermaid request ${asked.id}, read each back, read the board's ${changes.changes.length} changes, read the empty transcript, and posted the message ${posted.id} in the chat and read it back`,
+  `chalkline-mcp added ${id} labelled "Smoke test" and ${next}, connected them with ${arrow}, moved ${next}, deleted ${arrow}, added the freehand stroke ${stroke}, drew the board as a PNG of ${drawn.structuredContent.width} by ${drawn.structuredContent.height} pixels, wrote the Mermaid request ${asked.id}, read each back, read the board's ${changes.changes.length} changes, read the empty transcript, and posted the message ${posted.id} in the chat and read it back`,
 );

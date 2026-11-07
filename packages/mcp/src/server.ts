@@ -42,6 +42,9 @@ const regionSchema = z.object({
 /** How many pixels wide and high render_board's picture is at most, where the call leaves its size out. */
 const PICTURE_SIZE = 1024;
 
+/** The longest timeout render_board takes, in seconds: Node's setTimeout waits at most 2^31 - 1 milliseconds. */
+const LONGEST_TIMEOUT = 2147483;
+
 /**
  * chalkline-mcp's MCP server, whose tools read and draw on the board that `doc` holds. `awareness`
  * holds the room's participants, which tell the helper whether a page is in the room to convert a
@@ -82,20 +85,25 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
         "It answers the picture, then region, width and height: the part of the board it drew and the picture's size in pixels, where the pixel (px, py) shows the board's point (region.x + px * region.width / width, region.y + py * region.height / height).",
         "It draws every text in DejaVu Sans, not in Excalidraw's hand-drawn font, and each character that DejaVu Sans lacks, such as most emoji and Chinese, Japanese or Korean characters, as a box; it leaves out a frame's name.",
         "On a board that doesn't hold a shape, it refuses a call that leaves region out.",
+        `With timeout, in seconds, at most ${LONGEST_TIMEOUT}, it answers an error once the picture takes longer than that to draw, and it stops too where the client cancels the call.`,
+        "resvg, which turns the board's SVG into the PNG, runs in a process of its own: where it fails or stops before it draws the picture, the call answers an error that says how, and the helper goes on.",
       ].join(' '),
       inputSchema: {
         region: regionSchema.optional(),
         max_width: z.number().int().positive().optional(),
         max_height: z.number().int().positive().optional(),
+        timeout: z.number().positive().max(LONGEST_TIMEOUT).optional(),
       },
       outputSchema: { region: regionSchema, width: z.number().int(), height: z.number().int() },
     },
-    async ({ region, max_width, max_height }) => {
+    async ({ region, max_width, max_height, timeout }, extra) => {
       try {
         const drawn = await renderBoard(doc, {
           region,
           maxWidth: max_width ?? PICTURE_SIZE,
           maxHeight: max_height ?? PICTURE_SIZE,
+          timeout,
+          signal: extra.signal,
         });
         const content = { region: drawn.region, width: drawn.width, height: drawn.height };
         const result: CallToolResult = {
