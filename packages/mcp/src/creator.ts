@@ -154,11 +154,13 @@ export function withWordsChanged<T extends object>(element: T, current: unknown)
 
 /**
  * The drawing mark: a digest of the drawing of a freehand stroke, its place and its points, as
- * `drawingOf` reads it, and when a page last changed them, in milliseconds since the epoch. Each
- * page's binding records it on the board's copy of each stroke it writes, so that a reader that
- * receives only the newest copy of a stroke, as a peer's copy of the board holds it, tells a change
- * of its place or its points from a save that leaves them as they are, such as where Excalidraw
- * sets a new version or index on the stroke.
+ * `drawingOf` reads it, and when a page last changed them, in milliseconds since the epoch. Where a
+ * page that didn't record the mark drew the stroke, a page that saves it again with the same place
+ * and points records the time of the board's copy it saves over, which comes at or after the change
+ * of the place and points. Each page's binding records it on the board's copy of each stroke it
+ * writes, so that a reader that receives only the newest copy of a stroke, as a peer's copy of the
+ * board holds it, tells a change of its place or its points from a save that leaves them as they
+ * are, such as where Excalidraw sets a new version or index on the stroke.
  */
 export interface DrawingChanged {
   drawing: string;
@@ -197,10 +199,14 @@ export function drawingChangedOf(element: unknown): number | undefined {
  * of the element before the change, or undefined where the board doesn't hold one, whose drawing
  * mark records when its place and points last changed: the time the mark of `current` records,
  * where the place and points are those of `current`, and else the element's `updated`, the time
- * of the change that drew them. It answers `element` itself where the element isn't a stroke or
- * doesn't hold an `updated` time, and where its place and points are those of `current` and
- * `current` doesn't record when they changed, since the page can't tell. The other members of the
- * element, of its `customData` and of Chalkline's member there stay as they are, and `element`
+ * of the change that drew them. Where the place and points are those of `current` and `current`
+ * doesn't record when they changed, as where a page that didn't record the mark drew them, the
+ * mark records the `updated` of `current`: they changed at or before that time, so a reader that
+ * receives only this copy, as a peer's copy of the board holds it, tells it from a change of the
+ * place or points. It answers `element` itself where the element isn't a stroke or doesn't hold an
+ * `updated` time, and where its place and points are those of `current` and `current` holds
+ * neither a mark of them nor an `updated` time, since the page can't tell. The other members of
+ * the element, of its `customData` and of Chalkline's member there stay as they are, and `element`
  * itself doesn't change.
  */
 export function withDrawingChanged<T extends object>(element: T, current: unknown): T {
@@ -209,8 +215,10 @@ export function withDrawingChanged<T extends object>(element: T, current: unknow
   if (drawing === undefined || !finite(updated)) return element;
   const changed = (at: number): T => withFields(element, { drawingChanged: { drawing, at } satisfies DrawingChanged });
   if (drawingOf(current) !== drawing) return changed(updated);
-  const at = drawingChangedOf(current);
-  return at === undefined ? element : changed(at);
+  // Where the board's copy doesn't record when its place and points changed, they changed at or
+  // before its last change.
+  const at = drawingChangedOf(current) ?? recordOf(current)?.updated;
+  return finite(at) ? changed(at) : element;
 }
 
 /** A copy of `element` whose Chalkline member of `customData` holds `fields` beside its other members. */

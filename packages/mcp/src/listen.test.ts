@@ -736,6 +736,56 @@ describe('listenSketches', () => {
     ]);
   });
 
+  it('leaves out a stroke without a drawing mark that a page loads and saves again after the start, by the copy it saves over, and prints a later change of its points', () => {
+    const network = new MemoryNetwork();
+    const helper = new Y.Doc();
+    const lines: Sketched[] = [];
+    // A listener that starts a minute after the time `--after` sets, before any page joins the room.
+    listenSketches(helper, { after: START, start: START + 60_000, pauseMs: BOARD_PAUSE_MS, onLine: (line) => lines.push(line) });
+    connectDoc(helper, network.join('listener'));
+
+    // A page loads a board that holds a person's stroke from an hour before `--after`, which a page
+    // drew before the pages recorded the drawing mark, and saves the stroke again 90 seconds after
+    // `--after` with a new index and the same place and points, before it joins the room. Its
+    // binding writes the saved copy over the board's copy, as `bindElements` writes it.
+    const page = new Y.Doc();
+    const board = page.getMap<unknown>(ELEMENTS);
+    const old = stroke('old', 10, 20, [[0, 0], [30, 40]], -3600);
+    board.set('old', old);
+    const saved = withDrawingChanged(edited(old, { index: 'a5' }, 90), board.get('old'));
+    board.set('old', saved);
+    connectDoc(page, network.join('page'));
+    network.flush();
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([]);
+
+    // A person changes the stroke's points.
+    board.set('old', withDrawingChanged(edited(saved, { points: [[0, 0], [30, 40], [50, 10]] }, 120), saved));
+    network.flush();
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(120), kind: 'sketch', ids: ['old'], box: { x: 10, y: 20, width: 50, height: 40 } }]);
+  });
+
+  it('prints a stroke without a drawing mark that a person drew after `--after` and that a page saves again after the start, at the time of the copy it saves over', () => {
+    const network = new MemoryNetwork();
+    const helper = new Y.Doc();
+    const lines: Sketched[] = [];
+    listenSketches(helper, { after: START, start: START + 60_000, pauseMs: BOARD_PAUSE_MS, onLine: (line) => lines.push(line) });
+    connectDoc(helper, network.join('listener'));
+
+    // A person drew the stroke 30 seconds after `--after` on a page that doesn't record the drawing
+    // mark, and a page that does saves it again 90 seconds after `--after`, before it joins.
+    const page = new Y.Doc();
+    const board = page.getMap<unknown>(ELEMENTS);
+    const drawn = stroke('drawn', 100, 0, [[0, 0], [9, 9]], 30);
+    board.set('drawn', drawn);
+    board.set('drawn', withDrawingChanged(edited(drawn, { index: 'a5' }, 90), board.get('drawn')));
+    connectDoc(page, network.join('page'));
+    network.flush();
+    vi.advanceTimersByTime(BOARD_PAUSE_MS);
+    expect(lines).toEqual([{ at: at(30), kind: 'sketch', ids: ['drawn'], box: { x: 100, y: 0, width: 9, height: 9 } }]);
+  });
+
   it('prints the strokes that wait for their pause at once on flush, and drops them on stop', () => {
     const { elements, lines, listener } = watching<Sketched>(listenSketches);
     elements.set('one', stroke('one', 0, 0, [[0, 0], [9, 9]], 1));

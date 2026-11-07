@@ -366,14 +366,19 @@ describe("the map's copy of a freehand stroke", () => {
     expect(drawingChangedOf(shared.get('line'))).toBe(4000);
   });
 
-  it("leaves the mark out where the map's copy doesn't record when the same place and points changed", () => {
+  it("records the time of the map's copy where that copy holds the same place and points without recording when they changed", () => {
     const { doc, shared, canvas } = bound();
     // A page that doesn't write the mark drew the stroke.
     fromPeer(doc, scrawl('line', 1, [[0, 0], [10, 10]], 1000));
 
+    // The page saves the stroke again with a new version, and the same place and points.
     canvas.edit([{ ...canvas.current[0], version: 2, versionNonce: 5, updated: 2000 }]);
 
     expect(shared.get('line')?.version).toBe(2);
-    expect(shared.get('line')?.customData).toBeUndefined();
+    expect(drawingChangedOf(shared.get('line'))).toBe(1000);
+
+    // A change of the points records its own time.
+    canvas.edit([{ ...canvas.current[0], version: 3, versionNonce: 6, updated: 3000, points: [[0, 0], [10, 10], [20, 5]] }]);
+    expect(drawingChangedOf(shared.get('line'))).toBe(3000);
   });
 });
