@@ -207,6 +207,26 @@ describe('connectAwareness', () => {
     expect(reordered).toBeGreaterThan(0);
   });
 
+  it('shows a peer that joins again on a new connection, whose messages are numbered again from the first', () => {
+    const network = new MemoryNetwork();
+    const a = participant(network, 'a');
+    const b = participant(network, 'b');
+    network.flush();
+    for (let x = 1; x <= 3; x += 1) {
+      a.awareness.setLocalStateField('cursor', { x, y: 0 });
+      network.flush();
+    }
+    a.stop();
+    network.leave('a');
+    network.flush();
+    expect(others(b.awareness)).toEqual([]);
+
+    connectAwareness(a.awareness, network.join('a'));
+    network.flush();
+
+    expect(b.awareness.getStates().get(a.awareness.clientID)).toEqual({ name: 'a', cursor: { x: 3, y: 0 } });
+  });
+
   it("keeps a participant's state that a peer removes while the participant's own peer is still connected", () => {
     const network = new MemoryNetwork();
     const a = participant(network, 'a');
