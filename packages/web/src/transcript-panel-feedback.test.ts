@@ -296,3 +296,33 @@ describe('answers in the transcript panel', () => {
     expect(feedbackItem(panel, 'n1').dataset.status).toBe('open');
   });
 });
+
+describe('an ask in the chat', () => {
+  it('shows the tag Ask for an ask, and Feedback for a feedback with or without a kind', () => {
+    const doc = new Y.Doc();
+    const map = feedbackOf(doc);
+    writeFeedback(map, note('n1', 1));
+    writeFeedback(map, { ...note('n2', 2), kind: 'feedback' });
+    writeFeedback(map, { ...note('n3', 3, ['shape-1', 'shape-2']), kind: 'ask' });
+    const { panel } = page(doc);
+    const tags = ['n1', 'n2', 'n3'].map((id) => {
+      const item = feedbackItem(panel, id);
+      return { kind: item.dataset.kind, tag: item.querySelector('.transcript-feedback-tag')?.textContent };
+    });
+    expect(tags).toEqual([
+      { kind: 'feedback', tag: 'Feedback' },
+      { kind: 'feedback', tag: 'Feedback' },
+      { kind: 'ask', tag: 'Ask' },
+    ]);
+  });
+
+  it('keeps the kind of an ask that Reopen opens again', () => {
+    const doc = new Y.Doc();
+    const asked = { ...note('n1', 1, ['shape-1'], true), kind: 'ask' as const };
+    writeFeedback(feedbackOf(doc), asked);
+    const { panel, map } = page(doc);
+    reopenButton(panel, 'n1')?.click();
+    expect(getFeedback(map, 'n1')).toEqual({ ...asked, status: 'open' });
+    expect(feedbackItem(panel, 'n1').dataset.kind).toBe('ask');
+  });
+});
