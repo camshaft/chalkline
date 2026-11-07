@@ -37,7 +37,7 @@ npm run lan
 
 ## Chat
 
-The Chat button in the page's controls opens the board's chat, which everyone on the board and the agent read. Type a message in its field and press Enter or Send: the chat of each participant shows it with your name and the time. Shift+Enter starts a new line, and the field grows with the message up to six lines. Live speech adds to the same chat, and the agent answers there with `post_message`. Its Close button, or Escape, closes it.
+The Chat button in the page's controls opens the board's chat, which everyone on the board and the agent read. Type a message in its field and press Enter or Send: the chat of each participant shows it with your name and the time. Shift+Enter starts a new line, and the field grows with the message up to six lines. Live speech adds to the same chat, and the agent answers there with `post_message`. Its Close button, or Escape, closes it. The chat opens on its newest message and keeps each new one in view. Where you scroll up to read earlier messages, it stays where you are and shows a New messages button, which takes you back to the end, as sending a message does.
 
 On a phone, the chat opens as a sheet across the screen's width, over the canvas. While the on-screen keyboard shows, the sheet sits above it, so its Message field stays in sight.
 

@@ -11,7 +11,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { placeNotice } from './speech';
-import { bindTranscriptPanel, followKeyboard, MESSAGE_LINES } from './transcript-panel';
+import { bindTranscriptPanel, BOTTOM_SLACK, followKeyboard, MESSAGE_LINES } from './transcript-panel';
 
 const AT = '2026-11-07T01:02:03.000Z';
 
@@ -95,6 +95,41 @@ function laidOut(field: HTMLTextAreaElement) {
     field.value = text;
     field.dispatchEvent(new Event('input', { bubbles: true }));
   };
+}
+
+/** A transcript of `count` entries of Ada's, "line 1" to "line <count>". */
+function transcriptOfLines(count: number) {
+  const transcript = transcriptOf(new Y.Doc());
+  for (let line = 1; line <= count; line += 1) appendEntry(transcript, entry(`line-${line}`, 'Ada', `line ${line}`));
+  return transcript;
+}
+
+/**
+ * jsdom doesn't lay the chat's list out, so the list here shows 100px of its entries, each 30px high,
+ * while the panel shows, and has no height while the panel is hidden, as a browser lays out a list the
+ * page doesn't show. Its scrollTop stays between 0 and `end()`, the height of the entries past the part
+ * it shows, as a browser keeps it. `scrollTo` scrolls the list as the person does, with its scroll event.
+ */
+function laidOutList(panel: HTMLElement) {
+  const list = part(panel, '.transcript-entries');
+  let top = 0;
+  const height = () => (panel.hidden ? 0 : 30 * list.childElementCount);
+  const shows = () => (panel.hidden ? 0 : 100);
+  const end = () => Math.max(0, height() - shows());
+  Object.defineProperty(list, 'scrollHeight', { configurable: true, get: height });
+  Object.defineProperty(list, 'clientHeight', { configurable: true, get: shows });
+  Object.defineProperty(list, 'scrollTop', {
+    configurable: true,
+    get: () => Math.min(top, end()),
+    set: (value: number) => {
+      top = Math.min(Math.max(0, value), end());
+    },
+  });
+  const scrollTo = (value: number) => {
+    list.scrollTop = value;
+    list.dispatchEvent(new Event('scroll'));
+  };
+  return { list, end, scrollTo };
 }
 
 describe('the chat panel', () => {
@@ -307,6 +342,106 @@ describe('the chat panel', () => {
 
     opener.click();
     expect(panel.hidden).toBe(true);
+  });
+
+  it('opens scrolled to its newest message, from its button and as speech opens it', () => {
+    const { panel, opener, show } = page(transcriptOfLines(10));
+    const { list, end, scrollTo } = laidOutList(panel);
+    expect(panel.hidden).toBe(true);
+
+    opener.click();
+    expect(end()).toBe(200);
+    expect(list.scrollTop).toBe(200);
+
+    // The person scrolls up to the first message and closes the chat; it opens on its newest message again.
+    scrollTo(0);
+    opener.click();
+    opener.click();
+    expect(list.scrollTop).toBe(200);
+
+    scrollTo(0);
+    button(panel, 'Close').click();
+    show({ kind: 'asking', place: 'service', notice: placeNotice('service', 'en-US') });
+    expect(panel.hidden).toBe(false);
+    expect(list.scrollTop).toBe(200);
+  });
+
+  it('follows each new message, spoken, typed or posted by the agent, where the person reads the end of the list', () => {
+    const { panel, opener, transcript } = page(transcriptOfLines(4));
+    const { list, end, scrollTo } = laidOutList(panel);
+    opener.click();
+    expect(list.scrollTop).toBe(20);
+
+    appendEntry(transcript, entry('spoken', 'Grace', 'and an arrow'));
+    expect(list.scrollTop).toBe(50);
+    appendEntry(transcript, entry('typed', 'Grace', 'and a circle', 'typed'));
+    expect(list.scrollTop).toBe(80);
+
+    // A few pixels above the end still reads as the end.
+    scrollTo(end() - (BOTTOM_SLACK - 1));
+    appendEntry(transcript, entry('posted', 'claude-code', 'I drew them', 'agent'));
+    expect(end()).toBe(110);
+    expect(list.scrollTop).toBe(110);
+    expect(button(panel, 'New messages').hidden).toBe(true);
+  });
+
+  it('leaves the list where it is where the person scrolled up, and shows New messages, which scrolls to the end', () => {
+    const { panel, opener, transcript, show } = page(transcriptOfLines(10));
+    const { list, end, scrollTo } = laidOutList(panel);
+    const newer = button(panel, 'New messages');
+    opener.click();
+    expect(newer.hidden).toBe(true);
+
+    // Just past the few pixels of the end, the person reads earlier messages.
+    const above = end() - (BOTTOM_SLACK + 1);
+    scrollTo(above);
+    appendEntry(transcript, entry('posted', 'claude-code', 'I drew a box', 'agent'));
+    expect(list.scrollTop).toBe(above);
+    expect(newer.hidden).toBe(false);
+
+    scrollTo(60);
+    appendEntry(transcript, entry('spoken', 'Grace', 'and an arrow'));
+    // Speech shows a state for each word it recognizes, which keeps the panel open and doesn't move the list.
+    show({ kind: 'listening', place: 'device', heard: 'and a' });
+    expect(list.scrollTop).toBe(60);
+    expect(newer.hidden).toBe(false);
+
+    newer.click();
+    expect(end()).toBe(260);
+    expect(list.scrollTop).toBe(260);
+    expect(newer.hidden).toBe(true);
+    appendEntry(transcript, entry('typed', 'Grace', 'and a circle', 'typed'));
+    expect(list.scrollTop).toBe(290);
+
+    // Scrolling back to the end by hand hides New messages too.
+    scrollTo(0);
+    appendEntry(transcript, entry('more', 'Grace', 'and a line'));
+    expect(newer.hidden).toBe(false);
+    scrollTo(end());
+    expect(newer.hidden).toBe(true);
+    appendEntry(transcript, entry('last', 'Grace', 'and a dot'));
+    expect(list.scrollTop).toBe(end());
+  });
+
+  it('scrolls to the end as the person sends a message, though they scrolled up', () => {
+    const { panel, opener, transcript, field } = page(transcriptOfLines(10));
+    const { list, scrollTo } = laidOutList(panel);
+    const newer = button(panel, 'New messages');
+    opener.click();
+    scrollTo(0);
+    appendEntry(transcript, entry('spoken', 'Grace', 'and an arrow'));
+    expect(newer.hidden).toBe(false);
+
+    field.value = 'draw a box';
+    button(panel, 'Send').click();
+    expect(list.scrollTop).toBe(260);
+    expect(newer.hidden).toBe(true);
+
+    scrollTo(0);
+    field.value = 'and a circle';
+    enter(field);
+    expect(list.scrollTop).toBe(290);
+    expect(newer.hidden).toBe(true);
   });
 
   it('closes with one press of its Close button, or Escape in the panel, and puts the focus back on its opener', () => {
