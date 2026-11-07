@@ -3,14 +3,15 @@ import { Awareness, connectAwareness, connectDoc, relaysFromAddress, trysteroTra
 import { joinBoardRoom } from '@chalkline/sync/join';
 import { CaptureUpdateAction, Excalidraw, loadFromBlob, serializeAsJSON } from '@excalidraw/excalidraw';
 import type { OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
-import type { Collaborator, ExcalidrawImperativeAPI, SocketId } from '@excalidraw/excalidraw/types';
+import type { BinaryFileData, Collaborator, ExcalidrawImperativeAPI, SocketId } from '@excalidraw/excalidraw/types';
 import { selfId } from '@trystero-p2p/nostr';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as Y from 'yjs';
 import { bindElements } from './binding';
-import { addOpened, boardFileName, connectFileControls } from './board-file';
+import { addOpened, boardFileName, connectFileControls, OPENED } from './board-file';
 import { loadSettings, roomOptions, type ConnectionSettings, type SettingsStorage } from './connection';
+import { bindFiles, writeFiles } from './files';
 import { keepBoard, storeName, type KeptBoard } from './keep';
 import { bindPresence, keepName, participantName, setName, type Button, type NameStorage, type Pointer } from './presence';
 import { connectionReport, type ConnectionReport } from './report';
@@ -188,6 +189,14 @@ async function start(): Promise<ChalklineHandle> {
     replace: (elements) => api.updateScene({ elements, captureUpdate: CaptureUpdateAction.NEVER }),
     onChange: (handler) => api.onChange(() => handler()),
   });
+  // Each image's picture goes in the board's map of files, which reaches every peer and the kept copy
+  // as the shapes do, so that an image opened, dropped or pasted on one page shows on every page.
+  const files = doc.getMap<BinaryFileData>('files');
+  bindFiles(files, {
+    files: () => api.getFiles(),
+    add: (added) => api.addFiles(added),
+    onChange: (handler) => api.onChange(() => handler()),
+  });
   bindPresence(awareness, {
     // Excalidraw draws each collaborator's cursor, name and selection, and lists them in its user list.
     show: (collaborators) =>
@@ -219,7 +228,7 @@ async function start(): Promise<ChalklineHandle> {
         // Excalidraw reads its own files, and files of its older versions, and checks that each holds a board.
         const scene = await loadFromBlob(file, null, null);
         const added = addOpened(shared, scene.elements);
-        api.addFiles(Object.values(scene.files));
+        writeFiles(files, Object.values(scene.files), OPENED);
         status.textContent = `Opened ${file.name}: ${added.length} ${added.length === 1 ? 'shape' : 'shapes'} added to the board.`;
       },
       onError: (file, error) => {
