@@ -1,5 +1,14 @@
 // @vitest-environment jsdom
-import { appendEntry, feedbackOf, transcriptOf, writeFeedback, type Feedback, type TranscriptEntry } from '@chalkline/sync';
+import {
+  answerFeedback,
+  appendEntry,
+  feedbackOf,
+  getFeedback,
+  transcriptOf,
+  writeFeedback,
+  type Feedback,
+  type TranscriptEntry,
+} from '@chalkline/sync';
 import { describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { bindTranscriptPanel, chatItems, shapesText, type ChatItem } from './transcript-panel';
@@ -60,6 +69,14 @@ function showButton(panel: Element, id: string): HTMLButtonElement {
   if (found === null) throw new Error(`the feedback ${id} lacks its Show button`);
   return found;
 }
+
+/** The Reopen button of the feedback `id` in the panel's list, or null where the list shows it without one. */
+const reopenButton = (panel: Element, id: string): HTMLButtonElement | null =>
+  feedbackItem(panel, id).querySelector<HTMLButtonElement>('button.transcript-feedback-reopen');
+
+/** The agent's answer under the feedback `id` in the panel's list, or null where the list shows it without one. */
+const answerOf = (panel: Element, id: string): HTMLElement | null =>
+  feedbackItem(panel, id).querySelector<HTMLElement>('.transcript-feedback-answer');
 
 const emptyText = (panel: Element): HTMLElement => {
   const found = panel.querySelector<HTMLElement>('.transcript-empty');
@@ -177,5 +194,101 @@ describe('feedback in the transcript panel', () => {
     expect(listed(panel)).toEqual(['feedback n1']);
     expect(opener.textContent).toBe('Chat (1)');
     expect(panel.hidden).toBe(true);
+  });
+});
+
+describe('answers in the transcript panel', () => {
+  it("shows the agent's answer under an answered feedback, with its writer, its time and its text, and Reopen", () => {
+    const doc = new Y.Doc();
+    writeFeedback(feedbackOf(doc), note('n1', 1));
+    writeFeedback(feedbackOf(doc), { ...note('n2', 2, ['shape-1'], true), answer: { by: 'agent', at: at(9), text: 'Moved the box left' } });
+    const { panel } = page(doc);
+    // A feedback that wasn't answered shows neither an answer nor Reopen.
+    expect(answerOf(panel, 'n1')).toBeNull();
+    expect(reopenButton(panel, 'n1')).toBeNull();
+    const answer = answerOf(panel, 'n2');
+    expect({
+      writer: answer?.querySelector('.transcript-speaker')?.textContent,
+      at: answer?.querySelector('time')?.dateTime,
+      tag: answer?.querySelector('.transcript-feedback-answer-tag')?.textContent,
+      text: answer?.querySelector('.transcript-text')?.textContent,
+    }).toEqual({ writer: 'agent', at: at(9), tag: 'Answer', text: 'Moved the box left' });
+    // The answer comes under the feedback's own parts and its buttons, with Reopen after Show.
+    const item = feedbackItem(panel, 'n2');
+    expect(item.lastElementChild).toBe(answer);
+    expect(item.querySelector('.transcript-speaker')?.textContent).toBe('Grace');
+    expect(item.querySelector('.transcript-text')?.textContent).toBe('Feedback n2');
+    expect(reopenButton(panel, 'n2')?.textContent).toBe('Reopen');
+    expect(reopenButton(panel, 'n2')?.previousElementSibling).toBe(showButton(panel, 'n2'));
+  });
+
+  it("shows a peer's answer and Reopen as the answer arrives", () => {
+    const doc = new Y.Doc();
+    writeFeedback(feedbackOf(doc), note('n1', 1));
+    const { panel } = page(doc);
+    expect(answerOf(panel, 'n1')).toBeNull();
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    answerFeedback(feedbackOf(peer), 'n1', { by: 'agent', at: at(5), text: 'Added a label' });
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer));
+    expect(feedbackItem(panel, 'n1').dataset.status).toBe('answered');
+    expect(answerOf(panel, 'n1')?.querySelector('.transcript-text')?.textContent).toBe('Added a label');
+    expect(answerOf(panel, 'n1')?.querySelector('.transcript-feedback-answer-tag')?.textContent).toBe('Answer');
+    expect(reopenButton(panel, 'n1')).not.toBeNull();
+  });
+
+  it('sets an answered feedback open again on Reopen, keeps its answer, and then shows it as its earlier answer', () => {
+    const doc = new Y.Doc();
+    const answered = note('n1', 1, ['shape-1'], true);
+    writeFeedback(feedbackOf(doc), answered);
+    const { opener, panel, map } = page(doc);
+    const reopen = reopenButton(panel, 'n1');
+    expect(reopen).not.toBeNull();
+    reopen?.click();
+    expect(getFeedback(map, 'n1')).toEqual({ ...answered, status: 'open' });
+    expect(feedbackItem(panel, 'n1').dataset.status).toBe('open');
+    expect(reopenButton(panel, 'n1')).toBeNull();
+    expect(answerOf(panel, 'n1')?.querySelector('.transcript-feedback-answer-tag')?.textContent).toBe('Earlier answer');
+    expect(answerOf(panel, 'n1')?.querySelector('.transcript-text')?.textContent).toBe('Moved it');
+    // A reopen changes a feedback the list shows, so it doesn't open the panel or change the count.
+    expect(panel.hidden).toBe(true);
+    expect(opener.textContent).toBe('Chat (1)');
+  });
+
+  it('reopens the feedback as the board holds it at the press, not as the list showed it before', () => {
+    const doc = new Y.Doc();
+    const answered = note('n1', 1, [], true);
+    writeFeedback(feedbackOf(doc), answered);
+    const { panel, map } = page(doc);
+    // The Reopen button as the list showed it before a peer reopened the feedback and the agent answered it again.
+    const earlier = reopenButton(panel, 'n1');
+    expect(earlier).not.toBeNull();
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    writeFeedback(feedbackOf(peer), { ...answered, status: 'open' });
+    const again = { by: 'agent', at: at(8), text: 'Moved it again' };
+    answerFeedback(feedbackOf(peer), 'n1', again);
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer));
+    earlier?.click();
+    expect(getFeedback(map, 'n1')).toEqual({ ...answered, status: 'open', answer: again });
+  });
+
+  it("doesn't write anything on a Reopen of a feedback that the board holds open already", () => {
+    const doc = new Y.Doc();
+    const answered = note('n1', 1, [], true);
+    writeFeedback(feedbackOf(doc), answered);
+    const { panel } = page(doc);
+    // The Reopen button as the list showed it before a peer's reopen reached this page.
+    const earlier = reopenButton(panel, 'n1');
+    expect(earlier).not.toBeNull();
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    writeFeedback(feedbackOf(peer), { ...answered, status: 'open' });
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer));
+    const writes = vi.fn();
+    doc.on('update', writes);
+    earlier?.click();
+    expect(writes).not.toHaveBeenCalled();
+    expect(feedbackItem(panel, 'n1').dataset.status).toBe('open');
   });
 });
