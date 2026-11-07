@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parseRoomFragment, roomFragment, type RoomSecrets } from './room';
+import { linkTurnServers, parseRoomFragment, roomFragment, type RoomSecrets, type TurnServer } from './room';
 import {
+  boardFromLink,
   boardInAddress,
   chooseRoom,
   newBoardFragment,
@@ -15,6 +16,7 @@ import {
 const PAGE = 'https://camshaft.github.io/chalkline/';
 const BOARD: RoomSecrets = { room: 'abc', key: 's3cret' };
 const BOARD_FRAGMENT = '#room=abc&key=s3cret';
+const TURN: TurnServer = { urls: ['turn:turn.example.com:3478'], username: 'alice', credential: 'secret' };
 
 /** An address whose fragment a test changes, as a person does in the address bar. */
 class TestAddress implements PageAddress {
@@ -79,6 +81,12 @@ describe('the link a person pastes', () => {
     expect(secretsFromLink(`http://192.168.1.20:8080/?relay=%2Frelay${BOARD_FRAGMENT}`, PAGE)).toEqual(BOARD);
   });
 
+  it('keeps the whole fragment of the link, with the TURN servers it carries', () => {
+    const fragment = roomFragment(BOARD, [TURN]);
+    expect(boardFromLink(`  ${PAGE}${fragment}\n`, PAGE)).toEqual({ secrets: BOARD, fragment });
+    expect(boardFromLink(`${PAGE}#room=abc`, PAGE)).toBeNull();
+  });
+
   it("returns null for text that isn't a board's link", () => {
     for (const text of ['', '   ', 'hello there', `${PAGE}#room=abc`, `${PAGE}#key=s3cret`, `${PAGE}?room=abc&key=s3cret`, 'http://[::1']) {
       expect(secretsFromLink(text, PAGE), text).toBeNull();
@@ -100,7 +108,7 @@ describe("the board an address names", () => {
 
 describe('the join screen', () => {
   function open(address = PAGE) {
-    const onJoin = vi.fn<(secrets: RoomSecrets) => void>();
+    const onJoin = vi.fn<(secrets: RoomSecrets, fragment: string) => void>();
     const screen = joinScreen(document, { address, onJoin });
     document.body.replaceChildren(screen);
     return { screen, onJoin };
@@ -127,6 +135,7 @@ describe('the join screen', () => {
     expect(isNewBoard(first)).toBe(true);
     expect(isNewBoard(second)).toBe(true);
     expect(second).not.toEqual(first);
+    for (const [secrets, fragment] of onJoin.mock.calls) expect(fragment).toBe(roomFragment(secrets));
     expect(errorOf(screen).hidden).toBe(true);
   });
 
@@ -135,8 +144,16 @@ describe('the join screen', () => {
     linkField(screen).value = `${PAGE}${BOARD_FRAGMENT}`;
     button(screen, 'Join').click();
     expect(onJoin).toHaveBeenCalledOnce();
-    expect(onJoin).toHaveBeenCalledWith(BOARD);
+    expect(onJoin).toHaveBeenCalledWith(BOARD, BOARD_FRAGMENT);
     expect(errorOf(screen).hidden).toBe(true);
+  });
+
+  it('passes on the whole fragment of a pasted link, with the TURN servers it carries', () => {
+    const { screen, onJoin } = open();
+    const fragment = roomFragment(BOARD, [TURN]);
+    linkField(screen).value = `${PAGE}${fragment}`;
+    button(screen, 'Join').click();
+    expect(onJoin).toHaveBeenCalledWith(BOARD, fragment);
   });
 
   it("says so where the pasted text isn't a board's link, and opens the board once it is", () => {
@@ -151,7 +168,7 @@ describe('the join screen', () => {
     linkField(screen).value = BOARD_FRAGMENT;
     button(screen, 'Join').click();
     expect(onJoin).toHaveBeenCalledOnce();
-    expect(onJoin).toHaveBeenCalledWith(BOARD);
+    expect(onJoin).toHaveBeenCalledWith(BOARD, BOARD_FRAGMENT);
     expect(errorOf(screen).hidden).toBe(true);
   });
 });
@@ -189,6 +206,16 @@ describe('choosing a board on the join screen', () => {
     expect(address.replaced).toEqual([roomFragment(BOARD)]);
     expect(holder.childElementCount).toBe(0);
     expect(address.handlers.size).toBe(0);
+  });
+
+  it('keeps the TURN servers of a pasted link in the address, for the page to read as it joins', async () => {
+    const { holder, address, choice } = choose();
+    const fragment = roomFragment(BOARD, [TURN]);
+    linkField(holder).value = `${PAGE}${fragment}`;
+    button(holder, 'Join').click();
+    expect(await choice).toEqual(BOARD);
+    expect(address.replaced).toEqual([fragment]);
+    expect(linkTurnServers(new URL(address.href()).hash)).toEqual({ turnServers: [TURN] });
   });
 
   it('opens the board whose link a person puts in the address bar', async () => {
