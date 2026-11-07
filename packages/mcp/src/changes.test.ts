@@ -124,6 +124,47 @@ describe('ChangeLog', () => {
     expect(log.after(labelled.cursor)).toEqual({ changes: [], cursor: labelled.cursor });
   });
 
+  it("leaves out a change of only a text's place, size or font, and lists a change of its words or its color", () => {
+    const note = (fields: Element): Element =>
+      drawn({ id: 'note', type: 'text', text: 'draw a box', originalText: 'draw a box', ...fields });
+    const { doc, elements } = boardOf([note({})]);
+    const log = new ChangeLog(doc);
+    const { cursor } = log.after(0);
+
+    // A page measures the text again, and a person moves it and sets another font, keeping its words.
+    elements.set('note', note({ x: 40, y: 10, width: 120, height: 30, fontFamily: 6, version: 2 }));
+    expect(log.after(cursor)).toEqual({ changes: [], cursor });
+
+    const circle = { text: 'draw a circle', originalText: 'draw a circle', x: 40, y: 10, width: 120, height: 30, fontFamily: 6 };
+    elements.set('note', note({ ...circle, version: 3 }));
+    const worded = log.after(cursor);
+    expect(worded).toEqual({
+      changes: [
+        { change: 'changed', id: 'note', kind: 'text', x: 40, y: 10, width: 120, height: 30, label: 'draw a circle', fontFamily: 'Nunito' },
+      ],
+      cursor: cursor + 1,
+    });
+
+    elements.set('note', note({ ...circle, strokeColor: '#1971c2', version: 4 }));
+    expect(log.after(worded.cursor)).toEqual({
+      changes: [
+        {
+          change: 'changed',
+          id: 'note',
+          kind: 'text',
+          x: 40,
+          y: 10,
+          width: 120,
+          height: 30,
+          label: 'draw a circle',
+          fontFamily: 'Nunito',
+          strokeColor: '#1971c2',
+        },
+      ],
+      cursor: worded.cursor + 1,
+    });
+  });
+
   it('waits for the next change of a shape, and answers it with the cursor after it', async () => {
     const { doc, elements } = boardOf([drawn({ id: 'box' })]);
     const log = new ChangeLog(doc);
