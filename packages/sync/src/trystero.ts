@@ -7,6 +7,8 @@ export const ACTIONS: Record<Channel, string> = {
   diff: 'y-diff',
   update: 'y-update',
   awareness: 'y-awareness',
+  peers: 'y-peers',
+  resync: 'y-resync',
 };
 
 /** A `Transport` over a Trystero room, with the room's peers. */
