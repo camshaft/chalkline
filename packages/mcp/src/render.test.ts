@@ -8,10 +8,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { Resvg } from '@resvg/resvg-js';
+import { generateNKeysBetween } from 'fractional-indexing';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import { ELEMENTS } from './board';
-import { FILES, renderBoard, type Region } from './render';
+import { FILES, rasterize, renderBoard, RenderError, type Region } from './render';
 import { createServer } from './server';
 
 type Element = Record<string, unknown>;
@@ -194,6 +195,58 @@ function rectangle(fields: Element): Element {
   };
 }
 
+/** A freehand stroke as the page draws one: its points from its x and y, with the pen's pressure that Excalidraw simulates. */
+function stroke(fields: Element): Element {
+  return rectangle({
+    type: 'freedraw',
+    width: 60,
+    height: 20,
+    points: [
+      [0, 0],
+      [20, 20],
+      [40, 0],
+      [60, 20],
+    ],
+    pressures: [],
+    simulatePressure: true,
+    lastCommittedPoint: null,
+    roughness: 1,
+    ...fields,
+  });
+}
+
+/** A line as the page keeps it, through its points from its x and y. */
+function line(fields: Element): Element {
+  return rectangle({
+    type: 'line',
+    lastCommittedPoint: null,
+    startBinding: null,
+    endBinding: null,
+    startArrowhead: null,
+    endArrowhead: null,
+    polygon: false,
+    ...fields,
+  });
+}
+
+/** A text as the page keeps it, outside a container. */
+function textShape(fields: Element & { text: string }): Element {
+  return rectangle({
+    type: 'text',
+    width: fields.text.length * 12,
+    height: 25,
+    fontSize: 20,
+    fontFamily: 5,
+    textAlign: 'left',
+    verticalAlign: 'top',
+    containerId: null,
+    originalText: fields.text,
+    autoResize: true,
+    lineHeight: 1.25,
+    ...fields,
+  });
+}
+
 /** A board that holds `elements`, in that order. */
 function board(elements: Element[]): Y.Doc {
   const doc = new Y.Doc();
@@ -263,6 +316,16 @@ function machineDrawsText(): boolean {
 }
 
 const LABELLED = { shapes: [{ type: 'rectangle', x: 0, y: 0, width: 240, height: 80, label: { text: 'Hello' } }] };
+
+/** A green square of 4 pixels by 4. */
+const SQUARE = '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#00ff00"/></svg>';
+
+/**
+ * An SVG image that holds a group with an opacity far left of the image, which panics resvg 0.34 as
+ * it draws the image: it draws the group on a layer wholly outside the area it fits the layer into.
+ */
+const FAR_GROUP =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10"><g opacity="0.5"><rect x="-100000" width="10" height="10" fill="#0000ff"/></g><rect width="10" height="10" fill="#00ff00"/></svg>';
 
 describe('render_board', () => {
   it('draws a board that holds one labelled rectangle as a PNG of the asked size', async () => {
@@ -338,6 +401,129 @@ describe('render_board', () => {
     expect(some(withNone, dark)).toBe(true);
     expect(differing(withMath, withNone)).toBe(0);
   });
+
+  it('draws a freehand stroke as the page draws one, a line of width 0, shapes of size 0.0001 and a text', async () => {
+    const client = await connected(
+      board([
+        stroke({ id: 'stroke', x: 20, y: 20, strokeColor: '#ff0000', strokeWidth: 4, index: 'a1' }),
+        line({
+          id: 'upright',
+          x: 120,
+          y: 10,
+          width: 0,
+          height: 80,
+          points: [
+            [0, 0],
+            [0, 80],
+          ],
+          index: 'a2',
+        }),
+        line({
+          id: 'short',
+          x: 140,
+          y: 50,
+          width: 0.0001,
+          height: 0,
+          points: [
+            [0, 0],
+            [0.0001, 0],
+          ],
+          index: 'a3',
+        }),
+        rectangle({ id: 'speck', x: 160, y: 50, width: 0.0001, height: 0.0001, index: 'a4' }),
+        textShape({ id: 'words', x: 20, y: 60, text: 'Hello', index: 'a5' }),
+      ]),
+    );
+    const region = { x: 0, y: 0, width: 200, height: 100 };
+    const { pixels, answer } = picture(await call(client, 'render_board', { region, max_width: 400 }));
+    expect(answer).toEqual({ region, width: 400, height: 200 });
+    // Excalidraw didn't draw a freehand stroke without a Path2D, which jsdom doesn't define, so the
+    // picture held nothing red.
+    expect(some(pixels, red)).toBe(true);
+    // The line of width 0 runs down at x 120, 2 wide.
+    expect(dark(...at(pixels, 240, 100))).toBe(true);
+  });
+
+  it("draws a region far from a labelled arrow, whose label's mask panicked resvg", async () => {
+    const client = await connected(new Y.Doc());
+    const added = await call(client, 'add_shapes', {
+      shapes: [
+        { type: 'rectangle', x: 0, y: 0, width: 100, height: 60 },
+        { type: 'rectangle', x: 400, y: 0, width: 100, height: 60 },
+        {
+          type: 'rectangle',
+          x: 8000,
+          y: 4600,
+          width: 200,
+          height: 200,
+          strokeColor: '#ff0000',
+          backgroundColor: '#ff0000',
+          fillStyle: 'solid',
+        },
+      ],
+    });
+    expect(added.isError, JSON.stringify(added.content)).not.toBe(true);
+    const [start, end] = (added.structuredContent as { ids: string[] }).ids;
+    const linked = await call(client, 'connect', { start, end, label: { text: 'far' } });
+    expect(linked.isError, JSON.stringify(linked.content)).not.toBe(true);
+
+    // The region of the call that stopped the helper: resvg drew the arrow, which its label masks,
+    // on a layer wholly outside the area it fits each layer into, and panicked.
+    const region = { x: 7700, y: 4350, width: 960, height: 850 };
+    const { pixels, answer } = picture(await call(client, 'render_board', { region, max_width: 1100 }));
+    expect(answer).toEqual({ region, width: 1100, height: 974 });
+    expect(some(pixels, red)).toBe(true);
+  });
+
+  it('answers an error where resvg stops before it draws the picture, and the helper goes on', async () => {
+    const doc = board([
+      rectangle({
+        id: 'picture',
+        type: 'image',
+        width: 40,
+        height: 40,
+        strokeColor: 'transparent',
+        fileId: 'far',
+        status: 'saved',
+        scale: [1, 1],
+        crop: null,
+        index: 'a1',
+      }),
+    ]);
+    doc.getMap<unknown>(FILES).set('far', {
+      id: 'far',
+      mimeType: 'image/svg+xml',
+      dataURL: `data:image/svg+xml;base64,${Buffer.from(FAR_GROUP).toString('base64')}`,
+      created: 1,
+    });
+    const client = await connected(doc);
+    const failed = await call(client, 'render_board', { region: { x: 0, y: 0, width: 40, height: 40 } });
+    expect(failed.isError).toBe(true);
+    expect(text(failed)).toMatch(
+      /^resvg, which turns the board's SVG into the PNG in a process of its own, stopped on the signal SIGABRT before it drew the picture: .*panicked/s,
+    );
+
+    const read = await call(client, 'get_board');
+    expect(read.isError, JSON.stringify(read.content)).not.toBe(true);
+    const { pixels } = picture(await call(client, 'render_board', { region: { x: 100, y: 100, width: 40, height: 40 } }));
+    expect(every(pixels, white)).toBe(true);
+  });
+
+  it("answers an error once the call's timeout passes, and draws the next call", async () => {
+    const client = await connected(new Y.Doc());
+    const added = await call(client, 'add_shapes', LABELLED);
+    expect(added.isError, JSON.stringify(added.content)).not.toBe(true);
+
+    // resvg's process alone takes longer than a millisecond to start.
+    const late = await call(client, 'render_board', { timeout: 0.001 });
+    expect(late.isError).toBe(true);
+    expect(text(late)).toBe(
+      "render_board didn't draw the picture within 0.001 seconds, the call's timeout: draw a smaller region, or give a longer timeout.",
+    );
+    const read = await call(client, 'get_board');
+    expect(read.isError, JSON.stringify(read.content)).not.toBe(true);
+    picture(await call(client, 'render_board', { timeout: 60 }));
+  });
 });
 
 describe('renderBoard', () => {
@@ -403,5 +589,85 @@ describe('renderBoard', () => {
     expect([thin.width, thin.height]).toEqual([1, 100]);
     const pixels = decodePng(thin.png);
     expect([pixels.width, pixels.height]).toEqual([1, 100]);
+  });
+
+  it('draws the stroke of a shape whose bounds lie just outside the region', async () => {
+    const doc = board([rectangle({ id: 'beside', x: 101, width: 50, strokeWidth: 4, index: 'a1' })]);
+    const pixels = await drawn(doc, { x: 0, y: 0, width: 100, height: 100 });
+    // The rectangle's left side, 4 wide, reaches 2 into the region from x 101.
+    expect(dark(...at(pixels, 99, 50))).toBe(true);
+    expect(white(...at(pixels, 50, 50))).toBe(true);
+  });
+
+  it('leaves out a shape whose frame lies outside the region, since the frame clips it', async () => {
+    const doc = board([
+      rectangle({ id: 'frame', type: 'frame', name: null, x: 1000, index: 'a0' }),
+      rectangle({ id: 'inside', strokeColor: '#ff0000', backgroundColor: '#ff0000', frameId: 'frame', index: 'a1' }),
+    ]);
+    expect(every(await drawn(doc, { x: 25, y: 25, width: 50, height: 50 }), white)).toBe(true);
+  });
+
+  it('stops with a RenderError where the signal aborts, before or while it draws', async () => {
+    const doc = board([rectangle({ id: 'box', index: 'a1' })]);
+    const options = { region: { x: 0, y: 0, width: 50, height: 50 }, maxWidth: 50, maxHeight: 50 };
+    const cancelled = 'The client cancelled the call before render_board drew the picture.';
+    const before = await renderBoard(doc, { ...options, signal: AbortSignal.abort() }).catch((error: unknown) => error);
+    expect(before).toBeInstanceOf(RenderError);
+    expect((before as Error).message).toBe(cancelled);
+
+    const during = new AbortController();
+    const drawing = renderBoard(doc, { ...options, signal: during.signal });
+    during.abort();
+    const stopped = await drawing.catch((error: unknown) => error);
+    expect(stopped).toBeInstanceOf(RenderError);
+    expect((stopped as Error).message).toBe(cancelled);
+  });
+
+  it('draws a board of 3,000 shapes, and logs how long each picture takes', async () => {
+    const shapes = generateNKeysBetween(null, null, 3000).map((index, at) => {
+      const fields = { id: `shape ${at}`, x: (at % 50) * 120, y: Math.trunc(at / 50) * 90, index };
+      if (at % 3 === 0) return stroke(fields);
+      if (at % 3 === 1) return rectangle({ ...fields, width: 80, height: 60 });
+      return textShape({ ...fields, text: `Shape ${at}` });
+    });
+    const doc = board(shapes);
+    for (const region of [undefined, { x: 2400, y: 2000, width: 960, height: 850 }]) {
+      const started = performance.now();
+      const result = await renderBoard(doc, { region, maxWidth: 1100, maxHeight: 1024 });
+      const seconds = (performance.now() - started) / 1000;
+      console.log(
+        `renderBoard drew ${region === undefined ? 'the whole board' : 'a region of 960 by 850'} of 3,000 shapes as a PNG of ${result.width} by ${result.height} pixels in ${seconds.toFixed(2)} seconds`,
+      );
+      expect(decodePng(result.png).width).toBe(result.width);
+    }
+  }, 300_000);
+});
+
+describe('rasterize', () => {
+  it('draws an SVG as a PNG', async () => {
+    const pixels = decodePng(await rasterize(SQUARE));
+    expect([pixels.width, pixels.height]).toEqual([4, 4]);
+    expect([...colors(pixels)]).toEqual(['0,255,0,255']);
+  });
+
+  it("answers a RenderError that says how resvg's process stopped", async () => {
+    const error = await rasterize('<svg').catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RenderError);
+    expect((error as Error).message).toMatch(
+      /^resvg, which turns the board's SVG into the PNG in a process of its own, stopped with the exit code 1 before it drew the picture: \S/,
+    );
+  });
+
+  it("doesn't start resvg's process where the signal aborted already", async () => {
+    await expect(rasterize(SQUARE, AbortSignal.abort(new Error('aborted before')))).rejects.toThrow('aborted before');
+  });
+
+  it("ends resvg's process where the signal aborts while the process reads the SVG", async () => {
+    // The SVG is longer than a pipe holds, so the process ends while the helper still writes it.
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">${'<rect width="10" height="10"/>'.repeat(20_000)}</svg>`;
+    const stop = new AbortController();
+    const drawing = rasterize(svg, stop.signal);
+    stop.abort(new Error('aborted while drawing'));
+    await expect(drawing).rejects.toThrow('aborted while drawing');
   });
 });
