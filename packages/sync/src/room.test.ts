@@ -115,10 +115,11 @@ describe("a board link's TURN servers", () => {
     expect(base64).toMatch(/\//);
     expect(linkTurnServers(`#room=abc&key=s3cret&turn=${base64}`)).toStrictEqual({ turnServers: list });
     expect(linkTurnServers(`#room=abc&key=s3cret&turn=${encodeURIComponent(base64)}`)).toStrictEqual({ turnServers: list });
-    const padded = Buffer.from(JSON.stringify([{ urls: ['stun:stun.example.com'] }])).toString('base64');
+    // The port makes the JSON 41 bytes long, which base64 writes with one = of padding.
+    const padded = Buffer.from(JSON.stringify([{ urls: ['stun:stun.example.com:3478'] }])).toString('base64');
     expect(padded).toMatch(/=$/);
     expect(linkTurnServers(`#room=abc&key=s3cret&turn=${padded}`)).toStrictEqual({
-      turnServers: [{ urls: ['stun:stun.example.com'] }],
+      turnServers: [{ urls: ['stun:stun.example.com:3478'] }],
     });
   });
 
