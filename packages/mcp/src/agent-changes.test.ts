@@ -4,8 +4,10 @@ import * as Y from 'yjs';
 import {
   agentChangesOf,
   capturedChanges,
+  dropReplacedChanges,
   listAgentChanges,
   nameOf,
+  olderChangesDropped,
   recordAgentChange,
   undoAgentChange,
   UndoError,
@@ -69,17 +71,37 @@ function board(elements: Element[] = []): Board {
   return { doc, elements: shared, changes: agentChangesOf(doc) };
 }
 
-/** Writes `elements` on the board as an agent's call does, in one transaction of the call's origin, and records the change. */
-async function agentWrites({ doc, elements, changes }: Board, written: Element[], now?: Date): Promise<string> {
+/**
+ * Writes `elements` on the board as an agent's call does, in one transaction of the call's origin, and records the change;
+ * with `dropping`, as chalkline-mcp records it, which drops each earlier change that the board no longer shows anything of.
+ */
+async function agentWrites({ doc, elements, changes }: Board, written: Element[], now?: Date, dropping = false): Promise<string> {
   const by: Creator = { ...AGENT };
   const captured = await capturedChanges(elements, by, async () => {
     doc.transact(() => {
       for (const element of written) elements.set(String(element.id), element);
     }, by);
   });
-  const id = recordAgentChange(changes, { by, tool: 'update_shape', summary: 'Claude changed the board', elements: captured.elements, now });
+  const id = recordAgentChange(changes, {
+    by,
+    tool: 'update_shape',
+    summary: 'Claude changed the board',
+    elements: captured.elements,
+    now,
+    board: dropping ? elements : undefined,
+  });
   if (id === null) throw new Error("the agent's call didn't write an element");
   return id;
+}
+
+/** The ids of the changes the board's list holds, newest first. */
+function listedIds({ changes }: Board): string[] {
+  return listAgentChanges(changes).map((change) => change.id);
+}
+
+/** Whether the board's array holds a record of the change or the undo `id`. */
+function holds({ changes }: Board, id: string): boolean {
+  return changes.toArray().some((value) => (value as Element).id === id);
 }
 
 /** An element of the board, as a record. */
@@ -226,6 +248,99 @@ describe("the agent's changes", () => {
     network.flush();
     expect(listAgentChanges(first.changes).find((change) => change.id === early)?.undo).toEqual(undo);
     expect(on(first, 'a')).toMatchObject({ x: 0, version: 3 });
+  });
+
+  it("drops each change that the board no longer shows anything of, on every peer, says older changes aren't kept, and undoes the newest", async () => {
+    const network = new MemoryNetwork();
+    const helper = board();
+    const page = board();
+    connectDoc(helper.doc, network.join('helper'));
+    connectDoc(page.doc, network.join('page'));
+    network.flush();
+
+    const added = await agentWrites(helper, [rectangle('a'), rectangle('b', { index: 'a2' })], new Date('2026-11-07T10:00:00.000Z'), true);
+    const moved = await agentWrites(helper, [rectangle('a', { x: 50, version: 2 })], new Date('2026-11-07T10:01:00.000Z'), true);
+    network.flush();
+    // The board still shows b as the add left it, so the add stays.
+    for (const peer of [helper, page]) {
+      expect(listedIds(peer)).toEqual([moved, added]);
+      expect(olderChangesDropped(peer.changes)).toBe(false);
+    }
+
+    const deleted = await agentWrites(
+      helper,
+      [rectangle('b', { index: 'a2', isDeleted: true, version: 2 })],
+      new Date('2026-11-07T10:02:00.000Z'),
+      true,
+    );
+    network.flush();
+    for (const peer of [helper, page]) {
+      expect(listedIds(peer)).toEqual([deleted, moved]);
+      expect(holds(peer, added)).toBe(false);
+      expect(olderChangesDropped(peer.changes)).toBe(true);
+    }
+    expect(() => undoAgentChange(page.elements, page.changes, added, { by: 'Ada' })).toThrow('no longer shows anything it wrote');
+
+    undoAgentChange(page.elements, page.changes, deleted, { by: 'Ada' });
+    network.flush();
+    expect(on(helper, 'b')).toMatchObject({ isDeleted: false, version: 3 });
+    expect(on(page, 'b')).toMatchObject({ isDeleted: false, version: 3 });
+  });
+
+  it('counts an element for the newest change the board shows it as, and an undone change while the board shows its undo', async () => {
+    const shared = board([rectangle('a')]);
+    const right = await agentWrites(shared, [rectangle('a', { x: 50, version: 2 })], new Date('2026-11-07T10:00:00.000Z'));
+    await agentWrites(shared, [rectangle('a', { version: 3 })], new Date('2026-11-07T10:01:00.000Z'));
+    const again = await agentWrites(shared, [rectangle('a', { x: 50, version: 4 })], new Date('2026-11-07T10:02:00.000Z'));
+    const other = await agentWrites(shared, [rectangle('b')], new Date('2026-11-07T10:03:00.000Z'), true);
+    // The board shows a as both `right` and `again` left it, and a counts for `again`, the newer, alone.
+    expect(listedIds(shared)).toEqual([other, again]);
+    expect(holds(shared, right)).toBe(false);
+
+    const undo = undoAgentChange(shared.elements, shared.changes, again, { by: 'Ada' });
+    const third = await agentWrites(shared, [rectangle('c')], new Date('2026-11-07T10:04:00.000Z'), true);
+    expect(listedIds(shared)).toEqual([third, other, again]);
+    expect(listAgentChanges(shared.changes)[2]?.undo).toEqual(undo);
+
+    // Once a person moves a, the board no longer shows what the undo wrote.
+    shared.elements.set('a', rectangle('a', { x: 80, version: 6 }));
+    const fourth = await agentWrites(shared, [rectangle('d')], new Date('2026-11-07T10:05:00.000Z'), true);
+    expect(listedIds(shared)).toEqual([fourth, third, other]);
+    expect(holds(shared, again)).toBe(false);
+    expect(holds(shared, undo.id)).toBe(false);
+  });
+
+  it("drops an undo of a change that the array doesn't hold, a change's second undo, and a second mark", async () => {
+    const shared = board([rectangle('a')]);
+    const id = await agentWrites(shared, [rectangle('a', { x: 50, version: 2 })]);
+    const first = undoAgentChange(shared.elements, shared.changes, id, { by: 'Ada' });
+    // Two pages undid the change at once, an undo of a change that another copy dropped arrived, and
+    // two copies marked that changes left the list.
+    shared.changes.push([
+      { ...first, id: 'second-undo', by: 'Bo' },
+      { kind: 'undo', id: 'orphan', change: 'gone', by: 'Bo', at: first.at, restored: [], kept: [] },
+      { kind: 'dropped' },
+      { kind: 'dropped' },
+    ]);
+    expect(dropReplacedChanges(shared.elements, shared.changes)).toEqual([]);
+    expect(shared.changes.toArray().map((value) => [(value as Element).kind, (value as Element).id])).toEqual([
+      ['change', id],
+      ['undo', first.id],
+      ['dropped', undefined],
+    ]);
+    expect(listAgentChanges(shared.changes)[0]?.undo).toEqual(first);
+    expect(olderChangesDropped(shared.changes)).toBe(true);
+  });
+
+  it('drops the changes a record replaces in the transaction that records it', async () => {
+    const shared = board();
+    const added = await agentWrites(shared, [rectangle('a')], undefined, true);
+    let transactions = 0;
+    shared.changes.observe(() => transactions++);
+    const moved = await agentWrites(shared, [rectangle('a', { x: 50, version: 2 })], undefined, true);
+    expect(transactions).toBe(1);
+    expect(holds(shared, added)).toBe(false);
+    expect(shared.changes.toArray()).toEqual([expect.objectContaining({ kind: 'change', id: moved }), { kind: 'dropped' }]);
   });
 
   it('names each kind of element with its label or its words', () => {
