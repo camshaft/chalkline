@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -9,11 +10,18 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { Resvg } from '@resvg/resvg-js';
 import { generateNKeysBetween } from 'fractional-indexing';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { ELEMENTS } from './board';
-import { FILES, rasterize, renderBoard, RenderError, type Region } from './render';
+import { FILES, rasterize, renderBoard, RenderError, type Picture, type Region } from './render';
 import { createServer } from './server';
+
+// render_board's handler calls renderBoard through this mock, which runs the real renderBoard, so
+// that a test can read the render that a call starts.
+vi.mock('./render', async (importOriginal) => {
+  const render = await importOriginal<typeof import('./render')>();
+  return { ...render, renderBoard: vi.fn(render.renderBoard) };
+});
 
 type Element = Record<string, unknown>;
 
@@ -524,6 +532,28 @@ describe('render_board', () => {
     expect(read.isError, JSON.stringify(read.content)).not.toBe(true);
     picture(await call(client, 'render_board', { timeout: 60 }));
   });
+
+  it('stops the render where the client cancels the call', async () => {
+    const client = await connected(new Y.Doc());
+    const added = await call(client, 'add_shapes', LABELLED);
+    expect(added.isError, JSON.stringify(added.content)).not.toBe(true);
+
+    // The render that the server starts for the next call, read as the server starts it.
+    const { renderBoard: render } = await vi.importActual<typeof import('./render')>('./render');
+    const started = new Promise<{ drawing: Promise<Picture> }>((resolve) => {
+      vi.mocked(renderBoard).mockImplementationOnce((doc, options) => {
+        const drawing = render(doc, options);
+        resolve({ drawing });
+        return drawing;
+      });
+    });
+    const cancel = new AbortController();
+    const calling = client.callTool({ name: 'render_board', arguments: {} }, undefined, { signal: cancel.signal });
+    const { drawing } = await started;
+    cancel.abort(new Error('The test cancels the call.'));
+    await expect(calling).rejects.toThrow('The test cancels the call.');
+    await expect(drawing).rejects.toThrow('The client cancelled the call before render_board drew the picture.');
+  });
 });
 
 describe('renderBoard', () => {
@@ -623,6 +653,29 @@ describe('renderBoard', () => {
     expect((stopped as Error).message).toBe(cancelled);
   });
 
+  it("clears the timeout's timer once it draws the picture", async () => {
+    const doc = board([rectangle({ id: 'box', index: 'a1' })]);
+    const set = vi.spyOn(globalThis, 'setTimeout');
+    const cleared = vi.spyOn(globalThis, 'clearTimeout');
+    try {
+      await renderBoard(doc, { region: { x: 0, y: 0, width: 50, height: 50 }, maxWidth: 50, maxHeight: 50, timeout: 1234.5 });
+      // The timeout's timer, which renderBoard sets in milliseconds.
+      const at = set.mock.calls.findIndex(([, delay]) => delay === 1_234_500);
+      expect(at).not.toBe(-1);
+      expect(cleared).toHaveBeenCalledWith(set.mock.results[at].value);
+    } finally {
+      set.mockRestore();
+      cleared.mockRestore();
+    }
+  });
+
+  it('takes its listener off the signal once it draws the picture', async () => {
+    const doc = board([rectangle({ id: 'box', index: 'a1' })]);
+    const client = new AbortController();
+    await renderBoard(doc, { region: { x: 0, y: 0, width: 50, height: 50 }, maxWidth: 50, maxHeight: 50, signal: client.signal });
+    expect(getEventListeners(client.signal, 'abort')).toEqual([]);
+  });
+
   it('draws a board of 3,000 shapes, and logs how long each picture takes', async () => {
     const shapes = generateNKeysBetween(null, null, 3000).map((index, at) => {
       const fields = { id: `shape ${at}`, x: (at % 50) * 120, y: Math.trunc(at / 50) * 90, index };
@@ -656,6 +709,27 @@ describe('rasterize', () => {
     expect((error as Error).message).toMatch(
       /^resvg, which turns the board's SVG into the PNG in a process of its own, stopped with the exit code 1 before it drew the picture: \S/,
     );
+  });
+
+  it("answers a RenderError where Node can't start resvg's process", async () => {
+    // A path that doesn't hold a program, in place of Node's, so that Node can't start the process.
+    const dir = mkdtempSync(join(tmpdir(), 'chalkline-rasterize-'));
+    const missing = join(dir, 'node');
+    const node = process.execPath;
+    // rasterize starts the process as it is called, so Node's path comes back before the call
+    // answers, and the tests after this one start Node's process whatever this one answers.
+    const drawing = (() => {
+      process.execPath = missing;
+      try {
+        return rasterize(SQUARE);
+      } finally {
+        process.execPath = node;
+        rmSync(dir, { recursive: true });
+      }
+    })();
+    const error = await drawing.catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RenderError);
+    expect((error as Error).message).toBe(`render_board couldn't start resvg's process: spawn ${missing} ENOENT`);
   });
 
   it("doesn't start resvg's process where the signal aborted already", async () => {
