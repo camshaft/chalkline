@@ -30,10 +30,12 @@ what people on the board say, write and draw:
       the board they cover, as {"x", "y", "width", "height"}, and "at" when the person last
       changed one.
 
-What was said, written or drawn before the listener started is left out, and so is each shape
-an agent added, which holds the agent's creator mark. Each line it logs goes to standard error,
-such as where it loses the room and where it joins it again. It listens until Ctrl-C or SIGTERM
-stops it, and then prints the lines that wait for their pause before it leaves the room.
+What was said, written or drawn before the listener started is left out, and so is each change
+that an agent's helper makes, which it marks on each element it adds or changes, and each
+freehand stroke an agent drew. A person's later change of an agent's text makes a line. Each
+line it logs goes to standard error, such as where it loses the room and where it joins it
+again. It listens until Ctrl-C or SIGTERM stops it, and then prints the lines that wait for
+their pause before it leaves the room.
 
 Options:
   --pause <seconds>        how long a pause ends a group of words (default: 1)
