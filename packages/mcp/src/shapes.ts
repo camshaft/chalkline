@@ -13,6 +13,15 @@ const endpoint = (which: string) =>
     .string()
     .min(1)
     .describe(`The id of the rectangle, ellipse, diamond or text of the same call that the arrow ${which}.`);
+const point = z.array(coordinate).length(2).describe("A point, as [x, y]: how far right of and below the shape's x and y it lies.");
+/** The points of a line or an arrow, which say where it goes in place of its width and height. */
+const points = (kind: 'line' | 'arrow') =>
+  z
+    .array(point)
+    .min(2)
+    .describe(
+      `The points the ${kind} goes through, in order, each [x, y] from the ${kind}'s x and y, in place of its width and height, so that one ${kind} holds a whole curve or zigzag. Where the first point isn't [0, 0], the ${kind}'s x and y move to it.`,
+    );
 
 const box = {
   id: id.optional(),
@@ -46,6 +55,7 @@ export const shapeSchema = z.discriminatedUnion('type', [
     y: coordinate.describe("The y of the arrow's first point."),
     width: coordinate.optional().describe('How far right of its first point the arrow ends, or left where negative.'),
     height: coordinate.optional().describe('How far below its first point the arrow ends, or above where negative.'),
+    points: points('arrow').optional(),
     label: label.optional(),
     start: endpoint('starts at').optional(),
     end: endpoint('ends at').optional(),
@@ -58,6 +68,31 @@ export const shapeSchema = z.discriminatedUnion('type', [
     y: coordinate.describe("The y of the line's first point."),
     width: coordinate.optional().describe('How far right of its first point the line ends, or left where negative.'),
     height: coordinate.optional().describe('How far below its first point the line ends, or above where negative.'),
+    points: points('line').optional(),
+    closed: z
+      .boolean()
+      .optional()
+      .describe(
+        'Whether the line goes back from its last point to its first, enclosing a shape that its backgroundColor fills. A closed line needs points, three or more.',
+      ),
+    strokeColor: color.optional(),
+    backgroundColor: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('A CSS color, such as #ffc9c9, that fills the shape a closed line encloses.'),
+  }),
+  z.object({
+    type: z.literal('freedraw'),
+    id: id.optional(),
+    x: coordinate.describe("The x of the stroke's first point."),
+    y: coordinate.describe("The y of the stroke's first point."),
+    points: z
+      .array(point)
+      .min(2)
+      .describe(
+        "The pen's path, in order, each point [x, y] from the stroke's x and y, drawn as one stroke by hand. Where the first point isn't [0, 0], the stroke's x and y move to it.",
+      ),
     strokeColor: color.optional(),
   }),
 ]);
@@ -68,10 +103,15 @@ export const creatorSchema = z.object({
   name: z.string().describe("The name the agent's client gave as it connected."),
 });
 
+/** The most points of one stroke that get_board lists; of a stroke that holds more, it lists this many, evenly spaced. */
+export const LISTED_POINTS = 100;
+
 /** One shape on the board, as get_board answers it. */
 export const boardShapeSchema = z.object({
   id: z.string(),
-  kind: z.string().describe("Excalidraw's type of the shape, such as rectangle, ellipse, diamond, text, arrow or line."),
+  kind: z
+    .string()
+    .describe("Excalidraw's type of the shape, such as rectangle, ellipse, diamond, text, arrow, line or freedraw."),
   x: z.number(),
   y: z.number(),
   width: z
@@ -86,6 +126,17 @@ export const boardShapeSchema = z.object({
   creator: creatorSchema
     .optional()
     .describe('The agent that added the shape; a shape that a person drew, or a page added for them, has none.'),
+  points: z
+    .array(z.array(z.number()).length(2))
+    .optional()
+    .describe(
+      `A line's, an arrow's or a freehand stroke's points, each [x, y] from the shape's x and y. Of a stroke that holds more than ${LISTED_POINTS} points, ${LISTED_POINTS} of them, evenly spaced from its first to its last.`,
+    ),
+  pointCount: z
+    .number()
+    .int()
+    .optional()
+    .describe('How many points the stroke holds, where points lists only some of them.'),
 });
 
 /** The arrow that connect draws between two shapes on the board. */
