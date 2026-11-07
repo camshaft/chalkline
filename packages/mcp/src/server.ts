@@ -7,6 +7,7 @@ import { answer, refusal } from './answer';
 import { addShapes, ELEMENTS, readBoard, ShapeError } from './board';
 import type { Creator } from './creator';
 import { connect, deleteShapes, updateShape } from './edit';
+import { renderBoard, RenderError } from './render';
 import { pendingRequests, RequestError, waitForRequest, writeMermaidRequest } from './requests';
 import { boardShapeSchema, changeSchema, connectionSchema, deletionSchema, shapeSchema } from './shapes';
 import { registerTranscript } from './transcript';
@@ -18,6 +19,17 @@ const requestAnswerSchema = {
   ids: z.array(z.string()).optional(),
   error: z.string().optional(),
 };
+
+/** A part of the board, in the board's units, as render_board reads and answers it. */
+const regionSchema = z.object({
+  x: z.number().finite(),
+  y: z.number().finite(),
+  width: z.number().finite().positive(),
+  height: z.number().finite().positive(),
+});
+
+/** How many pixels wide and high render_board's picture is at most, where the call leaves its size out. */
+const PICTURE_SIZE = 1024;
 
 /**
  * chalkline-mcp's MCP server, whose tools read and draw on the board that `doc` holds. `awareness`
@@ -46,6 +58,48 @@ export function createServer(doc: Y.Doc, awareness: Awareness): McpServer {
       },
     },
     () => answer({ shapes: readBoard(elements.values()), pending: pendingRequests(doc) }),
+  );
+
+  server.registerTool(
+    'render_board',
+    {
+      title: 'Draw the board as a picture',
+      description: [
+        "Draws the board as a PNG picture, as Excalidraw exports it on white: its shapes, their labels and its images, from the helper's copy of the board, so it needs no page.",
+        'Where the call leaves region out, it draws the bounds of every shape with a margin of 10; a region, with its x, y, width and height in the units get_board reads, draws that part of the board.',
+        "The picture keeps the region's shape, and is at most max_width pixels wide and max_height pixels high, 1024 each when left out.",
+        "It answers the picture, then region, width and height: the part of the board it drew and the picture's size in pixels, where the pixel (px, py) shows the board's point (region.x + px * region.width / width, region.y + py * region.height / height).",
+        "It draws text in a font of the helper's machine, not in Excalidraw's hand-drawn font, and leaves out a frame's name.",
+        "On a board that doesn't hold a shape, it refuses a call that leaves region out.",
+      ].join(' '),
+      inputSchema: {
+        region: regionSchema.optional(),
+        max_width: z.number().int().positive().optional(),
+        max_height: z.number().int().positive().optional(),
+      },
+      outputSchema: { region: regionSchema, width: z.number().int(), height: z.number().int() },
+    },
+    async ({ region, max_width, max_height }) => {
+      try {
+        const drawn = await renderBoard(doc, {
+          region,
+          maxWidth: max_width ?? PICTURE_SIZE,
+          maxHeight: max_height ?? PICTURE_SIZE,
+        });
+        const content = { region: drawn.region, width: drawn.width, height: drawn.height };
+        const result: CallToolResult = {
+          content: [
+            { type: 'image', data: drawn.png.toString('base64'), mimeType: 'image/png' },
+            { type: 'text', text: JSON.stringify(content) },
+          ],
+          structuredContent: content,
+        };
+        return result;
+      } catch (error) {
+        if (error instanceof RenderError) return refusal(error.message);
+        throw error;
+      }
+    },
   );
 
   server.registerTool(

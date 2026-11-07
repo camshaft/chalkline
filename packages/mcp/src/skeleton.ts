@@ -80,8 +80,8 @@ async function installDom(): Promise<void> {
   const { default: globalJsdom } = await import('global-jsdom');
   globalJsdom(undefined, { pretendToBeVisual: true, url: 'https://chalkline.invalid/' });
   // jsdom's canvas has no 2D context, and Excalidraw checks which context features exist as it
-  // loads. Neither draw-box nor chalkline-mcp draws anything, so a context whose methods do nothing
-  // is enough.
+  // loads. Neither draw-box nor chalkline-mcp draws on a canvas, since chalkline-mcp draws its
+  // pictures from SVG, so a context whose methods do nothing is enough.
   HTMLCanvasElement.prototype.getContext = function getContext(this: HTMLCanvasElement) {
     return inertContext(this);
   } as unknown as HTMLCanvasElement['getContext'];
