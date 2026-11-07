@@ -155,6 +155,33 @@ describe("the panel of the agent's changes", () => {
     expect(elements.get('box')).toMatchObject({ isDeleted: false, version: 9 });
   });
 
+  it("drops a change once the board no longer shows what it wrote, says that older changes can't be undone, and undoes the newest", () => {
+    const { elements, changes, panel, bound } = board();
+    const first = added(elements, changes);
+    bound.open(true);
+    expect(panel.querySelector<HTMLElement>('.changes-older')?.hidden).toBe(true);
+
+    elements.set('box', rectangle({ x: 40, version: 2 }));
+    const second = recordAgentChange(changes, {
+      by: AGENT,
+      tool: 'update_shape',
+      summary: 'Claude changed a rectangle',
+      elements: [{ id: 'box', before: rectangle(), after: rectangle({ x: 40, version: 2 }) }],
+      now: new Date('2026-11-07T10:05:00Z'),
+      board: elements,
+    });
+    expect([...panel.querySelectorAll<HTMLLIElement>('li.changes-item')].map((listed) => listed.dataset.id)).toEqual([second]);
+    expect(panel.querySelector(`li[data-id="${first}"]`)).toBeNull();
+    const older = panel.querySelector<HTMLElement>('.changes-older');
+    expect(older?.hidden).toBe(false);
+    expect(older?.textContent).toBe("Older changes can't be undone here: a change leaves this list once the board no longer shows what it wrote.");
+    expect(panel.querySelector<HTMLElement>('.changes-empty')?.hidden).toBe(true);
+
+    undoButton(panel, String(second)).click();
+    expect(elements.get('box')).toMatchObject({ x: 0, isDeleted: false, version: 3 });
+    expect(item(panel, String(second)).dataset.state).toBe('undone');
+  });
+
   it('joins names into one phrase', () => {
     expect(joined(['a rectangle'])).toBe('a rectangle');
     expect(joined(['a rectangle', 'an arrow'])).toBe('a rectangle and an arrow');
