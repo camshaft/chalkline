@@ -2,8 +2,11 @@
 // as chalkline-lan does, Playwright opens the board in two browser contexts, and the built
 // chalkline-mcp, the agent's helper, joins the same board from its link through the same relay.
 // The helper adds a labelled rectangle and a labelled ellipse and connects them with a labelled
-// arrow, and the test waits until both browsers show each of them. A second test opens the board
-// in a desktop's window and in a phone's, 390 px wide, checks that the page's controls sit in
+// arrow, and the test waits until both browsers show each of them. A second test has one browser
+// write a feedback over a rectangle the helper added (A13): the helper reads it, moves the
+// rectangle and answers it, and the test waits until both browsers show the answer in the chat,
+// the area's outline gone and the rectangle in its new place. A third test opens the board in a
+// desktop's window and in a phone's, 390 px wide, checks that the page's controls sit in
 // Excalidraw's own UI over a canvas that fills the window, uses each of them there, and keeps a
 // screenshot of each layout; on the desktop it also presses the pen's side button. It needs the
 // page and the helper that `npm run build` writes, and `npm run test:e2e` runs it.
@@ -33,6 +36,14 @@ const SCREENSHOTS = fileURLToPath(new URL('..', import.meta.url));
 const CLIENT = 'chalkline-e2e';
 /** How long each browser waits for the helper's shapes. */
 const WAIT_MS = 120_000;
+/** The name the feedback test's writer enters in the name field, which the feedback records as its writer. */
+const WRITER = 'Grace';
+/** The feedback the writer sends over the helper's rectangle. */
+const FEEDBACK = 'Move this box further down';
+/** The rectangle's new top edge, in the board's units, where the helper moves it for the feedback. */
+const MOVED_Y = 300;
+/** The helper's answer to the feedback. */
+const ANSWER = 'Moved the box down to y 300';
 /** The board file the layout test opens with the main menu's Open file item: one rectangle. */
 const OPENED_FILE = {
   type: 'excalidraw',
@@ -66,12 +77,47 @@ interface Shown {
   end: string | null;
 }
 
-/** The parts of the page's handle that the layout test reads. */
+/** A feedback as read_feedback and answer_feedback answer it. */
+interface FeedbackRecord {
+  id: string;
+  by: string;
+  text: string;
+  region: { x: number; y: number; width: number; height: number };
+  shapes: string[];
+  status: string;
+  answer: { by: string; text: string } | null;
+}
+
+/** A feedback as a browser shows it, as page.js reads it from the chat, the canvas's outlines and the scene. */
+interface ShownFeedback {
+  status: string | null;
+  /** The feedback's text in the chat. */
+  text: string | null;
+  /** The answer the chat shows under the feedback: its writer, its tag and its text. */
+  answer: { by: string | null; tag: string | null; text: string | null } | null;
+  /** Whether the chat shows Reopen beside the feedback. */
+  reopen: boolean;
+  /** Whether the canvas outlines the feedback's area. */
+  outlined: boolean;
+  /** The top edge of the feedback's shape in the scene. */
+  y: number | null;
+}
+
+/** The parts of the page's handle that the layout and feedback tests read. */
 interface Handle {
   room: string;
   awareness: { getLocalState(): Record<string, unknown> | null };
   api: {
-    getAppState(): { viewBackgroundColor: string; gridModeEnabled: boolean; activeTool: { type: string } };
+    getAppState(): {
+      viewBackgroundColor: string;
+      gridModeEnabled: boolean;
+      activeTool: { type: string };
+      scrollX: number;
+      scrollY: number;
+      zoom: { value: number };
+      offsetLeft: number;
+      offsetTop: number;
+    };
     updateScene(scene: { appState: Record<string, unknown> }): void;
   };
 }
@@ -80,7 +126,10 @@ interface Handle {
 interface E2eWindow {
   chalklineReady?: Promise<Handle>;
   chalkline?: Handle;
-  chalklineE2e: { shown(expected: Expected[], creator: string, waitMs: number): Promise<Shown[]> };
+  chalklineE2e: {
+    shown(expected: Expected[], creator: string, waitMs: number): Promise<Shown[]>;
+    answered(id: string, shapeId: string, y: number, waitMs: number): Promise<ShownFeedback>;
+  };
 }
 
 /** An element's place on the page, in CSS pixels. */
@@ -224,6 +273,20 @@ async function shownIn(board: Board, expected: Expected[]): Promise<Shown[]> {
   }
 }
 
+/** Waits until the page of `board` shows the feedback `id` answered, with `shapeId` at `y`, and keeps a screenshot either way. */
+async function answeredIn(board: Board, id: string, shapeId: string, y: number): Promise<ShownFeedback> {
+  try {
+    const shown = await board.page.evaluate(
+      (arg) => (window as unknown as E2eWindow).chalklineE2e.answered(arg.id, arg.shapeId, arg.y, arg.waitMs),
+      { id, shapeId, y, waitMs: WAIT_MS },
+    );
+    console.log(`${board.name}: the board shows the feedback as ${JSON.stringify(shown)}`);
+    return shown;
+  } finally {
+    await board.page.screenshot({ path: join(SCREENSHOTS, `e2e-${board.name}.png`) }).catch(() => undefined);
+  }
+}
+
 /** Calls one of the helper's tools, checks that it didn't refuse the call, and returns its structured answer. */
 async function call(client: Client, name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
   const result = (await client.callTool({ name, arguments: args })) as CallToolResult;
@@ -291,6 +354,107 @@ describe('the local-network mode, end to end', () => {
     for (const shapes of shown) expect(shapes).toEqual(wanted);
     // The browsers and the helper met through this machine's relay, the only one their links name.
     expect(lan.relay.getSubscriberCount()).toBeGreaterThan(0);
+  }, 300_000);
+
+  it("shows in both browsers the helper's answer to a feedback that one browser wrote over a shape", async () => {
+    const lan = server;
+    const chrome = browser;
+    if (lan === undefined || chrome === undefined) throw new Error('the server or the browser did not start');
+    const link = boardLink(lan.port);
+    const [writer, reader] = await Promise.all(['feedback-writer', 'feedback-reader'].map((name) => openBoard(chrome, link, name)));
+    const helper = new Client({ name: CLIENT, version: '0.0.0' });
+    try {
+      await helper.connect(new StdioClientTransport({ command: process.execPath, args: [HELPER, link.href] }));
+      const added = await call(helper, 'add_shapes', {
+        shapes: [{ type: 'rectangle', x: 100, y: 100, width: 240, height: 80, label: { text: 'Move me down' } }],
+      });
+      const [shape] = added.ids as string[];
+      const expected: Expected[] = [{ id: shape, type: 'rectangle', label: 'Move me down' }];
+      await Promise.all([writer, reader].map((board) => shownIn(board, expected)));
+
+      // The name field sets the name that the feedback records as its writer.
+      const { page } = writer;
+      await page.locator('#name').fill(WRITER);
+      await page.waitForFunction(
+        (name) => (window as unknown as E2eWindow).chalkline?.awareness.getLocalState()?.name === name,
+        WRITER,
+      );
+
+      // The Feedback button puts the canvas in feedback mode, where a drag over the rectangle marks an area.
+      const button = page.locator('#feedback-button');
+      await button.click();
+      expect(await button.getAttribute('aria-pressed')).toBe('true');
+      const view = await page.evaluate(() => {
+        const state = (window as unknown as E2eWindow).chalkline?.api.getAppState();
+        if (state === undefined) throw new Error("the page doesn't show a board");
+        return {
+          scrollX: state.scrollX,
+          scrollY: state.scrollY,
+          zoom: state.zoom.value,
+          left: state.offsetLeft,
+          top: state.offsetTop,
+        };
+      });
+      // The window's point of a point of the board, rounded to whole pixels, and the board's point of a
+      // window's point, as the page reads it from the pointer.
+      const onWindow = (x: number, y: number) => ({
+        x: Math.round((x + view.scrollX) * view.zoom + view.left),
+        y: Math.round((y + view.scrollY) * view.zoom + view.top),
+      });
+      const onBoard = ({ x, y }: { x: number; y: number }) => ({
+        x: (x - view.left) / view.zoom - view.scrollX,
+        y: (y - view.top) / view.zoom - view.scrollY,
+      });
+      const from = onWindow(120, 110);
+      const to = onWindow(320, 170);
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      await page.mouse.move(to.x, to.y, { steps: 5 });
+      await page.mouse.up();
+
+      // Send in the text box beside the area writes the feedback to the board, and ends the mode.
+      const dialog = page.locator('.feedback-box');
+      await dialog.locator('.feedback-field').fill(FEEDBACK);
+      await dialog.getByRole('button', { name: 'Send', exact: true }).click();
+      expect(await button.getAttribute('aria-pressed')).toBe('false');
+
+      // The helper reads the feedback: its writer, its text, its area in the board's units, and the rectangle.
+      const read = await call(helper, 'read_feedback', {});
+      expect(read.cursor).toBe(1);
+      const opened = read.opened as { feedback: FeedbackRecord; shapes: { id: string }[] }[];
+      expect(opened).toHaveLength(1);
+      const [{ feedback, shapes }] = opened;
+      expect(feedback).toMatchObject({ by: WRITER, text: FEEDBACK, status: 'open', answer: null });
+      expect(feedback.shapes).toContain(shape);
+      expect(shapes.map(({ id }) => id)).toContain(shape);
+      const corner = onBoard(from);
+      const far = onBoard(to);
+      expect(feedback.region.x).toBeCloseTo(corner.x, 1);
+      expect(feedback.region.y).toBeCloseTo(corner.y, 1);
+      expect(feedback.region.width).toBeCloseTo(far.x - corner.x, 1);
+      expect(feedback.region.height).toBeCloseTo(far.y - corner.y, 1);
+
+      // The helper moves the rectangle down and answers the feedback with what it changed.
+      await call(helper, 'update_shape', { id: shape, y: MOVED_Y });
+      const answered = await call(helper, 'answer_feedback', { id: feedback.id, text: ANSWER });
+      expect((answered.feedback as FeedbackRecord).status).toBe('answered');
+
+      // Both browsers show the answer under the feedback in the chat, with Reopen, with the area's outline
+      // gone and with the rectangle in its new place.
+      const wanted: ShownFeedback = {
+        status: 'answered',
+        text: FEEDBACK,
+        answer: { by: CLIENT, tag: 'Answer', text: ANSWER },
+        reopen: true,
+        outlined: false,
+        y: MOVED_Y,
+      };
+      const shown = await Promise.all([writer, reader].map((board) => answeredIn(board, feedback.id, shape, MOVED_Y)));
+      for (const state of shown) expect(state).toEqual(wanted);
+    } finally {
+      await helper.close();
+      await Promise.all([writer, reader].map((board) => board.page.context().close()));
+    }
   }, 300_000);
 
   it.each([
