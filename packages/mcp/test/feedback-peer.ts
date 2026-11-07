@@ -79,6 +79,7 @@ async function main(): Promise<void> {
       shapes: ['box'],
       status: 'open',
       answer: null,
+      reopened: null,
     };
     writeFeedback(feedbackOf(doc), record);
     console.log(JSON.stringify({ feedback: record }));
