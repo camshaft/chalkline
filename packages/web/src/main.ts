@@ -1,12 +1,22 @@
 import '@excalidraw/excalidraw/index.css';
-import { Awareness, connectAwareness, connectDoc, relaysFromAddress, transcriptOf, trysteroTransport } from '@chalkline/sync';
+import {
+  Awareness,
+  connectAwareness,
+  connectDoc,
+  feedbackOf,
+  relaysFromAddress,
+  transcriptOf,
+  trysteroTransport,
+} from '@chalkline/sync';
 import { joinBoardRoom } from '@chalkline/sync/join';
 import {
   CaptureUpdateAction,
   convertToExcalidrawElements,
+  elementPartiallyOverlapsWithOrContainsBBox,
   Excalidraw,
   loadFromBlob,
   serializeAsJSON,
+  zoomToFitBounds,
 } from '@excalidraw/excalidraw';
 import type { OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type { BinaryFileData, Collaborator, ExcalidrawImperativeAPI, SocketId } from '@excalidraw/excalidraw/types';
@@ -19,6 +29,7 @@ import { addOpened, boardFileName, connectFileControls, OPENED } from './board-f
 import { loadSettings, roomOptions, type ConnectionSettings, type SettingsStorage } from './connection';
 import { bindStatusBadge, connectControlsToggle, controlsAttacher } from './controls';
 import { keepDrawingSpaceChanges, keptDrawingSpace } from './drawing-space';
+import { bindFeedback, type FeedbackCanvas } from './feedback';
 import { bindFiles, writeFiles } from './files';
 import { keepBoard, storeName, type KeptBoard } from './keep';
 import { Followed } from './followed';
@@ -64,6 +75,8 @@ export interface ChalklineHandle {
   kept: KeptBoard | null;
   /** The board's transcript, which the page shows as its chat: each final speech result, typed message and agent's post, in order. */
   transcript: Y.Array<unknown>;
+  /** The board's feedback, the comments people write on an area of the board, by id (designs/chalkline A13). */
+  feedback: Y.Map<unknown>;
   /** This browser's speech, which the microphone button turns on and off. */
   speech: Speech;
   peers(): string[];
@@ -339,11 +352,44 @@ async function start(): Promise<ChalklineHandle> {
     transcript,
     speaker,
   });
+  // The board's feedback (A13): the Feedback button marks an area of the canvas on the layer over it, each
+  // page outlines each open feedback there, and the chat lists each feedback among its entries, with Show.
+  const feedback = feedbackOf(doc);
+  const canvas: FeedbackCanvas = {
+    view: () => {
+      const { scrollX, scrollY, zoom, offsetLeft, offsetTop } = api.getAppState();
+      return { scrollX, scrollY, zoom: zoom.value, offsetLeft, offsetTop };
+    },
+    shapesIn: ({ x, y, width, height }) =>
+      api
+        .getSceneElements()
+        .filter((element) => elementPartiallyOverlapsWithOrContainsBBox(element, [x, y, x + width, y + height]))
+        .map((element) => element.id),
+    showRegion: ({ x, y, width, height }) => {
+      const { appState } = zoomToFitBounds({
+        bounds: [x, y, x + width, y + height],
+        appState: api.getAppState(),
+        fitToViewport: true,
+      });
+      api.updateScene({
+        appState: { scrollX: appState.scrollX, scrollY: appState.scrollY, zoom: appState.zoom },
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    },
+    onChange: (handler) => api.onChange(() => handler()),
+  };
+  const marks = bindFeedback(
+    { button: pageButton('feedback-button'), layer: pageElement('feedback-layer') },
+    feedback,
+    canvas,
+    { writer: speaker },
+  );
   const panel = bindTranscriptPanel(
     { mic: pageButton('mic'), opener: pageButton('transcript-button'), panel: pageElement('transcript') },
     transcript,
     { toggle: () => void speech.toggle(), agree: () => void speech.agree(), decline: () => speech.decline() },
     { speaker },
+    { map: feedback, show: (record) => marks.show(record) },
   );
   panel.show(speech.state());
   speech.onState((state) => panel.show(state));
@@ -351,10 +397,11 @@ async function start(): Promise<ChalklineHandle> {
   if (window.visualViewport !== null) {
     followKeyboard(pageElement('transcript'), window.visualViewport, () => document.documentElement.clientHeight);
   }
-  // The microphone and Chat buttons show once the board they act on is open, and stay hidden on the
-  // join screen, as the menu's Save file and Open file items do.
+  // The microphone, Chat and Feedback buttons show once the board they act on is open, and stay hidden on
+  // the join screen, as the menu's Save file and Open file items do.
   pageElement('mic').hidden = false;
   pageElement('transcript-button').hidden = false;
+  pageElement('feedback-button').hidden = false;
 
   const handle: ChalklineHandle = {
     room: secrets.room,
@@ -365,6 +412,7 @@ async function start(): Promise<ChalklineHandle> {
     settings,
     kept,
     transcript,
+    feedback,
     speech,
     peers: () => transport.peers(),
     onPeerLeave: (handler) => transport.onPeerLeave(handler),
