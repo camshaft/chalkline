@@ -169,6 +169,10 @@ export const boardShapeSchema = z.object({
     .string()
     .optional()
     .describe('How the lines of a text or a label align, where it is not the default: left for a text, and center for a label.'),
+  groups: z
+    .array(z.string())
+    .optional()
+    .describe('The ids of the groups the shape is in, the innermost first; a shape in no group has none.'),
   creator: creatorSchema
     .optional()
     .describe('The agent that added the shape; a shape that a person drew, or a page added for them, has none.'),
@@ -187,11 +191,22 @@ export const connectionSchema = z.object({
 });
 
 /**
- * The change update_shape makes to one shape on the board. A field left out, or given as null,
- * stays as it is.
+ * The change update_shape makes to one shape on the board, by its id, or to every shape of a group,
+ * which it moves, by the group's id. A field left out, or given as null, stays as it is.
  */
 export const changeSchema = z.object({
-  id: z.string().min(1).describe('The id of the shape to change, as get_board lists it.'),
+  id: z
+    .string()
+    .min(1)
+    .nullish()
+    .describe('The id of the shape to change, as get_board lists it; leave it out to move a group.'),
+  group: z
+    .string()
+    .min(1)
+    .nullish()
+    .describe(
+      "The id of a group to move, as get_board lists it in a shape's groups, instead of id: x and y say where the group's left and top edges go.",
+    ),
   x: coordinate.nullish().describe("The shape's new left edge, or the new x of an arrow's or a line's first point."),
   y: coordinate.nullish().describe("The shape's new top edge, or the new y of an arrow's or a line's first point."),
   width: coordinate
@@ -214,9 +229,14 @@ export const changeSchema = z.object({
   backgroundColor: color.nullish().describe("The new fill of a rectangle, an ellipse or a diamond, a CSS color such as #a5d8ff."),
 });
 
-/** The shapes that delete_shapes deletes. */
+/** The shapes that delete_shapes deletes: by their ids, by their groups, or both. */
 export const deletionSchema = z.object({
-  ids: z.array(z.string().min(1)).min(1).describe('The ids of the shapes to delete, as get_board lists them.'),
+  ids: z.array(z.string().min(1)).min(1).nullish().describe('The ids of the shapes to delete, as get_board lists them.'),
+  groups: z
+    .array(z.string().min(1))
+    .min(1)
+    .nullish()
+    .describe("The ids of groups to delete with every shape in them, as get_board lists them in a shape's groups."),
 });
 
 export type Shape = z.infer<typeof shapeSchema>;
