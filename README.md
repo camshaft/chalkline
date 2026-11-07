@@ -82,7 +82,7 @@ Your browser keeps the choice for your next visit, as it keeps your name. The pa
 
 Excalidraw counts each pen, mouse or finger pressed on the canvas until the page receives its release, and reads two at once as a pinch, which pans and zooms the canvas instead of drawing. Where the page doesn't receive a press's release, as Excalidraw's [issue 8476](https://github.com/excalidraw/excalidraw/issues/8476) reports for a Wacom pen in Chrome on a Mac, the next press of the pen or the mouse ends that press first, so that it draws, selects and pans as before. A finger's press doesn't end one, since fingers press several at once to pinch. CI's end-to-end test presses a pen's tip with free draw, the rectangle, the selection tool and the hand, and again after a press of the pen and a press of the mouse whose releases it stops.
 
-The page sees the tablet's buttons and the pen's other side button only as the keys or clicks that the tablet's driver sends for them, so set each one in the driver. This mapping to Chalkline's shortcuts hasn't been tried on a tablet yet:
+The page sees the tablet's buttons and the pen's other side button only as the keys or clicks that the tablet's driver sends for them, so set each one in the driver. This mapping to Chalkline's shortcuts was tried on a Wacom tablet:
 
 | Button | Set the driver to send | What it does in Chalkline |
 | --- | --- | --- |
