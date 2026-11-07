@@ -14,6 +14,7 @@ import {
 } from '@chalkline/sync';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import * as Y from 'yjs';
+import { runListen } from './listen-cli';
 import { createServer } from './server';
 import { loadExcalidraw } from './skeleton';
 
@@ -29,7 +30,12 @@ The link is the board's address, with its #room=<name>&key=<password> fragment, 
 logs goes to standard error.
 
 Options:
-  --help  print this text`;
+  --help  print this text
+
+chalkline-mcp listen <board link> joins the board too, and prints on standard output one JSON
+line for each group of words people on the board say, for an agent client that turns each line
+a command prints into a message to its agent, such as Claude Code's Monitor tool:
+chalkline-mcp listen --help says more.`;
 
 function roomOf(link: string): RoomSecrets {
   let address: URL;
@@ -54,6 +60,8 @@ function ended(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // `chalkline-mcp listen` prints what people on the board say, in place of serving the tools.
+  if (process.argv[2] === 'listen') return runListen(process.argv.slice(3));
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: { help: { type: 'boolean', default: false } },

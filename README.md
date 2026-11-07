@@ -50,11 +50,35 @@ node packages/web/dist-node/draw-box.mjs --link '<the board link>' --label 'Hell
 
 It stays in the room until you press Ctrl-C. `--help` lists its options.
 
+## Connect an agent
+
+`chalkline-mcp` serves the board's tools to an agent as a local MCP server, and `chalkline-mcp listen` tells the agent what people on the board say. Build it, and add the server to Claude Code with the board's link:
+
+```sh
+npm ci
+npm run build --workspace @chalkline/mcp
+claude mcp add --transport stdio chalkline -- node "$PWD/packages/mcp/dist/chalkline-mcp.mjs" '<the board link>'
+```
+
+An MCP server answers the calls its agent makes, so the agent learns what someone said only once it reads the transcript. `chalkline-mcp listen` joins the board too, and prints on standard output one JSON line for each group of words people say with no pause of 1.5 seconds between them, such as:
+
+```json
+{"at":"2026-11-07T03:00:04.000Z","speakers":["Ada","Grace"],"text":"draw a smiley face in blue"}
+```
+
+`text` holds the group's words, `speakers` who said them, and `at` when its last words were said. What was said before the listener started is left out. Claude Code's Monitor tool runs a command in the background and turns each line the command prints into a message to the agent, so ask Claude Code, in the directory you built in, to run the listener with it:
+
+> Use the Monitor tool to run `node packages/mcp/dist/chalkline-mcp.mjs listen '<the board link>' 2>>chalkline-listen.log` for 30 minutes, and act on each line it prints with the chalkline tools.
+
+Each line costs the agent one turn. `--pause <seconds>` sets how long a pause ends a group: a longer pause puts more of what people say in one line, and so in one turn, and the agent answers later. The listener logs to standard error, which the command above adds to `chalkline-listen.log`: where it starts listening, each peer that connects and leaves, where it loses the room as its last peer leaves, and where it joins the room again.
+
+A Monitor watch ends at its deadline, 30 minutes at most, and Claude Code tells the agent when it ends. To go on listening, run the command again with `--after` set to the `at` of the last line the listener printed, or, where it printed none, to the time its log's `listening in room` line shows, so that the new listener leaves out what the old one printed and keeps what was said between the two. On Amazon Bedrock, the Monitor tool needs Claude Code v2.1.310 or later. `chalkline-mcp listen --help` lists the listener's options.
+
 ## Development
 
 The repository is one npm workspace. `packages/sync` holds the board's shared state, the entries of its transcript, the format of a board's link, and the adapter that carries the state between participants over Trystero, with an in-memory network for its tests that loses, delays and reorders messages. `packages/web` holds the page and `draw-box`. `packages/mcp` holds `chalkline-mcp`, the agent's helper: a local MCP server over standard input and output that joins the board its link opens, keeps its own copy of the board, and serves the tools `get_board`, which reads the board's shapes and the Mermaid requests that no page has converted yet, `add_shapes`, which adds shapes in Excalidraw's skeleton format, `add_mermaid`, which asks a page to convert the Mermaid text of a whole diagram into shapes, `get_request`, which reads such a request by its id, `connect`, which draws an arrow bound to two shapes of the board, `update_shape`, which moves, resizes, relabels or recolors a shape, `delete_shapes`, which deletes shapes with their labels, and `read_transcript`, which reads the board's transcript. Each shape the helper adds, through its tools or through a Mermaid request, records the agent as its creator in the element's `customData`, so that the agent can change its own shapes. The conversion runs in a browser, so the helper writes each Mermaid request into the board's shared state, and one page of the room, the one whose awareness client id is the lowest, converts it, adds its shapes and marks it done, or marks it failed with the reason. A request written while no page is open stays on the board, and the first page that joins converts it. `read_transcript` answers the transcript's entries after a cursor, with the cursor after them, and where no entry follows the cursor, it answers once someone on the board says one. The helper also offers the transcript as the MCP resource `chalkline://transcript`, and notifies a client that subscribes to it after each change that adds an entry. `packages/lan` holds the local-network mode, `chalkline-lan`, one command that serves the built page and a Trystero WebSocket relay from one machine. It sends a request for the page to the same address with `?relay=/relay`, and a page whose address names a relay finds the other participants through that relay in place of the public Nostr relays and the relays of Connection settings. The TURN servers of Connection settings still apply.
 
-CI runs `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` on each pull request and on `main`, then starts the built `chalkline-mcp` on a new board and calls its tools, and the Pages workflow publishes `main` to GitHub Pages.
+CI runs `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` on each pull request and on `main`, then starts the built `chalkline-mcp` on a new board and calls its tools, runs `chalkline-mcp listen --help` and starts `chalkline-mcp listen` on a new board, and the Pages workflow publishes `main` to GitHub Pages.
 
 Installs use `npm ci`, which installs the versions package-lock.json pins. A change that adds, removes or updates a dependency changes package-lock.json too: run `npm install` on your machine, or run the Lock file workflow on the change's branch with `gh workflow run lock.yml --ref main -f branch=<the branch>`, which writes package-lock.json there and runs CI and the Probe workflow on the new head.
 

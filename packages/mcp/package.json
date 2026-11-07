@@ -13,7 +13,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "smoke": "node scripts/smoke.mjs",
+    "smoke": "node scripts/smoke.mjs && node scripts/listen-smoke.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
