@@ -35,9 +35,79 @@
         font: inherit;
         width: 12rem;
       }
-      #app {
+      #board {
+        position: relative;
+        display: flex;
         flex: 1;
         min-height: 0;
+      }
+      #app {
+        flex: 1;
+        min-width: 0;
+      }
+      #transcript {
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        bottom: 0.5rem;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        width: 22rem;
+        max-width: calc(100% - 1rem);
+        box-sizing: border-box;
+        padding: 0.75rem;
+        font-size: 0.9rem;
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 0.5rem;
+        box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.15);
+      }
+      #transcript[hidden] {
+        display: none;
+      }
+      #transcript h2 {
+        margin: 0;
+        font-size: 1rem;
+      }
+      #transcript p {
+        margin: 0;
+      }
+      .speech-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+      }
+      .speech-heard {
+        color: #666;
+        font-style: italic;
+      }
+      .transcript-entries {
+        flex: 1;
+        min-height: 0;
+        margin: 0;
+        padding: 0;
+        overflow: auto;
+        list-style: none;
+      }
+      .transcript-entries li {
+        margin-bottom: 0.5rem;
+      }
+      .transcript-speaker {
+        font-weight: 600;
+      }
+      .transcript-time {
+        margin-left: 0.4rem;
+        color: #666;
+        font-size: 0.8rem;
+      }
+      .transcript-text {
+        display: block;
+      }
+      .transcript-empty {
+        color: #666;
       }
       .join-screen {
         max-width: 34rem;
@@ -123,11 +193,18 @@
       <button id="new-board" type="button">New board</button>
       <button id="save-button" type="button" hidden>Save file</button>
       <button id="open-button" type="button" hidden>Open file</button>
+      <button id="mic" type="button" aria-pressed="false" hidden>Turn on speech</button>
+      <button id="transcript-button" type="button" aria-expanded="false" aria-controls="transcript" hidden>
+        Transcript
+      </button>
       <input id="open-file" type="file" accept=".excalidraw,application/json,application/vnd.excalidraw+json" hidden />
       <button id="settings-button" type="button">Connection settings</button>
     </div>
     <div id="settings" hidden></div>
-    <div id="app"></div>
+    <div id="board">
+      <div id="app"></div>
+      <aside id="transcript" aria-label="Transcript" hidden></aside>
+    </div>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>
