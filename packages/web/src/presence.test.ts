@@ -143,6 +143,17 @@ describe('readPresence', () => {
   it("reads a state that isn't an object as null", () => {
     for (const state of [null, undefined, 'Ada', 3, ['Ada']]) expect(readPresence(state)).toBeNull();
   });
+
+  it("reads an agent's mark, its status and the shapes it last drew, and leaves out each of the wrong type", () => {
+    expect(readPresence({ name: 'Claude', agent: true, status: 'working', shapes: ['box', 'arrow'] })).toEqual({
+      name: 'Claude',
+      agent: true,
+      status: 'working',
+      shapes: ['box', 'arrow'],
+    });
+    expect(readPresence({ agent: 'yes', status: 'busy', shapes: ['box', 3] })).toEqual({});
+    expect(readPresence({ agent: false, status: 'idle', shapes: 'box' })).toEqual({ status: 'idle' });
+  });
 });
 
 describe('collaboratorsFrom', () => {
@@ -158,6 +169,12 @@ describe('collaboratorsFrom', () => {
       ['2', { id: '2', username: 'Ada', pointer: { x: 1, y: 2, tool: 'pointer' }, button: 'up' }],
       ['3', { id: '3' }],
     ]);
+  });
+
+  it("leaves an agent's mark, its status and its shapes out of what the canvas shows", () => {
+    const states = new Map<number, unknown>([[2, { name: 'Claude', agent: true, status: 'working', shapes: ['box'] }]]);
+
+    expect([...collaboratorsFrom(states, 1)]).toEqual([['2', { id: '2', username: 'Claude' }]]);
   });
 });
 
