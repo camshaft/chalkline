@@ -74,3 +74,35 @@ jobs:
           name: e2e-screenshots
           path: packages/lan/e2e-*.png
           if-no-files-found: ignore
+
+  readme:
+    name: README steps
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # Claude Code's command line runs without updating itself or sending its own reports.
+      DISABLE_AUTOUPDATER: '1'
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Connect an agent adds chalkline-mcp to Claude Code with `claude mcp add`.
+      - name: Install Claude Code
+        run: npm install --global @anthropic-ai/claude-code
+      # Runs the commands of README.md's Run the local mode and Connect an agent from this new
+      # checkout, as a person runs them, starting with their `npm ci`: it opens the local mode's
+      # board in two Chromium contexts, adds chalkline-mcp to Claude Code with the board's link,
+      # starts the helper Claude Code was given, which adds a labelled rectangle both browsers
+      # show, and runs the listener on a line of the board's transcript. It also opens the address
+      # of Open a board and presses New board.
+      - name: Run the README's steps
+        run: node packages/lan/e2e/readme-steps.mjs
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: readme-screenshots
+          path: packages/lan/readme-*.png
+          if-no-files-found: ignore
