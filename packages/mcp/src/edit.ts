@@ -50,7 +50,7 @@ const BINDABLE: ReadonlySet<string> = new Set([
 type Field = Exclude<keyof ShapeChange, 'id' | 'group'>;
 
 /** Each field that update_shape reads. */
-const FIELDS: readonly Field[] = ['x', 'y', 'width', 'height', 'label', 'text', 'fontSize', 'strokeColor', 'backgroundColor'];
+const FIELDS: readonly Field[] = ['x', 'y', 'width', 'height', 'label', 'text', 'fontSize', 'strokeColor', 'backgroundColor', 'name'];
 
 const BOX_FIELDS: readonly Field[] = ['x', 'y', 'width', 'height', 'label', 'strokeColor', 'backgroundColor'];
 
@@ -62,6 +62,7 @@ const CHANGES = new Map<string, readonly Field[]>([
   ['text', ['x', 'y', 'text', 'fontSize', 'strokeColor']],
   ['arrow', ['x', 'y', 'width', 'height', 'label', 'strokeColor']],
   ['line', ['x', 'y', 'width', 'height', 'strokeColor']],
+  ['frame', ['x', 'y', 'name']],
 ]);
 
 /** The fields of a text that set its style, which a new layout of it keeps. */
@@ -151,7 +152,8 @@ export async function connect(doc: Y.Doc, connection: Connection, creator?: Crea
  * id out, where the id isn't a shape on the board, is a label or is a kind of shape update_shape
  * doesn't change, where the change doesn't change anything or sets a field that doesn't apply to
  * the shape, where a size isn't above 0, or where it moves an arrow bound to a shape or gives a
- * width or a height to an arrow or a line of more than two points.
+ * width or a height to an arrow or a line of more than two points. A frame moves with every element
+ * in it, as changeFrame moves it, and takes a new name.
  */
 export async function updateShape(doc: Y.Doc, change: ShapeChange, creator?: Creator): Promise<BoardShape> {
   const shared = doc.getMap<unknown>(ELEMENTS);
@@ -162,7 +164,7 @@ export async function updateShape(doc: Y.Doc, change: ShapeChange, creator?: Cre
   const fields = CHANGES.get(type);
   if (fields === undefined) {
     throw new ShapeError(
-      `"${id}" is ${article(type)}, which update_shape doesn't change: it changes rectangles, ellipses, diamonds, texts, arrows and lines.`,
+      `"${id}" is ${article(type)}, which update_shape doesn't change: it changes rectangles, ellipses, diamonds, texts, arrows, lines and frames.`,
     );
   }
   const given = FIELDS.filter((field) => present(change[field]));
@@ -177,6 +179,7 @@ export async function updateShape(doc: Y.Doc, change: ShapeChange, creator?: Cre
   const writes = new Writes(shared, creator);
   if (type === 'text') await changeText(writes, shape, change);
   else if (type === 'arrow' || type === 'line') await changeLinear(writes, shape, change, creator);
+  else if (type === 'frame') await changeFrame(writes, shape, change);
   else await changeBox(writes, shape, change, creator);
   writes.commit(doc);
 
@@ -234,6 +237,38 @@ export async function moveGroup(doc: Y.Doc, change: ShapeChange, creator?: Creat
   await followMoved(writes, moved);
   writes.commit(doc);
   return inGroup(readBoard(shared.values()), group);
+}
+
+/**
+ * Moves the frame `frame` so that its left edge goes to `change.x` and its top edge to `change.y`,
+ * where given, with every element in it, each label among them, as Excalidraw moves a frame, and
+ * gives it the name `change.name`, where given. Each straight arrow bound to an element that moves
+ * and to one that doesn't is laid out again between the shapes it binds, as followMoved lays it out.
+ */
+async function changeFrame(writes: Writes, frame: Element, change: ShapeChange): Promise<void> {
+  const frameId = String(frame.id);
+  const dx = present(change.x) ? change.x - numberOf(frame.x) : 0;
+  const dy = present(change.y) ? change.y - numberOf(frame.y) : 0;
+  const moves = dx !== 0 || dy !== 0;
+  const moved = withLabels(writes.shared, [frameId, ...inFrame(writes.shared, frameId)]);
+  for (const elementId of moved) {
+    const element = writes.get(elementId);
+    if (element === undefined) continue;
+    const changes: Element = moves ? { x: numberOf(element.x) + dx, y: numberOf(element.y) + dy } : {};
+    if (elementId === frameId && present(change.name)) changes.name = change.name;
+    if (Object.keys(changes).length > 0) writes.set(touched(element, changes));
+  }
+  if (moves) await followMoved(writes, moved);
+}
+
+/** The ids of the elements on the board that are in the frame `frameId`, as each one's frameId says. */
+function inFrame(shared: Y.Map<unknown>, frameId: string): string[] {
+  const ids: string[] = [];
+  for (const [elementId, value] of shared.entries()) {
+    const element = elementOf(value);
+    if (element !== undefined && element.isDeleted !== true && element.frameId === frameId) ids.push(elementId);
+  }
+  return ids;
 }
 
 /** The shapes of `shapes` that are in the group `group`, in their order. */

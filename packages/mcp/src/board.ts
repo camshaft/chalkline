@@ -4,11 +4,33 @@ import type * as Y from 'yjs';
 import { creatorOf, withCreator, type Creator } from './creator';
 import { arrowPoints, outlineOf } from './geometry';
 import { fractionalIndex, indicesOver, indicesUnder } from './order';
-import { DEFAULT_FONT, DEFAULT_STYLE, FONT_FAMILY, LISTED_POINTS, type BoardShape, type FontName, type Place, type Shape } from './shapes';
+import {
+  DEFAULT_FONT,
+  DEFAULT_STYLE,
+  FONT_FAMILY,
+  LISTED_POINTS,
+  type BoardFrame,
+  type BoardShape,
+  type FontName,
+  type Place,
+  type Shape,
+} from './shapes';
 import { convertSkeletons, loadExcalidraw, type ConvertedElement, type Excalidraw, type Skeleton } from './skeleton';
 
 /** The shared map that holds the board's elements by id, as the page keeps them. */
 export const ELEMENTS = 'elements';
+
+/**
+ * How far the frame that add_shapes draws around a call's shapes lies outside their bounds, on each
+ * side, as Excalidraw's convertToExcalidrawElements lays a frame around its children.
+ */
+export const FRAME_MARGIN = 10;
+
+/** The frame that add_shapes puts a call's shapes into: its id and its name. */
+export interface NewFrame {
+  id: string;
+  name: string;
+}
 
 /** The kinds of shape that an arrow of add_shapes binds to. */
 const BINDABLE: ReadonlySet<Shape['type']> = new Set<Shape['type']>(['rectangle', 'ellipse', 'diamond', 'text']);
@@ -55,6 +77,8 @@ interface BoardElement {
   fontFamily: number | undefined;
   textAlign: string | undefined;
   groups: string[];
+  name: string | undefined;
+  frameId: string | null;
 }
 
 /**
@@ -66,7 +90,7 @@ interface BoardElement {
  * line, an arrow or a freehand stroke lists its points, and a stroke that holds more than
  * LISTED_POINTS lists LISTED_POINTS of them, evenly spaced, with the count of all. Each shape
  * answers its stroke and background colors, and each style field and its text's font and
- * alignment that aren't Excalidraw's defaults. Deleted elements, and values that aren't
+ * alignment that aren't Excalidraw's defaults. A frame's label is its name. Deleted elements, and values that aren't
  * elements, are left out.
  */
 export function readBoard(values: Iterable<unknown>): BoardShape[] {
@@ -99,6 +123,7 @@ export function readBoard(values: Iterable<unknown>): BoardShape[] {
     };
     const text = element.type === 'text' ? element : labels.get(element.id);
     if (text?.text !== undefined) shape.label = text.text;
+    if (element.type === 'frame' && element.name !== undefined) shape.label = element.name;
     if (element.start !== undefined && listed.has(element.start)) shape.start = element.start;
     if (element.end !== undefined && listed.has(element.end)) shape.end = element.end;
     if (element.creator !== undefined) shape.creator = element.creator;
@@ -107,6 +132,38 @@ export function readBoard(values: Iterable<unknown>): BoardShape[] {
     if (element.groups.length > 0) shape.groups = element.groups;
     return shape;
   });
+}
+
+/**
+ * The board's frames from back to front, as get_board lists them: each frame's id, its name where
+ * it has one, its bounds, and its members, the ids of the shapes in it, as an element's frameId puts
+ * it in a frame, from back to front as readBoard lists them. A label isn't a member, since readBoard
+ * lists it with its shape. A shape whose frameId names an element that isn't a frame on the board
+ * isn't a member of any frame.
+ */
+export function readFrames(values: Iterable<unknown>): BoardFrame[] {
+  const all = [...values];
+  const shapes = readBoard(all);
+  const listed = new Set(shapes.map((shape) => shape.id));
+  const frameOf = new Map<string, string>();
+  for (const value of all) {
+    const element = boardElement(value);
+    if (element !== null && element.frameId !== null && listed.has(element.id)) frameOf.set(element.id, element.frameId);
+  }
+  return shapes
+    .filter((shape) => shape.kind === 'frame')
+    .map((frame) => {
+      const listedFrame: BoardFrame = {
+        id: frame.id,
+        x: frame.x,
+        y: frame.y,
+        width: frame.width,
+        height: frame.height,
+        members: shapes.filter((shape) => frameOf.get(shape.id) === frame.id).map((shape) => shape.id),
+      };
+      if (frame.label !== undefined) listedFrame.name = frame.label;
+      return listedFrame;
+    });
 }
 
 /**
@@ -149,6 +206,9 @@ export function newId(): string {
  * call, a line or an arrow sets both points and a width or a height, a closed line has fewer than
  * three points, an arrow leaves out its x or its y and doesn't run between two shapes, the two
  * shapes an arrow runs between have one center, or `where` names a shape that indicesAt refuses.
+ * With `frame`, each element the call adds goes into a new frame with the id and the name `frame`
+ * sets, which frameAround lays FRAME_MARGIN outside their bounds and which goes just in front of
+ * them; the frame records `creator` as its creator too, and isn't in `group`.
  */
 export async function addShapes(
   doc: Y.Doc,
@@ -156,6 +216,7 @@ export async function addShapes(
   creator?: Creator,
   group?: string,
   where: Place = 'front',
+  frame?: NewFrame,
 ): Promise<string[]> {
   const shared = doc.getMap<unknown>(ELEMENTS);
   const ids = shapes.map((shape) => shape.id ?? newId());
@@ -214,12 +275,16 @@ export async function addShapes(
       throw new Error(`convertToExcalidrawElements didn't make the shape ${id}: ${JSON.stringify(converted)}`);
     }
   }
-  const elements = await laidBetween(shapes, ids, skeletons, converted, texts);
+  const laid = await laidBetween(shapes, ids, skeletons, converted, texts);
+  const elements: ConvertedElement[] =
+    frame === undefined
+      ? laid
+      : [...laid.map((element) => ({ ...element, frameId: frame.id })), frameAround(laid, frame, excalidraw)];
   const indices = indicesAt(shared, where, elements.length);
   doc.transact(() => {
     elements.forEach((element, place) => {
       const copy = { ...structuredClone(element), index: indices[place] };
-      const placed = group === undefined ? copy : { ...copy, groupIds: [group] };
+      const placed = group === undefined || element.id === frame?.id ? copy : { ...copy, groupIds: [group] };
       shared.set(element.id, creator === undefined ? placed : withCreator(placed, creator));
     });
   });
@@ -452,6 +517,53 @@ function freedraw(shape: Freedraw, id: string, { restoreElements }: Excalidraw):
   return element;
 }
 
+/**
+ * A new frame, with the id and the name `frame` sets, around `elements`: its edges lie FRAME_MARGIN
+ * outside the bounds of the elements, as boundsOf reads them. It has a random seed, as each new
+ * element of Excalidraw's has, and restoreElements fills in each field of a frame it leaves out.
+ */
+function frameAround(elements: readonly ConvertedElement[], frame: NewFrame, { restoreElements }: Excalidraw): ConvertedElement {
+  const { left, top, right, bottom } = boundsOf(elements);
+  const partial = {
+    type: 'frame',
+    id: frame.id,
+    name: frame.name,
+    x: left - FRAME_MARGIN,
+    y: top - FRAME_MARGIN,
+    width: right - left + 2 * FRAME_MARGIN,
+    height: bottom - top + 2 * FRAME_MARGIN,
+    seed: randomInt(2 ** 31),
+  };
+  const element = restoreElements([partial as unknown as ExcalidrawElement], null).find((candidate) => candidate.id === frame.id);
+  if (element === undefined || element.type !== 'frame') {
+    throw new Error(`restoreElements didn't make the frame ${frame.id}: ${JSON.stringify(partial)}`);
+  }
+  return element;
+}
+
+/**
+ * The bounds of `elements`: the least and the greatest x and y of each element's corners, or of
+ * each point of a line, an arrow or a freehand stroke, which its points place.
+ */
+function boundsOf(elements: readonly ConvertedElement[]): { left: number; top: number; right: number; bottom: number } {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const element of elements) {
+    const offsets: readonly (readonly number[])[] =
+      'points' in element
+        ? element.points
+        : [
+            [0, 0],
+            [element.width, element.height],
+          ];
+    for (const offset of offsets) {
+      xs.push(element.x + (offset[0] ?? 0));
+      ys.push(element.y + (offset[1] ?? 0));
+    }
+  }
+  return { left: Math.min(...xs), top: Math.min(...ys), right: Math.max(...xs), bottom: Math.max(...ys) };
+}
+
 /** The number of the font that `fields` names, as Excalidraw's element holds it, where it names one. */
 function fontNumber(fields: { fontFamily?: FontName }): { fontFamily?: number } {
   return fields.fontFamily === undefined ? {} : { fontFamily: FONT_FAMILY[fields.fontFamily] };
@@ -488,6 +600,8 @@ function boardElement(value: unknown): BoardElement | null {
     fontFamily: numberOf(fields.fontFamily),
     textAlign: stringOf(fields.textAlign),
     groups: groupsOf(fields.groupIds),
+    name: type === 'frame' ? stringOf(fields.name) : undefined,
+    frameId: typeof fields.frameId === 'string' ? fields.frameId : null,
   };
 }
 
