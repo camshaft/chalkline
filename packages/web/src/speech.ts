@@ -1,4 +1,4 @@
-import { appendEntry, newEntryId } from '@chalkline/sync';
+import { appendEntry, newEntryId, replaceLastEntry } from '@chalkline/sync';
 import type * as Y from 'yjs';
 
 /** One of a recognition result's alternatives: the words the browser heard. */
@@ -191,14 +191,29 @@ export interface Speech {
 /** The one error after which the browser goes on listening once it starts again: a silence. */
 const SILENCE = 'no-speech';
 
+/** A result's words, in lower case, to compare the words of two results. */
+function wordsOf(text: string): string[] {
+  return text.toLowerCase().split(/\s+/).filter((word) => word !== '');
+}
+
+/** Whether `words` begin with each word of `before`, in its order, as a longer hypothesis of the same sentence does. */
+function begins(words: readonly string[], before: readonly string[]): boolean {
+  return before.length <= words.length && before.every((word, index) => words[index] === word);
+}
+
 /**
  * This browser's speech. It is off until the person presses the microphone
  * button; the page then says where recognition runs, and starts it only once
  * the person agrees, on the device where the browser offers that. Each final
  * result goes on `transcript` with the speaker's name and the time; the words
- * not yet final stay on this page. Where the browser ends recognition after
- * it started, as after a silence, it starts again, and after any other error
- * speech turns off and says why.
+ * not yet final stay on this page. A browser such as Chrome on Android marks
+ * each growing hypothesis of a sentence final, each one repeating the words
+ * before it: where a final result's words begin with the words of the entry
+ * this recognition session put on `transcript` last, and that entry is still
+ * the transcript's last, the result replaces that entry, so that the sentence
+ * shows once. Where the browser ends recognition after it started, as after a
+ * silence, it starts again, and after any other error speech turns off and
+ * says why.
  */
 export function speechControl(options: SpeechOptions): Speech {
   const { Class, lang, transcript } = options;
@@ -228,6 +243,8 @@ export function speechControl(options: SpeechOptions): Speech {
     if (place === 'device') listener.processLocally = true;
     let started = false;
     let failure: string | null = null;
+    // The entry this recognition session put on the transcript last, and its words.
+    let last: { id: string; words: string[] } | null = null;
     listener.onstart = () => {
       started = true;
     };
@@ -239,7 +256,17 @@ export function speechControl(options: SpeechOptions): Speech {
         const words = result.length > 0 ? result[0].transcript.trim() : '';
         if (words === '') continue;
         if (result.isFinal) {
-          appendEntry(transcript, { id: newId(), speaker: options.speaker(), at: now().toISOString(), text: words, via: 'speech' });
+          const said = wordsOf(words);
+          const entry = { speaker: options.speaker(), at: now().toISOString(), text: words, via: 'speech' as const };
+          // A longer hypothesis of the sentence takes the place of the entry whose words it repeats.
+          let id: string;
+          if (last !== null && begins(said, last.words) && replaceLastEntry(transcript, { id: last.id, ...entry })) {
+            id = last.id;
+          } else {
+            id = newId();
+            appendEntry(transcript, { id, ...entry });
+          }
+          last = { id, words: said };
         } else {
           heard = heard === '' ? words : `${heard} ${words}`;
         }
@@ -251,6 +278,8 @@ export function speechControl(options: SpeechOptions): Speech {
     };
     listener.onend = () => {
       if (recognition !== listener) return;
+      // A new session doesn't extend the words of the one before it.
+      last = null;
       if (failure === null && paused) {
         started = false;
         waiting = listener;

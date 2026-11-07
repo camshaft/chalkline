@@ -4,6 +4,7 @@ import {
   connectDoc,
   MemoryNetwork,
   readTranscript,
+  replaceLastEntry,
   transcriptOf,
   type TranscriptEntry,
   type TranscriptVia,
@@ -47,6 +48,24 @@ describe('TranscriptLog', () => {
     expect(log.after(1)).toEqual({ entries: [entry('two')], cursor: 2 });
     expect(log.after(2)).toEqual({ entries: [], cursor: 2 });
     expect(log.length).toBe(2);
+  });
+
+  it('answers an entry that its page replaced once, with its last words, where it first stood', () => {
+    const doc = new Y.Doc();
+    const transcript = transcriptOf(doc);
+    const log = new TranscriptLog(doc);
+    appendEntry(transcript, entry('one'));
+    appendEntry(transcript, { ...entry('draw'), text: 'draw' });
+    replaceLastEntry(transcript, { ...entry('draw'), text: 'draw a' });
+    appendEntry(transcript, entry('two', 'Grace'));
+    // A peer's copy can bring a later version after another entry, as where two pages write at once.
+    const box = { ...entry('draw'), text: 'draw a box' };
+    transcript.push([box]);
+
+    expect(log.after(0)).toEqual({ entries: [entry('one'), box, entry('two', 'Grace')], cursor: 5 });
+    expect(log.after(2)).toEqual({ entries: [box, entry('two', 'Grace')], cursor: 5 });
+    expect(log.after(3)).toEqual({ entries: [entry('two', 'Grace'), box], cursor: 5 });
+    expect(log.length).toBe(5);
   });
 
   it("answers an entry that the transcript puts before one the agent has read, after the agent's cursor", () => {
